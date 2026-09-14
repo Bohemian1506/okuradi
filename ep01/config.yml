@@ -1,0 +1,50 @@
+episode: 1
+recorded_on: null
+concept: 'RUNTEQ（プログラミングスクール）受講生向けの10分ラジオ。話し手は1人。
+
+  専門家として教える立場ではなく「自分もよく分かっていない」側に立って
+
+  調べながら喋るのが番組の芯。
+
+  想定リスナーは在校0〜9ヶ月の受講生と卒業生。
+
+  毎月入学があり母集団が入れ替わるため、過去テーマの再放送も成立する。
+
+  トーンはカジュアル、断定を避ける。
+
+  誤りは訂正歓迎の姿勢を毎回明示する。
+
+  '
+segments:
+- series: imasara
+  theme: OSI参照モデルの7層
+series_rules:
+  imasara:
+    label: 今更聞けない
+    title_hint: 「今更聞けない○○」の形。○○は具体的な用語や概念にする
+  runteq_news:
+    label: ランテック通信
+    title_hint: '「ランテック通信 #N」の形。サブタイトルで内容を示す'
+  it_news:
+    label: ITニュースざっくり
+    title_hint: 「ITニュースざっくり」の形。サブタイトルで扱ったニュースを示す
+cuts: []
+audio:
+  denoise: true
+  trim_silence: true
+  target_lufs: -14
+transcribe:
+  model: medium
+  language: ja
+images:
+- file: assets/normal.png
+  duration: full
+bgm: null
+bgm_volume: 0.08
+youtube:
+  privacy: unlisted
+  category_id: '28'
+  playlist: null
+  extra_tags:
+  - RUNTEQ
+  - プログラミング学習

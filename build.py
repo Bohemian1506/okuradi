@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""
+10分ラジオ 自動制作パイプライン
+
+工程:
+    scan       00_raw   -> 02_text/scan.json        下見の文字起こし（カット点を探す用）
+    cut        00_raw   -> 01_cut/cut.wav           config の cuts に従って区間を削除
+    clean      01_cut   -> 01_clean/clean.wav       ノイズ除去・前後トリム・音量正規化
+    transcribe 01_clean -> 02_text/transcript.json  確定版の文字起こし
+    meta       02_text  -> 03_meta/meta.json        タイトル・概要欄・チャプター
+    video      01_clean -> 04_video/epNN.mp4        静止画と合成
+    upload     04_video -> YouTube（限定公開）
+
+CLI:
+    python build.py ep01 --to scan
+    python build.py ep01 --from cut --to clean
+    python build.py ep01 --from transcribe
+
+GUI:
+    streamlit run app.py
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+STEPS = ["scan", "cut", "clean", "transcribe", "meta", "video", "upload"]
+
+STEP_LABELS = {
+    "scan": "下見の文字起こし",
+    "cut": "カット",
+    "clean": "整音",
+    "transcribe": "文字起こし（確定）",
+    "meta": "メタデータ生成",
+    "video": "動画化",
+    "upload": "アップロード",
+}
+
+
+# ---------------------------------------------------------------- ユーティリティ
+
+def run(cmd):
+    """外部コマンドを実行。出力を逐次読むのでGUIでも固まらない。"""
+    print(f"$ {cmd[0]} ...", flush=True)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+    )
+    tail = []
+    for line in proc.stdout:
+        tail.append(line)
+        if len(tail) > 40:
+            tail.pop(0)
+    proc.wait()
+    if proc.returncode != 0:
+        print("".join(tail), file=sys.stderr)
+        raise RuntimeError(f"コマンドが失敗しました: {cmd[0]}")
+
+
+def audio_duration(path):
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True,
+    )
+    return float(out.stdout.strip())
+
+
+def hhmmss(seconds):
+    seconds = int(seconds)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def find_raw(ep):
+    files = sorted(ep["00_raw"].glob("*.wav")) + sorted(ep["00_raw"].glob("*.m4a"))
+    if not files:
+        raise FileNotFoundError(f"{ep['00_raw']} に音声ファイルがありません")
+    return files[0]
+
+
+def load_episode(root, name):
+    """回のディレクトリを開いて (ep, cfg) を返す。GUIからも使う。"""
+    ep_dir = Path(root) / name
+    cfg = yaml.safe_load((ep_dir / "config.yml").read_text(encoding="utf-8"))
+    ep = {"root": Path(root), "dir": ep_dir, "name": name}
+    for sub in ["00_raw", "01_cut", "01_clean", "02_text", "03_meta", "04_video"]:
+        ep[sub] = ep_dir / sub
+        ep[sub].mkdir(parents=True, exist_ok=True)
+    return ep, cfg
+
+
+def save_config(ep, cfg):
+    (ep["dir"] / "config.yml").write_text(
+        yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+
+
+def transcribe_file(src, cfg):
+    from faster_whisper import WhisperModel
+
+    t = cfg.get("transcribe", {})
+    model = WhisperModel(t.get("model", "medium"), device="auto", compute_type="int8")
+    segments, _ = model.transcribe(
+        str(src), language=t.get("language", "ja"), vad_filter=False
+    )
+    rows = [
+        {"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
+        for s in segments
+    ]
+    return {"segments": rows, "full_text": "".join(r["text"] for r in rows)}
+
+
+# ---------------------------------------------------------------- 01. 下見
+
+def step_scan(ep, cfg):
+    src = find_raw(ep)
+    dst = ep["02_text"] / "scan.json"
+    data = transcribe_file(src, cfg)
+    data["source"] = src.name
+    data["duration"] = audio_duration(src)
+    dst.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"-> {dst}  ({len(data['segments'])}セグメント)")
+
+
+# ---------------------------------------------------------------- 02. カット
+
+def normalize_cuts(cuts, total):
+    """[[start, end], ...] を整理。重なりを統合し、範囲外を丸める。"""
+    clean = []
+    for c in cuts:
+        s, e = float(c[0]), float(c[1])
+        s, e = max(0.0, min(s, e)), min(total, max(s, e))
+        if e - s > 0.01:
+            clean.append((s, e))
+    clean.sort()
+    merged = []
+    for s, e in clean:
+        if merged and s <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def invert_ranges(cuts, total):
+    """削除範囲から残す範囲を作る。"""
+    keeps, pos = [], 0.0
+    for s, e in cuts:
+        if s - pos > 0.01:
+            keeps.append((pos, s))
+        pos = e
+    if total - pos > 0.01:
+        keeps.append((pos, total))
+    return keeps
+
+
+def step_cut(ep, cfg):
+    src = find_raw(ep)
+    dst = ep["01_cut"] / "cut.wav"
+    total = audio_duration(src)
+    cuts = normalize_cuts(cfg.get("cuts") or [], total)
+
+    if not cuts:
+        run(["ffmpeg", "-y", "-i", str(src), "-ar", "48000", "-ac", "1", str(dst)])
+        print(f"-> {dst}  (カット指定なし / {hhmmss(total)})")
+        return
+
+    keeps = invert_ranges(cuts, total)
+    if not keeps:
+        raise ValueError("カット指定で音声が全部消えます")
+
+    parts, labels = [], []
+    for i, (s, e) in enumerate(keeps):
+        parts.append(f"[0:a]atrim=start={s}:end={e},asetpts=PTS-STARTPTS[k{i}]")
+        labels.append(f"[k{i}]")
+    graph = ";".join(parts) + f";{''.join(labels)}concat=n={len(keeps)}:v=0:a=1[out]"
+
+    run(["ffmpeg", "-y", "-i", str(src), "-filter_complex", graph,
+         "-map", "[out]", "-ar", "48000", "-ac", "1", str(dst)])
+
+    removed = sum(e - s for s, e in cuts)
+    print(f"-> {dst}  ({len(cuts)}箇所 / {removed:.1f}秒カット / "
+          f"{hhmmss(total)} -> {hhmmss(total - removed)})")
+
+
+# ---------------------------------------------------------------- 03. 整音
+
+def step_clean(ep, cfg):
+    src = ep["01_cut"] / "cut.wav"
+    if not src.exists():
+        src = find_raw(ep)
+        print("(カット未実行のため 00_raw をそのまま使います)")
+    dst = ep["01_clean"] / "clean.wav"
+
+    a = cfg.get("audio", {})
+    filters = []
+    if a.get("denoise", True):
+        filters.append("afftdn=nf=-25")
+    if a.get("trim_silence", True):
+        trim = "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB"
+        filters += [trim, "areverse", trim, "areverse"]
+    # 正規化は必ず最後。カットの接続点で生じた音量段差もここで均される。
+    filters.append(f"loudnorm=I={a.get('target_lufs', -14)}:TP=-1.5:LRA=11")
+
+    run(["ffmpeg", "-y", "-i", str(src), "-af", ",".join(filters),
+         "-ar", "48000", "-ac", "1", str(dst)])
+    print(f"-> {dst}  ({hhmmss(audio_duration(dst))})")
+
+
+# ---------------------------------------------------------------- 04. 文字起こし（確定）
+
+def step_transcribe(ep, cfg):
+    src = ep["01_clean"] / "clean.wav"
+    dst = ep["02_text"] / "transcript.json"
+    data = transcribe_file(src, cfg)
+    dst.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"-> {dst}  ({len(data['segments'])}セグメント / {len(data['full_text'])}文字)")
+
+
+# ---------------------------------------------------------------- 05. メタデータ生成
+
+META_INSTRUCTION = """\
+あなたはこのラジオ番組の編集担当です。文字起こしを読んで、YouTubeの公開情報を作ってください。
+
+# 番組について
+{concept}
+
+# この回のコーナー
+{segments}
+
+# タイトルの規則
+{title_rules}
+
+# 文字起こし（タイムコード付き）
+{transcript}
+
+# 出力の条件
+- title: 60文字以内。タイトル規則に従う。煽らない。内容と一致させる。
+- description: 概要欄。3〜5行。最後に訂正歓迎の一文を必ず入れる。
+- chapters: [{{"seconds": 数値, "label": "見出し"}}] の配列。3〜6個。最初は必ず seconds: 0。
+- tags: 文字列の配列。5〜10個。日本語中心。
+"""
+
+
+META_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "chapters": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"seconds": {"type": "number"}, "label": {"type": "string"}},
+                "required": ["seconds", "label"],
+            },
+        },
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["title", "description", "chapters", "tags"],
+}
+
+
+def call_claude(prompt, schema=None, system=None, resume=None, persist=False):
+    """Claude Code を headless で呼ぶ。サブスクの枠で動かす。
+
+    戻り値は claude -p --output-format json の結果そのまま。
+    schema を渡すと structured_output に検証済みの値が入る。
+    会話を続けるときは persist=True で始め、session_id を resume に渡す。
+    """
+    cmd = ["claude", "-p", "--output-format", "json", "--model", "sonnet",
+           # 文章を返すだけなので、ツール・MCP・スキル・ユーザー設定は読ませない
+           "--tools", "", "--strict-mcp-config", "--disable-slash-commands",
+           "--setting-sources", ""]
+    if system:
+        cmd += ["--system-prompt", system]
+    if schema:
+        cmd += ["--json-schema", json.dumps(schema, ensure_ascii=False)]
+    if resume:
+        cmd += ["--resume", resume]
+    elif not persist:
+        cmd.append("--no-session-persistence")
+
+    # APIキーがあるとサブスクではなく従量課金で呼ばれるので外す
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    # --resume は同じ作業ディレクトリでないとセッションを見つけられない
+    proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                          env=env, cwd=Path(__file__).parent, timeout=600)
+    try:
+        res = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"claude の実行に失敗しました: {proc.stderr or proc.stdout}")
+    if res.get("is_error"):
+        raise RuntimeError(f"claude がエラーを返しました: {res.get('result')}")
+    return res
+
+
+def step_meta(ep, cfg):
+    transcript = json.loads((ep["02_text"] / "transcript.json").read_text(encoding="utf-8"))
+    dst = ep["03_meta"] / "meta.json"
+
+    rules = cfg.get("series_rules", {})
+    seg_lines, rule_lines = [], []
+    for s in cfg["segments"]:
+        r = rules.get(s["series"], {})
+        seg_lines.append(f"- 枠: {r.get('label', s['series'])} / テーマ: {s['theme']}")
+        rule_lines.append(f"- {r.get('label', s['series'])}: {r.get('title_hint', '')}")
+
+    body = "\n".join(f"[{hhmmss(r['start'])}] {r['text']}" for r in transcript["segments"])
+    res = call_claude(META_INSTRUCTION.format(
+        concept=cfg["concept"].strip(),
+        segments="\n".join(seg_lines),
+        title_rules="\n".join(rule_lines),
+        transcript=body,
+    ), schema=META_SCHEMA)
+
+    # 失敗時の切り分け用に生の応答を残す
+    (ep["03_meta"] / "raw_response.json").write_text(
+        json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    meta = res["structured_output"]
+
+    meta["tags"] = list(dict.fromkeys(
+        meta.get("tags", []) + cfg.get("youtube", {}).get("extra_tags", [])
+    ))
+    chapters = sorted(meta.get("chapters", []), key=lambda c: c["seconds"])
+    if chapters:
+        lines = "\n".join(f"{hhmmss(c['seconds'])} {c['label']}" for c in chapters)
+        meta["description"] = f"{meta['description'].rstrip()}\n\n--- 目次 ---\n{lines}"
+
+    dst.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"-> {dst}\n   タイトル: {meta['title']}")
+
+
+# ---------------------------------------------------------------- 06. 動画化
+
+def step_video(ep, cfg):
+    wav = ep["01_clean"] / "clean.wav"
+    dst = ep["04_video"] / f"ep{cfg['episode']:02d}.mp4"
+    total = audio_duration(wav)
+
+    images = cfg.get("images", [])
+    if not images:
+        raise ValueError("config.yml の images が空です")
+
+    lines = []
+    for img in images:
+        path = (ep["root"] / img["file"]).resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"画像がありません: {path}")
+        dur = total if img.get("duration") == "full" else float(img["duration"])
+        lines.append(f"file '{path.as_posix()}'\nduration {dur:.3f}")
+    last = (ep["root"] / images[-1]["file"]).resolve()
+    lines.append(f"file '{last.as_posix()}'")
+
+    listfile = ep["04_video"] / "images.txt"
+    listfile.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listfile),
+         "-i", str(wav), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "2",
+         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+         "-c:a", "aac", "-b:a", "192k", "-shortest", str(dst)])
+    print(f"-> {dst}")
+
+
+# ---------------------------------------------------------------- 07. アップロード
+
+def step_upload(ep, cfg):
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+
+    scopes = ["https://www.googleapis.com/auth/youtube.upload"]
+    root = ep["root"]
+    token_path, secret_path = root / "token.json", root / "client_secret.json"
+
+    creds = None
+    if token_path.exists():
+        creds = Credentials.from_authorized_user_file(str(token_path), scopes)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            # 初回だけブラウザが開く。GUIの外に出る唯一の操作。
+            flow = InstalledAppFlow.from_client_secrets_file(str(secret_path), scopes)
+            creds = flow.run_local_server(port=0)
+        token_path.write_text(creds.to_json(), encoding="utf-8")
+
+    meta = json.loads((ep["03_meta"] / "meta.json").read_text(encoding="utf-8"))
+    video = ep["04_video"] / f"ep{cfg['episode']:02d}.mp4"
+    yt = cfg.get("youtube", {})
+
+    youtube = build("youtube", "v3", credentials=creds)
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body={
+            "snippet": {
+                "title": meta["title"],
+                "description": meta["description"],
+                "tags": meta["tags"],
+                "categoryId": yt.get("category_id", "28"),
+            },
+            "status": {
+                "privacyStatus": yt.get("privacy", "unlisted"),
+                "selfDeclaredMadeForKids": False,
+            },
+        },
+        media_body=MediaFileUpload(str(video), chunksize=-1, resumable=True),
+    )
+
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            print(f"アップロード中 {int(status.progress() * 100)}%", flush=True)
+
+    url = f"https://youtu.be/{response['id']}"
+    (ep["04_video"] / "url.txt").write_text(url, encoding="utf-8")
+    print(f"-> {url}\n限定公開で上がりました。観てから自分で公開してください。")
+
+
+# ---------------------------------------------------------------- 実行
+
+HANDLERS = {
+    "scan": step_scan, "cut": step_cut, "clean": step_clean,
+    "transcribe": step_transcribe, "meta": step_meta,
+    "video": step_video, "upload": step_upload,
+}
+
+
+def main():
+    p = argparse.ArgumentParser(description="10分ラジオ 自動制作パイプライン")
+    p.add_argument("episode")
+    p.add_argument("--from", dest="start", choices=STEPS, default=STEPS[0])
+    p.add_argument("--to", dest="end", choices=STEPS, default=STEPS[-1])
+    args = p.parse_args()
+
+    root = Path(__file__).parent.resolve()
+    if not (root / args.episode).exists():
+        sys.exit(f"{root / args.episode} がありません")
+
+    ep, cfg = load_episode(root, args.episode)
+    for name in STEPS[STEPS.index(args.start): STEPS.index(args.end) + 1]:
+        print(f"\n[{name}] {STEP_LABELS[name]}")
+        HANDLERS[name](ep, cfg)
+    print("\n完了")
+
+
+if __name__ == "__main__":
+    main()

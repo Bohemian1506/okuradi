@@ -1,0 +1,14 @@
+# 認証情報
+client_secret.json
+token.json
+
+# 回ごとの音声・中間生成物（config.yml だけ追跡する）
+ep*/0*_*/
+
+# 画像素材は後で判断
+assets/*
+!assets/.gitkeep
+
+# Python
+.venv/
+__pycache__/
