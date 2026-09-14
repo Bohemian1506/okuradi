@@ -1,4 +1,6 @@
-# 10分ラジオ 自動制作パイプライン
+# okuradi（置くラジ）
+
+10分ラジオの制作パイプライン。
 
 収録ファイル（wav / m4a / OBSの録画）を1本置いて、コマンドを2回叩くと限定公開までいく。
 
@@ -18,7 +20,7 @@ streamlit run app.py
 ## ディレクトリ
 
 ```
-radio/
+okuradi/
 ├── build.py              # パイプライン本体（全回共通。基本いじらない）
 ├── requirements.txt
 ├── client_secret.json    # YouTube API の認証情報（自分で配置）
