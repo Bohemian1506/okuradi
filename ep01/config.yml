@@ -30,6 +30,7 @@ series_rules:
     title_hint: 「ITニュースざっくり」の形。サブタイトルで扱ったニュースを示す
 cuts: []
 audio:
+  source_track: 0
   denoise: true
   trim_silence: true
   target_lufs: -14

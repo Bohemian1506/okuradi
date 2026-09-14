@@ -149,11 +149,11 @@ with tab_scan:
     st.caption("カット点を耳で探すのは遅いので、先にテキストにして目で探します。")
 
     try:
-        raw = build.find_raw(ep)
+        raw = build.find_raw(ep, cfg)
         st.write(f"音声: `{raw.name}`  /  {build.hhmmss(build.audio_duration(raw))}")
         st.audio(str(raw))
     except FileNotFoundError:
-        st.warning(f"{ep['00_raw']} に収録wavを置いてください")
+        st.warning(f"{ep['00_raw']} に収録ファイル（wav / m4a / OBSの録画）を置いてください")
         raw = None
 
     if raw and st.button("下見の文字起こしを実行", type="primary"):
@@ -176,7 +176,7 @@ with tab_cut:
     cuts = [list(c) for c in (cfg.get("cuts") or [])]
 
     try:
-        raw = build.find_raw(ep)
+        raw = build.find_raw(ep, cfg)
         total = build.audio_duration(raw)
     except FileNotFoundError:
         st.warning("収録wavがありません")

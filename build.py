@@ -77,10 +77,31 @@ def hhmmss(seconds):
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def find_raw(ep):
-    files = sorted(ep["00_raw"].glob("*.wav")) + sorted(ep["00_raw"].glob("*.m4a"))
+VIDEO_EXTS = [".mkv", ".mp4", ".mov", ".flv"]
+
+
+def find_raw(ep, cfg=None):
+    """収録音声を返す。
+
+    OBS の録画ファイルが置いてあれば、音声だけを「録画名.trackN.wav」に取り出してそれを返す。
+    録画が wav より新しければ取り出し直す。
+    """
+    raw_dir = ep["00_raw"]
+    videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
+    if videos:
+        # OBS はマイクとデスクトップ音声を別トラックにできるので、使うトラックを選べるようにする
+        track = ((cfg or {}).get("audio") or {}).get("source_track", 0)
+        src = videos[0]
+        dst = src.with_name(f"{src.stem}.track{track}.wav")
+        if not dst.exists() or dst.stat().st_mtime < src.stat().st_mtime:
+            run(["ffmpeg", "-y", "-i", str(src), "-map", f"0:a:{track}", "-vn",
+                 "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)])
+            print(f"-> {dst}  (録画から音声を取り出しました)")
+        return dst
+
+    files = sorted(raw_dir.glob("*.wav")) + sorted(raw_dir.glob("*.m4a"))
     if not files:
-        raise FileNotFoundError(f"{ep['00_raw']} に音声ファイルがありません")
+        raise FileNotFoundError(f"{raw_dir} に音声ファイルがありません")
     return files[0]
 
 
@@ -101,25 +122,54 @@ def save_config(ep, cfg):
     )
 
 
+def preload_cuda_libs():
+    """pip で入れた nvidia-cublas-cu12 / nvidia-cudnn-cu12 を先に読み込んでおく。
+
+    ctranslate2 はライブラリを名前で探すので、読み込み済みにしておけば
+    LD_LIBRARY_PATH を設定しなくても GPU で動く。入っていなければ何もしない。
+    """
+    import ctypes
+    import site
+
+    for sp in site.getsitepackages():
+        for pattern in ["cublas/lib/libcublasLt.so.*", "cublas/lib/libcublas.so.*",
+                        "cudnn/lib/libcudnn*.so.*"]:
+            for lib in sorted(Path(sp, "nvidia").glob(pattern)):
+                try:
+                    ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
+                except OSError:
+                    pass
+
+
 def transcribe_file(src, cfg):
     from faster_whisper import WhisperModel
 
+    preload_cuda_libs()
     t = cfg.get("transcribe", {})
-    model = WhisperModel(t.get("model", "medium"), device="auto", compute_type="int8")
-    segments, _ = model.transcribe(
-        str(src), language=t.get("language", "ja"), vad_filter=False
-    )
-    rows = [
-        {"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
-        for s in segments
-    ]
+
+    def run_on(device, compute_type):
+        model = WhisperModel(t.get("model", "medium"), device=device, compute_type=compute_type)
+        segments, _ = model.transcribe(
+            str(src), language=t.get("language", "ja"), vad_filter=False
+        )
+        # segments は遅延評価なので、GPU の失敗はここで起きる
+        return [
+            {"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
+            for s in segments
+        ]
+
+    try:
+        rows = run_on("auto", "int8")
+    except RuntimeError as exc:
+        print(f"(GPU で失敗したので CPU でやり直します: {exc})", flush=True)
+        rows = run_on("cpu", "int8")
     return {"segments": rows, "full_text": "".join(r["text"] for r in rows)}
 
 
 # ---------------------------------------------------------------- 01. 下見
 
 def step_scan(ep, cfg):
-    src = find_raw(ep)
+    src = find_raw(ep, cfg)
     dst = ep["02_text"] / "scan.json"
     data = transcribe_file(src, cfg)
     data["source"] = src.name
@@ -161,7 +211,7 @@ def invert_ranges(cuts, total):
 
 
 def step_cut(ep, cfg):
-    src = find_raw(ep)
+    src = find_raw(ep, cfg)
     dst = ep["01_cut"] / "cut.wav"
     total = audio_duration(src)
     cuts = normalize_cuts(cfg.get("cuts") or [], total)
@@ -194,7 +244,7 @@ def step_cut(ep, cfg):
 def step_clean(ep, cfg):
     src = ep["01_cut"] / "cut.wav"
     if not src.exists():
-        src = find_raw(ep)
+        src = find_raw(ep, cfg)
         print("(カット未実行のため 00_raw をそのまま使います)")
     dst = ep["01_clean"] / "clean.wav"
 

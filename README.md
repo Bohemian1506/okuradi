@@ -1,6 +1,6 @@
 # 10分ラジオ 自動制作パイプライン
 
-収録したwavを1本置いて、コマンドを2回叩くと限定公開までいく。
+収録ファイル（wav / m4a / OBSの録画）を1本置いて、コマンドを2回叩くと限定公開までいく。
 
 ## 工程
 
@@ -27,7 +27,7 @@ radio/
 │   └── normal.png        # 背景画像。将来ここに表情差分が並ぶ
 └── ep01/
     ├── config.yml        # この回の設定。毎回ここだけ書き換える
-    ├── 00_raw/           # 収録wavを置く
+    ├── 00_raw/           # 収録ファイルを置く（wav / m4a / OBSの録画）
     ├── 01_cut/           # カット後
     ├── 01_clean/         # 整音後
     ├── 02_text/          # 文字起こし
@@ -51,6 +51,14 @@ ffmpeg -version
 
 ```
 pip install -r requirements.txt
+```
+
+NVIDIA の GPU で文字起こしを速くする場合は、CUDA のライブラリも入れる（約2GB）。
+build.py が自動で読み込むので、LD_LIBRARY_PATH の設定は要らない。
+入れなくても CPU で動く（遅くなるだけ）。
+
+```
+pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
 ```
 
 ### 3. Claude Code
@@ -78,7 +86,7 @@ claude auth status   # authMethod が claude.ai になっていること
 ## 使い方
 
 ```
-# 1. ep01/00_raw/ に収録wavを置く
+# 1. ep01/00_raw/ に収録ファイルを置く
 # 2. ep01/config.yml の theme を書き換える
 
 python build.py ep01 --to scan           # 下見の文字起こし
@@ -101,6 +109,15 @@ python build.py ep01 --from transcribe   # 残り全部
 python build.py ep01 --from meta --to meta     # タイトルだけ作り直す
 python build.py ep01 --from video --to video   # 画像を変えて動画だけ再生成
 ```
+
+## OBS で録る場合
+
+録画ファイル（mkv / mp4 / mov / flv）を `00_raw/` にそのまま置けばよい。
+最初に使うときに音声だけが `録画名.track0.wav`（48kHz・モノラル・16bit）として
+取り出され、以降の工程はそれを使う。録り直して録画が新しくなれば取り出し直す。
+
+マイクとデスクトップ音声を別トラックで録っている場合は、config.yml の
+`audio.source_track` で使うトラックを選ぶ（0 始まり。既定は 0）。
 
 ## 2回目以降
 
