@@ -32,11 +32,13 @@ Herdr は、Claude を何人も並べて動かすための端末アプリ。画�
 
 ## 起動する
 
-WSL の端末で、次の1つを打つ。
+**WezTerm で F12 → 「herdr: okuradi」** を選ぶ（`start.sh` が動く）。
+WSL の端末から打つときは、次のどれか。
 
 ```bash
 ~/workspace/okuradi/start.sh        # いつもの起動
 ~/workspace/okuradi/start.sh -c     # 前回の会話の続きから Claude を起動する
+~/workspace/okuradi/start.sh -h     # 使い方を出す
 ```
 
 `start.sh` がまとめてやること:
@@ -49,6 +51,7 @@ WSL の端末で、次の1つを打つ。
 - `--no-attach` を付けると、画面は切り替えず、用意だけする
 - `lead` が確認の画面（フォルダを信頼するか など）で止まったら、Herdr の画面で答える
 - 何度打っても、ワークスペースや `lead` が二重にできることはない
+- 失敗したときは、理由と次にすることが出る（WezTerm のメニューから開いたときは、Enter を押すまで画面が残る）
 
 手で起動する場合は、`cd ~/workspace/okuradi && herdr` のあと、最初のペインで
 `herdr agent start lead --kind claude --pane "$HERDR_PANE_ID"` を打つ。
@@ -148,7 +151,17 @@ git branch -d feature/episode-list                # 手元のブランチも消�
 
 - 画面を離れた後に戻る: もう一度 `start.sh`（`lead` が動いていれば、そのまま開くだけ）
 - PC を再起動した後: Herdr の中の処理は止まっている。`start.sh -c` で、前回の会話の続きから起動し直す
+  - `-c` を付け忘れて新しい会話で起動してしまったときは、Claude で `/resume` を打つと、前の会話を選び直せる
 - 全部止める: `herdr server stop`（中の Claude も止まる。作業中の担当がいないときだけ）
+
+## フリーライフと一緒に使う
+
+Herdr は1つだけ動き、その中にワークスペースが並ぶ。フリーライフ（`フリーライフ資料`）と okuradi は、同じ Herdr の中の別のワークスペースになる。
+
+- どちらのメニュー（F12 の「herdr: フリーライフ資料」「herdr: okuradi」）から開いても、同じ Herdr が開く。左のサイドバーで両方のワークスペースを行き来できる
+- `start.sh` は okuradi のワークスペースにしか触らない。フリーライフの担当（`director` など）には影響しない
+- 担当の名前は Herdr 全体で重ならないようにする（okuradi は `lead` と `impl-<番号>`）
+- PC を再起動した後は、それぞれの手順で起動し直す（フリーライフは、そちらの `start.sh`）
 
 ## 困ったとき
 
