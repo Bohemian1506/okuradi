@@ -58,6 +58,7 @@ clone し直したら `git config core.hooksPath .githooks` を実行する（`.
 Issue を並行で進めるときは Herdr で Claude を増やす。使い方は `docs/herdr.md`。
 
 ## 作業の流れ
+0. 始めるときは `docs/handoff.md`（申し送り）を読む。区切るときは上書きして PR にする
 1. Issue を確かめる（無ければ作る）
 2. ブランチを作る
 3. 調査（必要なとき `audio-researcher`）→ 実装 → テスト
