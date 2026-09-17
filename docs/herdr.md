@@ -32,13 +32,24 @@ Herdr は、Claude を何人も並べて動かすための端末アプリ。画�
 
 ## 起動する
 
-**WezTerm で F12 → 「herdr: okuradi」** を選ぶ（`start.sh` が動く）。
+**WezTerm で F12** を押し、開くものを選ぶ（どれも `start.sh` が動く）。
+
+| メニュー | 起動するもの | 開く画面 |
+|---|---|---|
+| herdr: okuradi | okuradi（`lead`） | okuradi |
+| herdr: フリーライフ資料 | okuradi（`lead`）。フリーライフは今までどおり手で起動する | フリーライフ |
+| herdr: okuradi + フリーライフ | okuradi（`lead`）と、フリーライフ（編集局長・編集長・副局長） | okuradi |
+
+しばらくは2つを並行して進めるので、フリーライフのメニューからでも okuradi の `lead` まで起動する。
+
 WSL の端末から打つときは、次のどれか。
 
 ```bash
-~/workspace/okuradi/start.sh        # いつもの起動
-~/workspace/okuradi/start.sh -c     # 前回の会話の続きから Claude を起動する
-~/workspace/okuradi/start.sh -h     # 使い方を出す
+~/workspace/okuradi/start.sh                   # okuradi を起動して開く
+~/workspace/okuradi/start.sh -c                # 前回の会話の続きから Claude を起動する
+~/workspace/okuradi/start.sh --with-freelife   # フリーライフも起動する
+~/workspace/okuradi/start.sh --open-freelife   # 最後にフリーライフの画面を開く（フリーライフは起動しない）
+~/workspace/okuradi/start.sh -h                # 使い方を出す
 ```
 
 `start.sh` がまとめてやること:
@@ -159,9 +170,11 @@ git branch -d feature/episode-list                # 手元のブランチも消�
 Herdr は1つだけ動き、その中にワークスペースが並ぶ。フリーライフ（`フリーライフ資料`）と okuradi は、同じ Herdr の中の別のワークスペースになる。
 
 - どちらのメニュー（F12 の「herdr: フリーライフ資料」「herdr: okuradi」）から開いても、同じ Herdr が開く。左のサイドバーで両方のワークスペースを行き来できる
-- `start.sh` は okuradi のワークスペースにしか触らない。フリーライフの担当（`director` など）には影響しない
+- `start.sh` がフリーライフに対してするのは、ワークスペースを用意することと、`--with-freelife` のときにフリーライフの `start.sh` を実行することだけ。フリーライフのリポジトリや担当（`director` など）には手を入れない
+- `--with-freelife` は、フリーライフの編集局長（`director`）がすでに動いていれば何もしない
+- フリーライフの `start.sh` は、フリーライフのワークスペースの中の、何も動いていないシェルで実行する。空いているシェルが無いときは、フリーライフの画面で手で `./start.sh` を実行する
 - 担当の名前は Herdr 全体で重ならないようにする（okuradi は `lead` と `impl-<番号>`）
-- PC を再起動した後は、それぞれの手順で起動し直す（フリーライフは、そちらの `start.sh`）
+- PC を再起動した後は、F12 →「herdr: okuradi + フリーライフ」で両方を起動し直せる
 
 ## 困ったとき
 

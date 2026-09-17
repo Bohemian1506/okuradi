@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # okuradi の作業環境を1つのコマンドで開く。
 #
-#   ./start.sh [-c|--continue] [--no-attach]
+#   ./start.sh [-c|--continue] [--with-freelife | --open-freelife] [--no-attach]
 #
 #   1. Herdr のサーバーが止まっていれば起動する
 #   2. okuradi のワークスペース（タブ main / run）を用意する。あれば使い回す
@@ -9,6 +9,10 @@
 #   4. 画面を lead に切り替えて、Herdr を開く（Herdr の中から実行したときは切り替えだけ）
 #
 #   -c, --continue  前回の会話の続きから Claude を起動する（claude --continue）
+#   --with-freelife フリーライフ（~/フリーライフ資料）も起動する。
+#                   そのワークスペースの中で、フリーライフの start.sh を実行する（フリーライフ側は変えない）
+#   --open-freelife フリーライフのワークスペースを用意し（起動はしない）、最後にフリーライフの画面を開く。
+#                   okuradi の準備は同じようにする（F12 の「herdr: フリーライフ資料」用）
 #   --no-attach     画面の切り替えも、Herdr を開くこともしない（用意だけする）
 #   -h, --help      この説明を出す
 #
@@ -23,11 +27,15 @@ LEAD="lead"
 
 CONTINUE="off"
 ATTACH="on"
+WITH_FREELIFE="off"
+OPEN_FREELIFE="off"
 for arg in "$@"; do
   case "$arg" in
     -c|--continue) CONTINUE="on" ;;
     --no-attach)   ATTACH="off" ;;
-    -h|--help)     sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --with-freelife) WITH_FREELIFE="on" ;;
+    --open-freelife) OPEN_FREELIFE="on" ;;
+    -h|--help)     sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "知らないオプションです: $arg（--help で使い方を表示）" >&2; exit 1 ;;
   esac
 done
@@ -65,6 +73,25 @@ status_ja() {
   esac
 }
 
+# ペインが「何も動いていないシェル」か
+pane_is_idle_shell() {
+  herdr pane process-info --pane "$1" 2>/dev/null | jq -e '
+    .result.process_info as $p
+    | ($p.foreground_processes | length) == 1
+      and $p.foreground_processes[0].pid == $p.shell_pid' >/dev/null 2>&1
+}
+
+# 作ったばかりのペインは、シェルの準備ができるまで少し待つ
+wait_idle_shell() {
+  for _ in $(seq 1 40); do pane_is_idle_shell "$1" && return 0; sleep 0.25; done
+  return 1
+}
+
+# ラベルでワークスペースを探す
+workspace_by_label() {
+  herdr workspace list | jq -r --arg l "$1" '[.result.workspaces[]? | select(.label == $l)][0].workspace_id // empty'
+}
+
 # ── 1. サーバー ───────────────────────────────────────────────
 server_running() { herdr status server --json 2>/dev/null | jq -e '.running == true' >/dev/null 2>&1; }
 
@@ -75,8 +102,71 @@ if ! server_running; then
   server_running || fail "Herdr を起動できませんでした。~/.config/herdr/ のログを見るか、もう一度実行してください"
 fi
 
+# ── 1-b. フリーライフ（--with-freelife / --open-freelife のとき）──
+# フリーライフの start.sh は「フリーライフのワークスペースの中の、何も動いていないシェル」から
+# 実行すると、そのペインを編集局長にし、編集長・副局長も起動する。ここではその入口を用意するだけ。
+FL_DIR="${FREELIFE_MAIN_DIR:-$HOME/フリーライフ資料}"
+FL_LABEL="$(basename "$FL_DIR")"
+fl_ws=""
+fl_new_pane=""
+
+# フリーライフのワークスペースが無ければ作る
+ensure_freelife_workspace() {
+  local out
+  fl_ws=$(workspace_by_label "$FL_LABEL")
+  [[ -n "$fl_ws" ]] && return 0
+  say "フリーライフのワークスペースを作ります"
+  out=$(herdr workspace create --cwd "$FL_DIR" --label "$FL_LABEL" --no-focus 2>&1)
+  fl_ws=$(jq -r '.result.workspace.workspace_id // empty' <<<"$out" 2>/dev/null)
+  fl_new_pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out" 2>/dev/null)
+  if [[ -z "$fl_ws" ]]; then
+    say "（フリーライフのワークスペースを作れませんでした: $(error_of "$out")）"
+    return 1
+  fi
+}
+
+start_freelife() {
+  local pane out director_ws
+  director_ws=$(herdr agent get director 2>/dev/null | jq -r '.result.agent.workspace_id // empty' 2>/dev/null)
+  if [[ -n "$director_ws" && "$director_ws" == "$fl_ws" ]]; then
+    say "フリーライフはすでに動いています"
+    return
+  fi
+
+  pane=""
+  if [[ -n "$fl_new_pane" ]] && wait_idle_shell "$fl_new_pane"; then
+    pane="$fl_new_pane"
+  else
+    for p in $(herdr pane list --workspace "$fl_ws" | jq -r --arg d "$FL_DIR" '.result.panes[]? | select(.cwd == $d) | .pane_id'); do
+      if pane_is_idle_shell "$p"; then pane="$p"; break; fi
+    done
+  fi
+  if [[ -z "$pane" ]]; then
+    say "（フリーライフのワークスペースに空いているシェルが無いため、フリーライフは起動しませんでした。フリーライフの画面で ./start.sh を実行してください）"
+    return
+  fi
+
+  out=$(herdr pane run "$pane" ./start.sh 2>&1)
+  if [[ -n "$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null)" ]]; then
+    say "（フリーライフの start.sh を実行できませんでした: $(error_of "$out")）"
+    return
+  fi
+  say "フリーライフの起動を始めました（編集局長・編集長・副局長が順に立ち上がります）"
+}
+
+if [[ "$WITH_FREELIFE" == "on" || "$OPEN_FREELIFE" == "on" ]]; then
+  if [[ ! -x "$FL_DIR/start.sh" ]]; then
+    say "（フリーライフが見つからないため、okuradi だけ用意します: $FL_DIR）"
+    OPEN_FREELIFE="off"
+  elif ensure_freelife_workspace; then
+    [[ "$WITH_FREELIFE" == "on" ]] && start_freelife
+  else
+    OPEN_FREELIFE="off"
+  fi
+fi
+
 # ── 2. ワークスペース ─────────────────────────────────────────
-ws=$(herdr workspace list | jq -r --arg l "$LABEL" '[.result.workspaces[]? | select(.label == $l)][0].workspace_id // empty')
+ws=$(workspace_by_label "$LABEL")
 
 root_pane=""
 if [[ -z "$ws" ]]; then
@@ -109,20 +199,6 @@ if [[ -n "$lead_ws" && "$lead_ws" != "$ws" ]]; then
 そちらの Claude を終了するか、名前を変えてから、もう一度実行してください。
   名前の変え方: herdr agent rename $LEAD <新しい名前>"
 fi
-
-# ペインが「何も動いていないシェル」か
-pane_is_idle_shell() {
-  herdr pane process-info --pane "$1" 2>/dev/null | jq -e '
-    .result.process_info as $p
-    | ($p.foreground_processes | length) == 1
-      and $p.foreground_processes[0].pid == $p.shell_pid' >/dev/null 2>&1
-}
-
-# 作ったばかりのペインは、シェルの準備ができるまで少し待つ
-wait_idle_shell() {
-  for _ in $(seq 1 40); do pane_is_idle_shell "$1" && return 0; sleep 0.25; done
-  return 1
-}
 
 if [[ -n "$lead_ws" ]]; then
   say "$LEAD はすでに動いています（$(status_ja "$(jq -r '.result.agent.agent_status' <<<"$lead_json")")）"
@@ -177,14 +253,26 @@ fi
 
 # ── 4. 画面を切り替えて開く ───────────────────────────────────
 if [[ "$ATTACH" == "off" ]]; then
-  say "準備ができました。Herdr の画面で okuradi を開いてください"
+  if [[ "$OPEN_FREELIFE" == "on" ]]; then
+    say "準備ができました。Herdr の画面でフリーライフを開いてください"
+  else
+    say "準備ができました。Herdr の画面で okuradi を開いてください"
+  fi
   exit 0
 fi
 
-herdr workspace focus "$ws" >/dev/null 2>&1
-herdr agent focus "$LEAD" >/dev/null 2>&1
+if [[ "$OPEN_FREELIFE" == "on" ]]; then
+  herdr workspace focus "$fl_ws" >/dev/null 2>&1
+  open_dir="$FL_DIR"
+  opened="フリーライフ"
+else
+  herdr workspace focus "$ws" >/dev/null 2>&1
+  herdr agent focus "$LEAD" >/dev/null 2>&1
+  open_dir="$ROOT"
+  opened="okuradi"
+fi
 
 if [[ "${HERDR_ENV:-}" != "1" && -t 0 && -t 1 ]]; then
-  cd "$ROOT" && exec herdr
+  cd "$open_dir" && exec herdr
 fi
-say "準備ができました。okuradi に切り替えました"
+say "準備ができました。$opened に切り替えました"
