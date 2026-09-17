@@ -32,28 +32,28 @@ Herdr は、Claude を何人も並べて動かすための端末アプリ。画�
 
 ## 起動する
 
-1. WSL の端末（WezTerm）で次を打つ
+WSL の端末で、次の1つを打つ。
 
-   ```bash
-   cd ~/workspace/okuradi && herdr
-   ```
+```bash
+~/workspace/okuradi/start.sh        # いつもの起動
+~/workspace/okuradi/start.sh -c     # 前回の会話の続きから Claude を起動する
+```
 
-2. 最初のペインで、名前を付けて Claude を起動する
+`start.sh` がまとめてやること:
+1. Herdr のサーバーが止まっていれば起動する
+2. okuradi のワークスペース（タブ `main` と `run`）を用意する。すでにあれば使い回す
+3. `main` タブで、メインの Claude を `lead` という名前で起動する。すでに動いていれば起動しない
+4. 画面を `lead` に切り替えて、Herdr を開く
 
-   ```bash
-   herdr agent start lead --kind claude --pane "$HERDR_PANE_ID"
-   ```
+- Herdr の中から実行したときは、4 は画面の切り替えだけになる（Herdr の中から Herdr は開けないため）
+- `--no-attach` を付けると、画面は切り替えず、用意だけする
+- `lead` が確認の画面（フォルダを信頼するか など）で止まったら、Herdr の画面で答える
+- 何度打っても、ワークスペースや `lead` が二重にできることはない
 
-   先に `claude` だけで起動した場合は、Claude に「Herdr での自分の名前を lead にして」と頼む（`herdr agent rename "$HERDR_PANE_ID" lead` を打ってくれる）。
+手で起動する場合は、`cd ~/workspace/okuradi && herdr` のあと、最初のペインで
+`herdr agent start lead --kind claude --pane "$HERDR_PANE_ID"` を打つ。
 
-3. アプリやログ用のタブを作るときは、`Ctrl+b` → `c` で作り、名前を付ける
-
-   ```bash
-   herdr tab list                      # タブの ID を確かめる
-   herdr tab rename <タブのID> run
-   ```
-
-Herdr の中から `herdr` をもう一度起動することはできない（入れ子を防ぐ仕様）。Herdr の中で tmux も起動しない（状態の表示が効かなくなる）。
+Herdr の中で tmux は起動しない（状態の表示が効かなくなる）。
 
 ## 画面の構成
 
@@ -146,8 +146,8 @@ git branch -d feature/episode-list                # 手元のブランチも消�
 
 ## 戻る・止める
 
-- 画面を離れた後に戻る: もう一度 `cd ~/workspace/okuradi && herdr`
-- PC を再起動した後: Herdr の中の処理は止まっている。`herdr` で起動し直し、Claude を起動し直す（連携により、前の会話を再開できる。Claude の `/resume` でも選べる）
+- 画面を離れた後に戻る: もう一度 `start.sh`（`lead` が動いていれば、そのまま開くだけ）
+- PC を再起動した後: Herdr の中の処理は止まっている。`start.sh -c` で、前回の会話の続きから起動し直す
 - 全部止める: `herdr server stop`（中の Claude も止まる。作業中の担当がいないときだけ）
 
 ## 困ったとき
