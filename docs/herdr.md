@@ -1,90 +1,135 @@
 # Herdr の使い方（okuradi）
 
-Herdr は、Claude を何人も並べて動かすための端末アプリ。tmux と同じく、画面を閉じても中の処理は動き続ける。
-各ペインの Claude が「作業中 / 承認待ち / 完了」のどれかを、サイドバーに出し続ける。
+Herdr は、Claude を何人も並べて動かすための端末アプリ。画面を閉じても、中の処理は動き続ける。
+各 Claude が「作業中 / 承認待ち / 完了」のどれかを、画面の左（サイドバー）に出し続ける。
 
 - 公式ドキュメント: https://herdr.dev/docs/
-- 入っている版: 0.8.2（`herdr --version`）
-- 設定: `~/.config/herdr/config.toml`（通知は WezTerm 経由で Windows のトーストに出す設定済み）
-- Claude との連携: `herdr integration install claude` 済み（会話の復元ができる）
-- Claude が Herdr を操作するためのスキル: `~/.claude/skills/herdr/SKILL.md`（`herdr --skill` の出力。Herdr を更新したら入れ直す）
+- 手元の状態（2026-09-17 に確認）
+  - 版: 0.8.2（`herdr --version`）
+  - 設定: `~/.config/herdr/config.toml`（通知は WezTerm 経由で Windows のトーストに出す）
+  - Claude との連携: `herdr integration install claude` 済み（Claude の会話を復元できる）
+  - Claude が Herdr を操作するためのスキル: `~/.claude/skills/herdr/SKILL.md`（`herdr --skill` の出力。Herdr を更新したら入れ直す）
+
+## 言葉
+
+| 言葉 | 意味 |
+|---|---|
+| ワークスペース（workspace） | 作業場所1つ分の画面のまとまり。okuradi 本体で1つ、並行作業のフォルダごとに1つ |
+| タブ（tab） | ワークスペースの中の画面の切り替え |
+| ペイン（pane） | 画面の区切り1つ。中で端末や Claude が動く |
+| 作業フォルダ（worktree） | 同じリポジトリを、別のブランチで別の場所に取り出したもの。並行作業で使う |
+| prefix | Herdr への合図のキー。`Ctrl+b` を押して離してから、次のキーを押す |
 
 ## サブエージェントと Herdr の使い分け
 
 | | サブエージェント（`.claude/agents/`） | Herdr |
 |---|---|---|
-| 何が動くか | メインの会話の中から呼ぶ担当。結果だけが返る | 別のペインで動く、独立した Claude |
+| 何が動くか | メインの Claude が会話の中から呼ぶ担当。結果だけが返る | 別のペインで動く、独立した Claude |
 | 向いている作業 | 調査、レビュー、小さめの実装 | Issue 単位の長い実装を並行で進める |
 | 人が直接話せるか | 話せない | 話せる（そのペインを開いて入力する） |
 
-まずはサブエージェントで回し、Issue を並行で進めたくなったら Herdr のペインを増やす。
+まずはメインの Claude（`lead`）1人で使って慣れる。Issue を並行で進めたくなったら、ペインを増やす。
+
+## 起動する
+
+1. WSL の端末（WezTerm）で次を打つ
+
+   ```bash
+   cd ~/workspace/okuradi && herdr
+   ```
+
+2. 最初のペインで、名前を付けて Claude を起動する
+
+   ```bash
+   herdr agent start lead --kind claude --pane "$HERDR_PANE_ID"
+   ```
+
+   先に `claude` だけで起動した場合は、Claude に「Herdr での自分の名前を lead にして」と頼む（`herdr agent rename "$HERDR_PANE_ID" lead` を打ってくれる）。
+
+3. アプリやログ用のタブを作るときは、`Ctrl+b` → `c` で作り、名前を付ける
+
+   ```bash
+   herdr tab list                      # タブの ID を確かめる
+   herdr tab rename <タブのID> run
+   ```
+
+Herdr の中から `herdr` をもう一度起動することはできない（入れ子を防ぐ仕様）。Herdr の中で tmux も起動しない（状態の表示が効かなくなる）。
 
 ## 画面の構成
 
 ```
-workspace: okuradi
-├─ tab "main"
-│  ├─ lead        メインの Claude（あなたと話す・指示と回収をする） @ okuradi
-│  └─ （必要なとき）impl-5 など、Issue ごとの実装担当
-├─ tab "run"       アプリのサーバー・ログ・長い処理
-└─ workspace: okuradi-<ブランチ>   herdr worktree create で作る、並行作業用の作業フォルダ
+ワークスペース: okuradi（本体）
+├─ タブ main
+│  └─ lead        メインの Claude（あなたと話す・指示と回収をする）
+└─ タブ run       アプリのサーバー・ログ・長い処理
+
+ワークスペース: okuradi-<ブランチ>（並行作業のとき、Issue ごとに1つ）
+└─ タブ
+   └─ impl-5      その Issue の実装担当
 ```
 
-**宛先は名前で指定する。** ペインの ID（`w1:p2` など）は閉じると二度と使われないので、覚えておいても役に立たない。
+**担当は名前で呼ぶ。** ペインの ID（`w1:p2` など）は、閉じると二度と使われない。
 
 | 名前 | 役割 |
 |---|---|
 | `lead` | メインの Claude |
 | `impl-<Issue 番号>` | その Issue の実装担当（例: `impl-5`） |
 
-## 起動のしかた
-
-1. WSL の端末（WezTerm）で `cd ~/workspace/okuradi && herdr`
-2. 最初のペインで `claude` を起動する
-3. メインの Claude に名前を付ける（Claude に頼んでもよい）
-
-   ```bash
-   herdr agent rename "$HERDR_PANE_ID" lead
-   ```
-
-Herdr の中から `herdr` をもう一度起動することはできない（入れ子を防ぐ仕様）。
-Herdr の中で tmux も起動しない（状態の表示が効かなくなる）。
-
 ## Issue を並行で進める
 
-メインの Claude（`lead`）に「#5 を別のペインで進めて」と頼むと、次の流れで動く。
+`lead` に「#5 を別のペインで進めて」と頼むと、次の流れで動く。
 
 ```bash
-# 1. ブランチつきの作業フォルダを、別の workspace として作る
+# 1. ブランチつきの作業フォルダを、別のワークスペースとして作る
 herdr worktree create --branch feature/episode-list --base main \
   --path ../okuradi-wt/episode-list --label "#5 回の管理" --no-focus
-# → 返ってきた JSON の root_pane の ID を使う
+# → 返ってくる結果の root_pane にペインの ID が入っている
 
-# 2. そのペインで Claude を起動して名前を付ける
-herdr agent start impl-5 --kind claude --pane <ペインID>
+# 2. そのペインで Claude を起動し、名前を付ける
+herdr agent start impl-5 --kind claude --pane <ペインのID>
 
-# 3. 指示を送り、区切りがつくまで待つ
-herdr agent prompt impl-5 "Issue #5 を実装して、PR を作ったら報告して" --wait --timeout 1800000
+# 3. 指示を送る（送ったらすぐ戻る）
+herdr agent prompt impl-5 "Issue #5 を実装して、PR を作ったら報告して"
 
-# 4. 様子を見る
+# 4. ときどき様子を見る（待つのは1回10分まで。長い作業は繰り返す）
+herdr agent wait impl-5 --timeout 600000   # 600000 = 10分（単位はミリ秒）
 herdr agent get impl-5
 herdr agent read impl-5 --source recent-unwrapped --lines 120
 ```
 
-- 担当が「承認待ち」になったら、`lead` は勝手に答えず、あなたに確認する
+- `lead` が `worktree create`・`agent start`・`agent prompt` を使うときは、毎回許可を求めてくる。中身（ブランチ名・指示の文）を見て許可する
+- 待っている間も、`lead` とは話せる（`lead` が様子見をバックグラウンドで回すため）
+- 担当が「承認待ち」になったら、`lead` は勝手に答えず、あなたに知らせる。担当の画面へは次で移る
+
+  ```bash
+  herdr agent focus impl-5
+  ```
+
+  サイドバーの担当をクリックしても移れる。
 - 並べるのは **2つまで** を目安にする（レビューと確認が追いつかなくなるため）
-- 終わった作業フォルダは、PR がマージされてから `herdr worktree remove` で片付ける
+
+### 片付ける
+
+PR がマージされてから片付ける。**本体の okuradi のワークスペースは対象にしない**（音声や途中のファイルがある）。
+
+```bash
+herdr worktree list                               # 並行作業のワークスペースの ID を確かめる
+herdr worktree remove --workspace <そのワークスペースのID>
+git branch -d feature/episode-list                # 手元のブランチも消す
+```
+
+`--workspace` を省くと、今いるワークスペースが対象になる。必ず ID を指定する。
 
 ### 作業フォルダで気をつけること
 
 - **音声や途中のファイルは入っていない。** `ep*/0*_*/` は git の管理外なので、新しい作業フォルダには `config.yml` しかない。
-  試すときは、テスト用の短い音声を作るか、元のフォルダの `ep01` を読むだけにする。
-- **Python の仮想環境が無い。** 元のフォルダの `.venv` を使う（`../../okuradi/.venv/bin/python`）か、作業フォルダで作る。
-- **`git config core.hooksPath .githooks` は作業フォルダでも効く**（リポジトリ共通の設定なので）。
+  試すときは、テスト用の短い音声を作るか、本体の `ep01` の音声を読むだけにする（本体のファイルは書き換えない）。
+- **Python の仮想環境が無い。** 本体の `.venv` を使う（`~/workspace/okuradi/.venv/bin/python`）か、作業フォルダで作る。
+- **main への push を止める仕組みは、作業フォルダでも効く。** ただし、その仕組みが main に入った後に作ったブランチに限る。
 
 ## よく使うキー
 
-prefix は `Ctrl+b`（tmux と同じ）。マウスでも全部操作できる。
+マウスでも全部操作できる（クリックで移動、境目のドラッグで大きさを変える、右クリックでメニュー）。
 
 | 操作 | キー |
 |---|---|
@@ -97,7 +142,13 @@ prefix は `Ctrl+b`（tmux と同じ）。マウスでも全部操作できる�
 | 画面を離れる（処理は続く） | `Ctrl+b` → `q` |
 | キーの一覧 | `Ctrl+b` → `?` |
 
-戻るときは、もう一度 `herdr` を起動する。全部止めるときだけ `herdr server stop`（中の Claude も止まる）。
+ワークスペースの切り替えは、サイドバーをクリックするか、`herdr agent focus <名前>` で担当ごと移る。
+
+## 戻る・止める
+
+- 画面を離れた後に戻る: もう一度 `cd ~/workspace/okuradi && herdr`
+- PC を再起動した後: Herdr の中の処理は止まっている。`herdr` で起動し直し、Claude を起動し直す（連携により、前の会話を再開できる。Claude の `/resume` でも選べる）
+- 全部止める: `herdr server stop`（中の Claude も止まる。作業中の担当がいないときだけ）
 
 ## 困ったとき
 

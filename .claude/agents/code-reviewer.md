@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: コードレビュー担当（細部）。差分の正しさ・壊れ方・後片付け・読みやすさを見る。PR を作る前と、実装の報告を受けた後に起動する。
+description: コードレビュー担当（細部）。差分の正しさ・壊れ方・後片付け・読みやすさを見る。コード・スクリプト・設定を変えたときに、PR を作る前や実装の報告を受けた後に呼ぶ。
 model: sonnet
 tools: Bash, Read, Grep, Glob
 ---

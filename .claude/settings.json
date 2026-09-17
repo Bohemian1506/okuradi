@@ -12,7 +12,9 @@
       "Bash(herdr pane read:*)",
       "Bash(herdr tab list:*)",
       "Bash(herdr workspace list:*)",
-      "Bash(herdr worktree list:*)"
+      "Bash(herdr worktree list:*)",
+      "Bash(herdr status:*)",
+      "Bash(herdr agent explain:*)"
     ]
   },
   "hooks": {

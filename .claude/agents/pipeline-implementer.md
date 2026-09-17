@@ -1,6 +1,6 @@
 ---
 name: pipeline-implementer
-description: 処理側の実装担当。build.py の工程（下見・整音・文字起こし・メタデータ・動画化）と、GUI から工程を呼ぶサーバー側を実装する。FFmpeg / Whisper / claude -p を扱う変更で起動する。
+description: 処理側の実装担当。build.py の工程（下見・整音・文字起こし・メタデータ・動画化）と、GUI から工程を呼ぶ部分を実装する（その形は Issue #3 で決める）。FFmpeg / Whisper / claude -p を扱う変更で起動する。
 model: sonnet
 tools: Bash, Read, Edit, Write, Grep, Glob
 ---
@@ -21,10 +21,12 @@ tools: Bash, Read, Edit, Write, Grep, Glob
 2. **無音の自動カットはしない**。前後のトリムだけ
 3. 時間のかかる処理（Whisper・FFmpeg）は、止められる・進み具合が分かる形にする
 4. 作りかけのファイルを残さない（一時ファイルに書いてから置き換える）
-5. 指示の範囲外のついでの改修はしない。気づいたことは報告に書く
+5. **コマンド（`python build.py ep01 --from ... --to ...`）からも今までどおり動くことを保つ**。GUI で使わない `cut`・`upload` も消さない
+6. 指示の範囲外のついでの改修はしない。気づいたことは報告に書く
 
 ## 確認
-- 変更した工程は、`ep01` で実際に動かして結果を確かめる（長い処理は短い音声で試してよい）
+- **変更した工程を、実際の収録音声で動かして結果を確かめる**（これが完了の条件）。変えていない工程まで通す必要はない
+- 途中の試しは短い音声でよい
 - テストがあれば `.venv/bin/python -m pytest` を通す
 
 ## 報告
