@@ -54,6 +54,7 @@ clone し直したら `git config core.hooksPath .githooks` を実行する（`.
 
 レビュー担当は毎回全員ではなく、変更に合わせて必要な担当だけを呼ぶ（`/review-team` が選び、理由を示す）。
 
+作業環境は `./start.sh` で開く（Herdr の起動と、メインの Claude `lead` の起動をまとめてやる）。
 Issue を並行で進めるときは Herdr で Claude を増やす。使い方は `docs/herdr.md`。
 
 ## 作業の流れ
