@@ -135,6 +135,11 @@ button, input, select, textarea { font-family: inherit; }
 .dot.is-done { background: var(--dot-done); }
 .dot.is-stale { background: var(--stale); }
 
+.episode.is-broken { opacity: .75; cursor: not-allowed; }
+.episode-error {
+  font: 11px var(--mono); color: var(--stale); margin-top: 8px; line-height: 1.5;
+}
+
 .episodes-empty {
   flex: 1; display: flex; align-items: center; justify-content: center;
   font-size: 12px; color: var(--wood-text); text-align: center; line-height: 1.7;
@@ -168,7 +173,8 @@ button, input, select, textarea { font-family: inherit; }
   padding: 6px 10px; border: none; border-radius: 8px; background: transparent;
   color: var(--muted); font-size: 13px; cursor: pointer;
 }
-.btn-quiet:hover { background: var(--cream-dim); color: var(--ink); }
+.btn-quiet:hover:not(:disabled) { background: var(--cream-dim); color: var(--ink); }
+.btn-quiet:disabled { color: var(--rule); cursor: not-allowed; }
 
 /* ---------------------------------------------------------------- 前面板 */
 

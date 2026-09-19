@@ -4,6 +4,7 @@ build.py の関数をそのまま使う皮。処理の実体は build.py 側に�
 """
 
 import copy
+import shutil
 from pathlib import Path
 
 import yaml
@@ -29,8 +30,13 @@ DEPS = {
     "clean": ["source"],
     "transcribe": ["clean"],
     "meta": ["transcribe"],
-    "video": ["clean", "meta"],
+    # build.py の step_video は clean.wav と config.yml の images しか読まない。
+    # meta.json は使わないので、タイトルを直しても動画は作り直しにならない。
+    "video": ["clean"],
 }
+
+# build.py の cut 工程は GUI では使わない（docs/components.md）。
+# コマンドで cut をやり直しても、GUI の整音は「完了」のままになる。
 
 AUDIO_EXTS = [".wav", ".m4a"]
 
@@ -46,7 +52,12 @@ def config_path(ep_dir):
 
 
 def read_config(ep_dir):
-    return yaml.safe_load(config_path(ep_dir).read_text(encoding="utf-8")) or {}
+    try:
+        return yaml.safe_load(config_path(ep_dir).read_text(encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
+        # YAML のエラーは何行にもなるので、画面に出す分は1行に切り詰める
+        reason = str(exc).splitlines()[0][:80]
+        raise EpisodeError(f"{ep_dir.name}/config.yml が読めません: {reason}") from exc
 
 
 def episode_dirs(root=ROOT):
@@ -54,13 +65,35 @@ def episode_dirs(root=ROOT):
                   if d.is_dir() and config_path(d).exists())
 
 
+def dir_number(ep_dir):
+    """ディレクトリ名から回の番号を取る（ep03 → 3）。config.yml が読めなくても使える。"""
+    digits = "".join(c for c in ep_dir.name if c.isdigit())
+    return int(digits) if digits else 0
+
+
+def resolve(name, root=ROOT):
+    """回の名前を、root の直下に実在する回だけに限る。
+
+    `..` のような名前で回の外を読み書きされないようにする。
+    """
+    for ep_dir in episode_dirs(root):
+        if ep_dir.name == name:
+            return ep_dir
+    raise EpisodeError(f"{name} がありません")
+
+
+def number_of(ep_dir):
+    """回の番号。config.yml が読めなければディレクトリ名から取る。"""
+    try:
+        return episode_number(read_config(ep_dir), ep_dir)
+    except EpisodeError:
+        return dir_number(ep_dir)
+
+
 def episode_number(cfg, ep_dir):
     """config.yml の episode。無ければディレクトリ名（ep03 → 3）から拾う。"""
     n = cfg.get("episode")
-    if isinstance(n, int):
-        return n
-    digits = "".join(c for c in ep_dir.name if c.isdigit())
-    return int(digits) if digits else 0
+    return n if isinstance(n, int) else dir_number(ep_dir)
 
 
 # ---------------------------------------------------------------- 工程の状態
@@ -139,28 +172,55 @@ def summary(ep_dir, cfg):
     }
 
 
+def broken_summary(ep_dir, message):
+    """config.yml が読めない回。一覧から消さずに、読めないことを出す。"""
+    return {
+        "name": ep_dir.name,
+        "episode": dir_number(ep_dir),
+        "theme": "（設定が読めません）",
+        "steps": [],
+        "done": 0,
+        "total": len(STEPS),
+        "error": message,
+    }
+
+
 def list_episodes(root=ROOT):
-    return [summary(d, read_config(d)) for d in episode_dirs(root)]
+    """1つの回が壊れていても、他の回は出す。"""
+    rows = []
+    for ep_dir in episode_dirs(root):
+        try:
+            rows.append(summary(ep_dir, read_config(ep_dir)))
+        except EpisodeError as exc:
+            rows.append(broken_summary(ep_dir, str(exc)))
+    return rows
 
 
-def series_rules(root=ROOT):
-    """コーナーの一覧。いちばん新しい回の config.yml から取る。"""
-    dirs = episode_dirs(root)
-    if not dirs:
-        return {}
-    latest = max(dirs, key=lambda d: episode_number(read_config(d), d))
-    rules = read_config(latest).get("series_rules") or {}
+def rules_of(ep_dir):
+    """その回の config.yml の series_rules を {キー: 表示名} にして返す。"""
+    rules = read_config(ep_dir).get("series_rules") or {}
     return {key: (rule or {}).get("label") or key for key, rule in rules.items()}
 
 
+def series_rules(root=ROOT):
+    """画面に出すコーナーの選択肢。新しい回から順に見て、最初に見つかったものを使う。"""
+    for ep_dir in sorted(episode_dirs(root), key=dir_number, reverse=True):
+        try:
+            rules = rules_of(ep_dir)
+        except EpisodeError:
+            continue
+        if rules:
+            return rules
+    return {}
+
+
 def detail(name, root=ROOT):
-    ep_dir = root / name
-    if not config_path(ep_dir).exists():
-        raise EpisodeError(f"{name} がありません")
+    ep_dir = resolve(name, root)
     cfg = read_config(ep_dir)
     data = summary(ep_dir, cfg)
-    data["segments"] = [{"series": s.get("series"), "theme": s.get("theme") or ""}
-                        for s in (cfg.get("segments") or [])]
+    # segments は、表情差分や BGM など将来のキーも含めてそのまま渡す。
+    # 画面はこれを持ち回り、保存のときに返してくるので、知らないキーが消えない。
+    data["segments"] = copy.deepcopy(cfg.get("segments") or [])
     return data
 
 
@@ -168,7 +228,7 @@ def next_number(root=ROOT):
     dirs = episode_dirs(root)
     if not dirs:
         return 1
-    return max(episode_number(read_config(d), d) for d in dirs) + 1
+    return max(number_of(d) for d in dirs) + 1
 
 
 # ---------------------------------------------------------------- 作成・保存
@@ -180,18 +240,23 @@ def template_config(number, root=ROOT):
         raise EpisodeError(
             "ひな型にする回がありません。最初の回は手で作ってください（ep01 のように）"
         )
-    numbered = [(episode_number(read_config(d), d), d) for d in dirs]
-    before = [d for n, d in numbered if n < number]
-    source = before[-1] if before else min(numbered)[1]
+    numbered = sorted((number_of(d), d.name, d) for d in dirs)
+    before = [d for n, _, d in numbered if n < number]
+    source = before[-1] if before else numbered[0][2]
     return read_config(source)
 
 
-def validate_segments(segments, root=ROOT):
+def validate_segments(segments, known):
+    """コーナーの並びを確かめる。known はその回の series_rules。
+
+    知らないキー（将来の表情差分・BGM など）は、そのまま残す。
+    """
     if not segments:
         raise EpisodeError("コーナーを1つ以上入れてください")
-    known = series_rules(root)
     cleaned = []
     for segment in segments:
+        if not isinstance(segment, dict):
+            raise EpisodeError("コーナーの形が違います")
         series = (segment.get("series") or "").strip()
         theme = (segment.get("theme") or "").strip()
         if not series:
@@ -200,7 +265,10 @@ def validate_segments(segments, root=ROOT):
             raise EpisodeError(f"知らないコーナーです: {series}")
         if not theme:
             raise EpisodeError("テーマを入れてください")
-        cleaned.append({"series": series, "theme": theme})
+        row = dict(segment)
+        row["series"] = series
+        row["theme"] = theme
+        cleaned.append(row)
     return cleaned
 
 
@@ -212,24 +280,30 @@ def create_episode(number, segments, root=ROOT):
     if ep_dir.exists():
         raise EpisodeError(f"同じ番号の回がすでにあります（{name}）")
 
-    cleaned = validate_segments(segments, root)
+    # ひな型を先に読む。コーナーの検証も、ひな型にする回の series_rules で行う。
     cfg = copy.deepcopy(template_config(number, root))
+    known = {key: (rule or {}).get("label") or key
+             for key, rule in (cfg.get("series_rules") or {}).items()}
     cfg["episode"] = number
     cfg["recorded_on"] = None
-    cfg["segments"] = cleaned
+    cfg["segments"] = validate_segments(segments, known)
     cfg["cuts"] = []
 
     ep_dir.mkdir(parents=True)
-    build.save_config({"dir": ep_dir}, cfg)
-    build.load_episode(root, name)  # 中間ファイルの置き場を作る
+    try:
+        build.save_config({"dir": ep_dir}, cfg)
+        build.load_episode(root, name)  # 中間ファイルの置き場を作る
+    except Exception:
+        # 途中で失敗したら、中途半端なフォルダを残さない（同じ番号で作り直せなくなるため）
+        shutil.rmtree(ep_dir, ignore_errors=True)
+        raise
     return detail(name, root)
 
 
 def save_segments(name, segments, root=ROOT):
-    ep_dir = root / name
-    if not config_path(ep_dir).exists():
-        raise EpisodeError(f"{name} がありません")
+    ep_dir = resolve(name, root)
     cfg = read_config(ep_dir)
-    cfg["segments"] = validate_segments(segments, root)
+    # 検証は、その回自身の series_rules で行う（新しい回で足したコーナーに引きずられない）
+    cfg["segments"] = validate_segments(segments, rules_of(ep_dir))
     build.save_config({"dir": ep_dir}, cfg)
     return detail(name, root)

@@ -164,3 +164,101 @@ def test_コーナーを保存すると設定ファイルに書かれる(tmp_pat
     ], root=tmp_path)
     cfg = episodes.read_config(tmp_path / "ep01")
     assert [s["theme"] for s in cfg["segments"]] == ["1つ目", "2つ目"]
+
+
+# ---------------------------------------------------------------- レビューで見つかった壊れ方
+
+def test_回の外は読み書きできない(tmp_path):
+    """name に `..` を渡しても、回のディレクトリの外に出ない。"""
+    root = tmp_path / "repo"
+    root.mkdir()
+    make_episode(root)
+    outside = tmp_path / "config.yml"
+    outside.write_text("secret: yes\nsegments: []\n", encoding="utf-8")
+
+    with pytest.raises(episodes.EpisodeError):
+        episodes.detail("..", root=root)
+    with pytest.raises(episodes.EpisodeError):
+        episodes.save_segments("..", [{"series": "imasara", "theme": "x"}], root=root)
+    assert outside.read_text(encoding="utf-8") == "secret: yes\nsegments: []\n"
+
+
+def test_壊れた回があっても他の回は一覧に出る(tmp_path):
+    make_episode(tmp_path, number=1)
+    broken = tmp_path / "ep02"
+    broken.mkdir()
+    (broken / "config.yml").write_text("episode: [壊れた\n", encoding="utf-8")
+
+    rows = episodes.list_episodes(tmp_path)
+    assert [r["name"] for r in rows] == ["ep01", "ep02"]
+    assert "error" not in rows[0]
+    assert "読めません" in rows[1]["error"]
+    assert rows[1]["theme"] == "（設定が読めません）"
+
+
+def test_壊れた回があってもコーナーの選択肢と次の番号は出る(tmp_path):
+    make_episode(tmp_path, number=1)
+    broken = tmp_path / "ep02"
+    broken.mkdir()
+    (broken / "config.yml").write_text("episode: [壊れた\n", encoding="utf-8")
+
+    assert episodes.series_rules(tmp_path) == {
+        "imasara": "今更聞けない", "it_news": "ITニュースざっくり",
+    }
+    assert episodes.next_number(tmp_path) == 3
+
+
+def test_コーナーを保存しても知らないキーは消えない(tmp_path):
+    """表情差分や BGM を segments に足したあとでも、保存で消えない。"""
+    config = dict(CONFIG)
+    config["segments"] = [{"series": "imasara", "theme": "x",
+                           "image": "assets/warai.png", "bgm": "a.mp3"}]
+    make_episode(tmp_path, config=config)
+
+    keep = episodes.detail("ep01", root=tmp_path)["segments"]
+    keep[0]["theme"] = "直した"
+    episodes.save_segments("ep01", keep, root=tmp_path)
+
+    saved = episodes.read_config(tmp_path / "ep01")["segments"][0]
+    assert saved["theme"] == "直した"
+    assert saved["image"] == "assets/warai.png"
+    assert saved["bgm"] == "a.mp3"
+
+
+def test_動画はメタデータを直しても古くならない(tmp_path):
+    """build.py の step_video は meta.json を読まないので、依存に入れない。"""
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    os.utime(ep_dir / "03_meta" / "meta.json", (time.time(), time.time()))
+    assert states(ep_dir)["video"] == "完了"
+
+
+def test_その回のコーナーは新しい回の設定に引きずられない(tmp_path):
+    """ep02 で別のコーナーを使っていても、ep01 のテーマは直せる。"""
+    make_episode(tmp_path, number=1)
+    make_episode(tmp_path, number=2, config={
+        "segments": [{"series": "tokubetsu", "theme": "y"}],
+        "series_rules": {"tokubetsu": {"label": "特別編"}},
+    })
+    episodes.save_segments("ep01", [{"series": "imasara", "theme": "直した"}], root=tmp_path)
+    assert episodes.read_config(tmp_path / "ep01")["segments"][0]["theme"] == "直した"
+
+
+def test_作成が途中で失敗したらフォルダを残さない(tmp_path, monkeypatch):
+    make_episode(tmp_path, number=1)
+
+    def boom(*args, **kwargs):
+        raise OSError("書き込めません")
+
+    monkeypatch.setattr(episodes.build, "save_config", boom)
+    with pytest.raises(OSError):
+        episodes.create_episode(2, [{"series": "imasara", "theme": "x"}], root=tmp_path)
+    assert not (tmp_path / "ep02").exists()
+
+
+def test_読めない理由は1行におさめる(tmp_path):
+    """YAML のエラーは何行にもなるので、画面に出す分は切り詰める。"""
+    broken = tmp_path / "ep02"
+    broken.mkdir()
+    (broken / "config.yml").write_text("episode: [壊れた\n", encoding="utf-8")
+    message = episodes.list_episodes(tmp_path)[0]["error"]
+    assert len(message.splitlines()) == 1

@@ -50,10 +50,18 @@ function renderEpisodes() {
   const list = $("episode-list");
   list.innerHTML = "";
 
+  // ひな型にする回が無いと新しい回は作れないので、押す前に理由を出す
+  const canCreate = Object.keys(state.series).length > 0;
+  const newButton = $("new-episode");
+  newButton.disabled = !canCreate;
+  newButton.title = canCreate ? "" : "ひな型にする回がありません";
+
   if (!state.episodes.length) {
     const empty = document.createElement("div");
     empty.className = "episodes-empty";
-    empty.textContent = "まだ回がありません";
+    empty.textContent = canCreate
+      ? "まだ回がありません"
+      : "まだ回がありません。最初の回は手で作ってください（ep01 のように）";
     list.appendChild(empty);
     return;
   }
@@ -62,7 +70,13 @@ function renderEpisodes() {
     const button = document.createElement("button");
     button.className = "episode";
     if (state.selected && ep.name === state.selected.name) button.classList.add("is-selected");
-    button.onclick = () => selectEpisode(ep.name);
+    if (ep.error) {
+      button.classList.add("is-broken");
+      button.disabled = true;
+      button.title = ep.error;
+    } else {
+      button.onclick = () => selectEpisode(ep.name);
+    }
 
     const top = document.createElement("div");
     top.className = "episode-top";
@@ -83,7 +97,15 @@ function renderEpisodes() {
       dots.appendChild(dot);
     }
 
-    button.append(top, theme, dots);
+    button.append(top, theme);
+    if (ep.error) {
+      const reason = document.createElement("div");
+      reason.className = "episode-error";
+      reason.textContent = ep.error;
+      button.appendChild(reason);
+    } else {
+      button.appendChild(dots);
+    }
     list.appendChild(button);
   }
 }
@@ -372,6 +394,10 @@ function field(label, input) {
 // ---------------------------------------------------------------- 読み込み
 
 async function selectEpisode(name) {
+  if (state.dirty && state.selected && state.selected.name !== name) {
+    const ok = confirm("保存していない変更があります。破棄して別の回に移りますか？");
+    if (!ok) return;
+  }
   state.selected = await api(`/api/episodes/${name}`);
   state.dirty = false;
   state.saveMessage = "";

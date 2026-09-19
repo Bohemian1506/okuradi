@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from web import episodes
 
@@ -22,6 +22,9 @@ app = FastAPI(title="置くラジ 制作GUI")
 
 
 class Segment(BaseModel):
+    # 表情差分や BGM など、将来 segments に足すキーをそのまま通す
+    model_config = ConfigDict(extra="allow")
+
     series: str
     theme: str = ""
 
@@ -49,11 +52,11 @@ def _guard(fn, *args, **kwargs):
 
 @app.get("/api/episodes")
 def get_episodes():
-    return {
+    return _guard(lambda: {
         "episodes": episodes.list_episodes(),
         "series": episodes.series_rules(),
         "next_number": episodes.next_number(),
-    }
+    })
 
 
 @app.post("/api/episodes")
