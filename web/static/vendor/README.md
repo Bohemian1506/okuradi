@@ -10,6 +10,11 @@ CDN から読まないのは、WSL で作業中にネットが切れると波形
 
 どちらも UMD 版。読み込むと `window.WaveSurfer` と `window.WaveSurfer.Regions` が生える。
 
+**ライセンス文は `LICENSE-wavesurfer.txt` に置いてある。** 配布ファイル（`.min.js`）には
+著作権表示が入っていないが、BSD-3-Clause は再配布のときに表示を残すことを求めている。
+このリポジトリは公開なので、消さないこと。版を上げたら、この文も取り直す:
+`curl -sSL -o web/static/vendor/LICENSE-wavesurfer.txt https://unpkg.com/wavesurfer.js@<版>/LICENSE`
+
 ## 版を上げるとき
 ```
 curl -sSL -o web/static/vendor/wavesurfer.min.js https://unpkg.com/wavesurfer.js@<版>/dist/wavesurfer.min.js

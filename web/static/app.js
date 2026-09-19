@@ -220,6 +220,7 @@ function renderSteps() {
 
 function selectTab(tab) {
   if (!tab) return;
+  if (tab !== state.tab) stopWaves();   // 見えない場所で鳴らさない
   state.tab = tab;
   document.querySelectorAll(".tab[data-tab]").forEach((node) => {
     node.classList.toggle("is-active", node.dataset.tab === tab);
@@ -994,6 +995,7 @@ function cleanPlayer(result) {
 function listenTo(kind, at) {
   const video = document.querySelector(".video-body video");
   if (video && !video.paused) video.pause();
+  stopWaves();                      // 音は1つだけ鳴らす
   const url = `/api/episodes/${state.selected.name}/audio/${kind}`;
   if (state.listening !== kind || !audio.src.includes(`/audio/${kind}`)) {
     state.listening = kind;
@@ -1084,14 +1086,19 @@ function waveOf(key) {
   return waves[key];
 }
 
+// 波形の音を止める。器が画面から消えても、本体は生きているので明示的に止める
+function stopWaves(except) {
+  for (const [key, w] of Object.entries(waves)) {
+    if (key !== except && w.ws && w.playing) w.ws.pause();
+  }
+}
+
 // 音は1つだけ鳴らす
 function stopOtherSounds(except) {
   audio.pause();
   const video = document.querySelector(".video-body video");
   if (video && !video.paused) video.pause();
-  for (const [key, w] of Object.entries(waves)) {
-    if (key !== except && w.ws && w.playing) w.ws.pause();
-  }
+  stopWaves(except);
 }
 
 function ensureWave(key, { url, duration = 0, regions = false }) {
@@ -1215,8 +1222,19 @@ function bindRegions(key, w) {
     if (w.applying) return;
     const echo = state.echoes[echoIndexOf(region)];
     if (!echo) return;
-    echo.start = round2(Math.min(region.start, region.end));
-    echo.end = round2(Math.max(region.start, region.end));
+    const start = round2(Math.min(region.start, region.end));
+    const end = round2(Math.max(region.start, region.end));
+    // 0.3秒より短い区間は build.py が読み飛ばす。黙って効かない区間を
+    // 作らせず、元の長さに戻して理由を出す
+    if (end - start < ECHO_MIN) {
+      state.actionError = `エコー区間は ${ECHO_MIN}秒より短くできません`
+        + "（短いと整音のときに読み飛ばされます）";
+      w.sig = null;                 // 帯を元の位置に戻す
+      renderMain();
+      return;
+    }
+    echo.start = start;
+    echo.end = end;
     state.echoes.sort((a, b) => a.start - b.start);
     state.picked = state.echoes.indexOf(echo);
     w.sig = null;
@@ -1573,6 +1591,7 @@ function togglePlay() {
   if (state.playing) {
     audio.pause();
   } else {
+    stopWaves();                    // 音は1つだけ鳴らす
     audio.play().catch((err) => {
       state.playing = false;
       state.actionError = `再生できませんでした: ${err.message}`;
@@ -2602,6 +2621,9 @@ async function selectEpisode(name) {
   state.actionError = "";
   audio.pause();
   audio.removeAttribute("src");
+  // 整音していない回に移ると波形パネルが出ないので、ここで止めないと
+  // 見えない場所で前の回の音が鳴り続ける
+  stopWaves();
   state.at = 0;
   state.playing = false;
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
