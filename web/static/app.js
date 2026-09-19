@@ -24,7 +24,10 @@ const SVG = {
   play: '<path d="M3 2l9 5-9 5z"/>',
   redo: '<path d="M11.5 7A4.5 4.5 0 1 1 9.8 3.5M9 1.5l1.5 2L8.3 4.7" stroke-linecap="round"/>',
   check: '<path d="M1.5 5l2.5 2.5 4.5-5"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
 };
+
+const ACCEPTED_TEXT = "wav / m4a / mkv / mp4 / mov / flv";
 
 // どの画面にどの工程があるか（TAB_OF_STEP の裏返し）
 const STEPS_OF_TAB = { "1": [], "2": ["source", "scan", "clean"], "3": ["transcribe", "meta", "video"] };
@@ -43,6 +46,10 @@ const state = {
   job: null,         // 実行中（か直前に終わった）工程
   showLog: false,
   stream: null,
+  source: null,      // いま入っている収録ファイル
+  obs: null,         // OBS のフォルダの様子
+  sourceBusy: false,
+  sourceError: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -186,7 +193,197 @@ function renderMain() {
     main.appendChild(segmentsCard());
     return;
   }
+  if (state.tab === "2") main.appendChild(sourceSection());
   main.appendChild(runsCard());
+}
+
+// ---------------------------------------------------------------- 部品9・10 音源
+
+function section(no, title, note, body) {
+  const box = el("div", "section");
+  const head = el("div", "section-head");
+  const titles = el("div");
+  titles.append(el("div", "section-title", title), el("div", "section-note", note));
+  head.append(el("div", "section-no", String(no)), titles);
+  box.append(head, body);
+  return box;
+}
+
+function sourceSection() {
+  const has = state.source && state.source.state === "使える";
+  return section(1, "音源を入れる",
+    "収録ファイルを1本置く。OBSの録画なら、工程を動かすときに音声を取り出します。",
+    has ? sourceCard() : sourceAdd());
+}
+
+function sourceCard() {
+  const info = state.source;
+  const card = el("div", "source-card");
+  const body = el("div", "body");
+  body.append(el("div", "name", info.name));
+  const about = [info.duration, info.kind, `録った日時 ${info.recorded_at}`].join(" · ");
+  body.append(el("div", "about", about));
+
+  const badge = el("span", "badge-ok");
+  badge.append(el("span", "mark"), document.createTextNode("使える"));
+
+  const replace = el("button", "btn-plain", "差し替える");
+  replace.onclick = () => {
+    if (confirm("いまの音源を差し替えますか？（00_raw のファイルを入れ替えます）")) {
+      state.source = { state: "空" };
+      state.sourceError = "";
+      renderMain();
+    }
+  };
+  card.append(body, badge, replace);
+  return card;
+}
+
+function sourceAdd() {
+  const box = el("div", "source-add");
+  box.appendChild(el("div", "source-add-title", "音源を追加"));
+
+  if (state.sourceError) {
+    const bad = el("div", "source-error");
+    bad.append(el("span", "mark", "!"), el("span", null, state.sourceError));
+    box.appendChild(bad);
+  }
+
+  const zone = el("div", "dropzone");
+  zone.innerHTML = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.8">${SVG.upload}</svg>`;
+  zone.append(el("div", "lead", state.sourceBusy ? "取り込んでいます…" : "ファイルをドロップ"),
+              el("div", "kinds", ACCEPTED_TEXT));
+
+  const picker = el("input");
+  picker.type = "file";
+  picker.accept = ".wav,.m4a,.mkv,.mp4,.mov,.flv";
+  picker.hidden = true;
+  picker.onchange = () => { if (picker.files[0]) uploadSource(picker.files[0]); };
+
+  const pick = el("button", "btn-plain", "ファイルを選ぶ");
+  pick.disabled = state.sourceBusy;
+  pick.onclick = () => picker.click();
+  zone.append(pick, picker);
+
+  zone.ondragover = (e) => { e.preventDefault(); zone.classList.add("is-over"); };
+  zone.ondragleave = () => zone.classList.remove("is-over");
+  zone.ondrop = (e) => {
+    e.preventDefault();
+    zone.classList.remove("is-over");
+    if (e.dataTransfer.files[0]) uploadSource(e.dataTransfer.files[0]);
+  };
+  box.append(zone, el("div", "or-line", "または"));
+
+  const head = el("div", "obs-head");
+  head.appendChild(el("span", "title", "OBSのフォルダから選ぶ"));
+  const obs = state.obs || { state: "未設定", recordings: [] };
+  if (obs.state === "ok") head.appendChild(el("span", "where", `${obs.dir} · 新しい順`));
+  box.appendChild(head);
+
+  if (obs.state === "ok" && obs.recordings.length) {
+    const list = el("div", "obs-list");
+    for (const rec of obs.recordings) {
+      const row = el("button", "obs-row");
+      row.disabled = state.sourceBusy;
+      const body = el("div", "body");
+      body.append(el("span", "name", rec.name),
+                  el("span", "when", [rec.duration, rec.recorded_at].filter(Boolean).join(" · ")));
+      row.append(el("span", "mark"), body);
+      row.onclick = () => takeFromObs(rec.name);
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+  } else {
+    const why = {
+      "未設定": "見張るフォルダが設定されていません。OBSの録画先を指定すると、新しい録画がここに並びます。",
+      "見つかりません": `フォルダが見つかりません: ${obs.dir}`,
+      "ok": "このフォルダに録画がありません。",
+    }[obs.state];
+    box.appendChild(el("div", "obs-empty", why));
+    const set = el("button", "btn-plain", "フォルダを指定");
+    set.onclick = () => openObsDialog();
+    box.appendChild(set);
+  }
+  return box;
+}
+
+function openObsDialog() {
+  const overlay = el("div", "overlay");
+  const dialog = el("div", "dialog");
+  const input = el("input", "field");
+  input.value = (state.obs && state.obs.dir) || "";
+  input.placeholder = "/mnt/c/Users/…/Videos";
+
+  const error = el("div", "form-error");
+  error.hidden = true;
+
+  const cancel = el("button", "btn-plain", "キャンセル");
+  cancel.onclick = () => overlay.remove();
+  const save = el("button", "btn-primary", "保存");
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const got = await api("/api/settings", {
+        method: "PUT", body: JSON.stringify({ obs_dir: input.value }),
+      });
+      state.obs = got.obs;
+      overlay.remove();
+      renderMain();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+      save.disabled = false;
+    }
+  };
+
+  dialog.appendChild(el("div", "dialog-title", "OBSの録画フォルダ"));
+  dialog.appendChild(el("div", "segments-note",
+    "Windows のフォルダは WSL から /mnt/c/… の形で指定します。"));
+  dialog.append(field(el("span", "form-label", "フォルダ"), input), error);
+  const foot = el("div", "dialog-foot");
+  foot.append(cancel, save);
+  dialog.appendChild(foot);
+  overlay.appendChild(dialog);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+  input.focus();
+}
+
+async function uploadSource(file) {
+  state.sourceBusy = true;
+  state.sourceError = "";
+  renderMain();
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const res = await fetch(`/api/episodes/${state.selected.name}/source`,
+                            { method: "POST", body: form });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || `${res.status}`);
+    state.source = body;
+  } catch (err) {
+    state.sourceError = err.message;
+  }
+  state.sourceBusy = false;
+  await reload({ keep: state.selected.name, keepSelected: true });
+  renderMain();
+}
+
+async function takeFromObs(name) {
+  state.sourceBusy = true;
+  state.sourceError = "";
+  renderMain();
+  try {
+    state.source = await api(`/api/episodes/${state.selected.name}/source/from-obs`, {
+      method: "POST", body: JSON.stringify({ file: name }),
+    });
+  } catch (err) {
+    state.sourceError = err.message;
+  }
+  state.sourceBusy = false;
+  await reload({ keep: state.selected.name, keepSelected: true });
+  renderMain();
 }
 
 // ---------------------------------------------------------------- 部品4 工程実行ボタン
@@ -202,9 +399,11 @@ function runsCard() {
   const steps = state.selected.steps
     .filter((step) => STEPS_OF_TAB[state.tab].includes(step.key));
 
-  const issues = { "2": "#6", "3": "#7" };
-  box.appendChild(el("div", "segments-note",
-    `いまは工程を動かすところだけです。この画面の中身は ${issues[state.tab]} で入れます。`));
+  const rest = {
+    "2": "下見の文字起こし・波形・エコー区間は #6 の続きで入れます。",
+    "3": "文字起こしの修正・メタデータの編集・動画のプレビューは #7 で入れます。",
+  };
+  box.appendChild(el("div", "segments-note", rest[state.tab]));
 
   for (const step of steps) {
     if (step.key === "source") continue;   // 音源は「実行」ではなく追加するもの（#6）
@@ -693,6 +892,11 @@ async function selectEpisode(name) {
   }
   state.selected = await api(`/api/episodes/${name}`);
   resetRows(state.selected.segments);
+  state.sourceError = "";
+  [state.source, state.obs] = await Promise.all([
+    api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
+    api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),
+  ]);
   state.save = "saved";
   state.saveError = "";
   renderEpisodes();

@@ -12,12 +12,12 @@ from pathlib import Path
 import json
 import queue
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from web import episodes, runner
+from web import episodes, runner, sources
 
 STATIC = Path(__file__).parent / "static"
 
@@ -75,6 +75,48 @@ def get_episode(name: str):
 @app.put("/api/episodes/{name}/segments")
 def put_segments(name: str, body: Segments):
     return _guard(episodes.save_segments, name, _as_dicts(body.segments))
+
+
+# ---------------------------------------------------------------- 音源と設定
+
+
+class Settings(BaseModel):
+    obs_dir: str = ""
+
+
+class FromObs(BaseModel):
+    file: str
+
+
+@app.get("/api/settings")
+def get_settings():
+    return {"obs_dir": _guard(sources.read_settings).get("obs_dir", "")}
+
+
+@app.put("/api/settings")
+def put_settings(body: Settings):
+    _guard(sources.save_settings, {"obs_dir": body.obs_dir.strip()})
+    return {"obs_dir": body.obs_dir.strip(), "obs": sources.obs_view()}
+
+
+@app.get("/api/obs")
+def get_obs():
+    return _guard(sources.obs_view)
+
+
+@app.get("/api/episodes/{name}/source")
+def get_source(name: str):
+    return _guard(sources.source_view, name)
+
+
+@app.post("/api/episodes/{name}/source")
+async def post_source(name: str, file: UploadFile = File(...)):
+    return _guard(sources.add_from_upload, name, file.filename, file.file)
+
+
+@app.post("/api/episodes/{name}/source/from-obs")
+def post_source_from_obs(name: str, body: FromObs):
+    return _guard(sources.add_from_obs, name, body.file)
 
 
 # ---------------------------------------------------------------- 工程の実行
