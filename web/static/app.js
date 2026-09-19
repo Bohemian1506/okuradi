@@ -1,5 +1,7 @@
 // 置くラジ 制作GUI
 // 画面の組み立てだけ。処理は build.py（サーバー側）にある。
+// デザインの見本: docs/design/frame-common-v2.dc.html（共通の枠）
+//                 docs/design/screen1-episode-settings.dc.html（画面1）
 
 const STATE_CLASS = {
   "未実行": "is-todo",
@@ -14,18 +16,37 @@ const TAB_OF_STEP = {
   transcribe: "3", meta: "3", video: "3",
 };
 
+const SVG = {
+  plus: '<path d="M7 1.5v11M1.5 7h11"/>',
+  trash: '<path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/>',
+};
+
 const state = {
   episodes: [],
-  series: {},
+  series: {},        // { キー: {label, hint} }
   nextNumber: 1,
-  selected: null,   // 選んでいる回の detail
+  selected: null,    // 選んでいる回の detail
+  rowIds: [],        // 行ごとの見分け札（segments と同じ並び）
+  savedRows: null,   // 札 -> 保存されている中身（直した行を見分けるため）
+  nextRowId: 0,
   tab: "1",
-  dirty: false,
-  saveMessage: "",
-  saveError: false,
+  save: "saved",     // saved / dirty / saving / error
+  saveError: "",
 };
 
 const $ = (id) => document.getElementById(id);
+
+function icon(path, size = 14, width = 1.8) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 14 14" fill="none"
+    stroke="currentColor" stroke-width="${width}">${path}</svg>`;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
 
 async function api(path, options) {
   const res = await fetch(path, {
@@ -43,7 +64,7 @@ async function api(path, options) {
   return res.json();
 }
 
-// ---------------------------------------------------------------- 回セレクタ
+// ---------------------------------------------------------------- 部品1 回セレクタ
 
 function renderEpisodes() {
   $("episode-count").textContent = state.episodes.length ? `${state.episodes.length}件` : "";
@@ -57,18 +78,14 @@ function renderEpisodes() {
   newButton.title = canCreate ? "" : "ひな型にする回がありません";
 
   if (!state.episodes.length) {
-    const empty = document.createElement("div");
-    empty.className = "episodes-empty";
-    empty.textContent = canCreate
+    list.appendChild(el("div", "episodes-empty", canCreate
       ? "まだ回がありません"
-      : "まだ回がありません。最初の回は手で作ってください（ep01 のように）";
-    list.appendChild(empty);
+      : "まだ回がありません。最初の回は手で作ってください（ep01 のように）"));
     return;
   }
 
   for (const ep of state.episodes) {
-    const button = document.createElement("button");
-    button.className = "episode";
+    const button = el("button", "episode");
     if (state.selected && ep.name === state.selected.name) button.classList.add("is-selected");
     if (ep.error) {
       button.classList.add("is-broken");
@@ -78,43 +95,31 @@ function renderEpisodes() {
       button.onclick = () => selectEpisode(ep.name);
     }
 
-    const top = document.createElement("div");
-    top.className = "episode-top";
-    top.innerHTML = `<span class="episode-id"></span><span class="episode-progress"></span>`;
-    top.querySelector(".episode-id").textContent = ep.name;
-    top.querySelector(".episode-progress").textContent = `${ep.done}/${ep.total}`;
+    const top = el("div", "episode-top");
+    top.append(el("span", "episode-id", ep.name),
+               el("span", "episode-progress", `${ep.done}/${ep.total}`));
+    button.append(top, el("div", "episode-theme", ep.theme));
 
-    const theme = document.createElement("div");
-    theme.className = "episode-theme";
-    theme.textContent = ep.theme;
-
-    const dots = document.createElement("div");
-    dots.className = "episode-dots";
-    for (const step of ep.steps) {
-      const dot = document.createElement("span");
-      dot.className = `dot ${STATE_CLASS[step.state]}`;
-      dot.title = `${step.label}: ${step.state}`;
-      dots.appendChild(dot);
-    }
-
-    button.append(top, theme);
     if (ep.error) {
-      const reason = document.createElement("div");
-      reason.className = "episode-error";
-      reason.textContent = ep.error;
-      button.appendChild(reason);
+      button.appendChild(el("div", "episode-error", ep.error));
     } else {
+      const dots = el("div", "episode-dots");
+      for (const step of ep.steps) {
+        const dot = el("span", `dot ${STATE_CLASS[step.state]}`);
+        dot.title = `${step.label}: ${step.state}`;
+        dots.appendChild(dot);
+      }
       button.appendChild(dots);
     }
     list.appendChild(button);
   }
 }
 
-// ---------------------------------------------------------------- 工程ステッパー
+// ---------------------------------------------------------------- 部品3 工程ステッパー
 
 function renderSteps() {
   const box = $("steps");
-  box.querySelectorAll(".step").forEach((el) => el.remove());
+  box.querySelectorAll(".step").forEach((node) => node.remove());
   const needle = $("needle");
 
   const steps = state.selected ? state.selected.steps : [];
@@ -126,22 +131,20 @@ function renderSteps() {
   $("tabs-episode").textContent = state.selected.name;
 
   steps.forEach((step, index) => {
-    const button = document.createElement("button");
-    button.className = `step ${STATE_CLASS[step.state]}`;
+    const button = el("button", `step ${STATE_CLASS[step.state]}`);
     if (TAB_OF_STEP[step.key] === state.tab) button.classList.add("is-here");
     button.style.gridColumn = String(index + 1);
+    button.title = `${step.label}: ${step.state}`;
     button.onclick = () => selectTab(TAB_OF_STEP[step.key]);
-    button.innerHTML = `<span class="step-name"></span><span class="step-state"></span>`;
-    button.querySelector(".step-name").textContent = step.label;
-    button.querySelector(".step-state").textContent = step.state;
+    button.append(el("span", "step-name", step.label),
+                  el("span", "step-state", step.state));
     box.insertBefore(button, box.querySelector(".ticks-fine"));
   });
 
-  // 赤い針は「今いる工程」（最初の未完了）を指す
-  let here = steps.findIndex((s) => s.state !== "完了");
-  if (here === -1) here = steps.length - 1;
-  needle.hidden = false;
-  needle.style.left = `calc(100% / ${steps.length} * ${here + 0.5})`;
+  // 赤い針は「今いる工程」（最初の未完了）を指す。全部終わっていれば指す先がないので隠す。
+  const here = steps.findIndex((s) => s.state !== "完了");
+  needle.hidden = here === -1;
+  if (here !== -1) needle.style.left = `calc(100% / ${steps.length} * ${here + 0.5})`;
 }
 
 // ---------------------------------------------------------------- タブ
@@ -149,8 +152,8 @@ function renderSteps() {
 function selectTab(tab) {
   if (!tab) return;
   state.tab = tab;
-  document.querySelectorAll(".tab").forEach((el) => {
-    el.classList.toggle("is-active", el.dataset.tab === tab);
+  document.querySelectorAll(".tab").forEach((node) => {
+    node.classList.toggle("is-active", node.dataset.tab === tab);
   });
   renderSteps();
   renderMain();
@@ -174,178 +177,223 @@ function renderMain() {
 }
 
 function placeholder(title, note) {
-  const box = document.createElement("div");
-  box.className = "placeholder";
-  box.innerHTML = `<div class="placeholder-title"></div><div></div>`;
-  box.querySelector(".placeholder-title").textContent = title;
-  box.querySelectorAll("div")[1].textContent = note;
+  const box = el("div", "placeholder");
+  box.append(el("div", "placeholder-title", title), el("div", null, note));
   return box;
 }
 
-// ---------------------------------------------------------------- 部品8 コーナー・テーマ編集
+// ---------------------------------------------------------------- 部品8 コーナーの並び
 
 function seriesSelect(value) {
-  const select = document.createElement("select");
-  select.className = "field";
-  for (const [key, label] of Object.entries(state.series)) {
-    const option = document.createElement("option");
+  const select = el("select", "field");
+  for (const [key, rule] of Object.entries(state.series)) {
+    const option = el("option", null, rule.label);
     option.value = key;
-    option.textContent = label;
     if (key === value) option.selected = true;
     select.appendChild(option);
   }
+  // その回だけで使っているコーナーも選べるようにしておく
   if (value && !state.series[value]) {
-    const option = document.createElement("option");
+    const option = el("option", null, value);
     option.value = value;
-    option.textContent = value;
     option.selected = true;
     select.appendChild(option);
   }
   return select;
 }
 
+function themeHint(series) {
+  const rule = state.series[series];
+  return (rule && rule.hint) || "例: OSI参照モデルの7層";
+}
+
+// 行の並びは変わる（消せる・足せる）ので、位置ではなく札で突き合わせる。
+// 位置で比べると、1行目を消しただけで残りの行が「直した」ことになってしまう。
+function resetRows(segments) {
+  state.rowIds = segments.map((_, index) => index);
+  state.savedRows = new Map(segments.map((segment, index) =>
+    [index, { series: segment.series, theme: segment.theme }]));
+  state.nextRowId = segments.length;
+}
+
+function isChanged(index) {
+  const before = state.savedRows.get(state.rowIds[index]);
+  if (!before) return true;   // 足したばかりの行
+  const now = state.selected.segments[index];
+  return before.series !== now.series || before.theme !== now.theme;
+}
+
+function saveBadge() {
+  const kinds = {
+    saved: ["is-saved", "保存済み"],
+    dirty: ["is-dirty", "未保存の変更あり"],
+    saving: ["is-saving", "保存中"],
+    error: ["is-error", "保存できませんでした"],
+  };
+  const [cls, label] = kinds[state.save];
+  const badge = el("span", `save-badge ${cls}`);
+  badge.append(el("span", "mark"), document.createTextNode(label));
+  return badge;
+}
+
 function segmentsCard() {
-  const card = document.createElement("div");
-  card.className = "card";
+  const card = el("div", "segments-card");
+  const segments = state.selected.segments;
 
-  const title = document.createElement("div");
-  title.className = "card-title";
-  title.textContent = "コーナーとテーマ";
+  const heading = el("div", "segments-head");
+  const titles = el("div");
+  titles.append(el("div", "segments-title", "コーナーの並び"));
+  const actions = el("div", "segments-actions");
 
-  const note = document.createElement("div");
-  note.className = "card-note";
-  note.textContent = "この回で話すコーナーを、上から順に並べます。config.yml の segments に保存します。";
+  const labels = { saved: "保存", dirty: "保存する", saving: "保存中", error: "もう一度保存" };
+  const saveButton = el("button", `btn-save is-${state.save}`, labels[state.save]);
+  saveButton.disabled = state.save === "saved" || state.save === "saving";
+  saveButton.onclick = () => saveSegments();
 
-  const rows = document.createElement("div");
-  rows.className = "segments";
+  actions.append(saveBadge(), saveButton);
+  heading.append(titles, actions);
+  card.appendChild(heading);
 
-  const draw = () => {
-    rows.innerHTML = "";
-    state.selected.segments.forEach((segment, index) => {
-      const row = document.createElement("div");
-      row.className = "segment";
+  if (state.save === "error") {
+    const banner = el("div", "save-error");
+    banner.append(el("span", "mark", "!"),
+                  el("span", null, `${state.saveError}。入力した内容は残っています。`));
+    card.appendChild(banner);
+  }
 
-      const order = document.createElement("div");
-      order.className = "segment-order";
-      order.textContent = `${index + 1}.`;
+  const list = el("div", "segment-list");
+  if (state.save === "dirty" || state.save === "error") list.classList.add("is-dirty");
+  if (state.save === "saving") list.classList.add("is-saving");
 
-      const select = seriesSelect(segment.series);
-      select.onchange = () => { segment.series = select.value; markDirty(); };
+  const head = el("div", "segment-head");
+  head.append(el("span", null, "順"), el("span", null, "コーナー"),
+              el("span", null, "テーマ"), el("span"));
+  list.appendChild(head);
 
-      const theme = document.createElement("input");
-      theme.className = "field";
-      theme.placeholder = "例: OSI参照モデルの7層";
-      theme.value = segment.theme || "";
-      theme.oninput = () => { segment.theme = theme.value; markDirty(); };
+  const busy = state.save === "saving";
 
-      const remove = document.createElement("button");
-      remove.className = "btn-quiet";
-      remove.textContent = "削除";
-      remove.disabled = state.selected.segments.length <= 1;
-      remove.onclick = () => {
-        state.selected.segments.splice(index, 1);
-        markDirty();
-        draw();
-      };
+  segments.forEach((segment, index) => {
+    const row = el("div", "segment");
+    if (isChanged(index)) row.classList.add("is-changed");
 
-      row.append(order, select, theme, remove);
-      rows.appendChild(row);
-    });
-  };
-  draw();
+    const select = seriesSelect(segment.series);
+    select.disabled = busy;
+    const theme = el("input", "field");
+    theme.placeholder = themeHint(segment.series);
+    theme.value = segment.theme || "";
+    theme.disabled = busy;
 
-  const add = document.createElement("button");
-  add.className = "btn-plain";
-  add.textContent = "＋ コーナーを足す";
+    select.onchange = () => {
+      segment.series = select.value;
+      theme.placeholder = themeHint(segment.series);
+      markDirty();
+    };
+    theme.oninput = () => { segment.theme = theme.value; markDirty(); };
+
+    const remove = el("button", "btn-icon");
+    remove.innerHTML = icon(SVG.trash);
+    remove.title = "この行を削除";
+    remove.setAttribute("aria-label", "この行を削除");
+    remove.disabled = busy || segments.length <= 1;
+    remove.onclick = () => {
+      segments.splice(index, 1);
+      state.rowIds.splice(index, 1);
+      markDirty();
+      renderMain();
+    };
+
+    row.append(el("div", "segment-no", String(index + 1)), select, theme, remove);
+    list.appendChild(row);
+  });
+
+  const add = el("button", "btn-add");
+  add.innerHTML = icon(SVG.plus, 13, 2) + "コーナーを追加";
+  add.disabled = busy;
   add.onclick = () => {
-    state.selected.segments.push({ series: Object.keys(state.series)[0] || "", theme: "" });
+    segments.push({ series: Object.keys(state.series)[0] || "", theme: "" });
+    state.rowIds.push(state.nextRowId++);
     markDirty();
-    draw();
+    renderMain();
   };
+  list.appendChild(add);
 
-  const save = document.createElement("button");
-  save.className = "btn-primary";
-  save.textContent = "保存";
-  save.onclick = () => saveSegments();
-
-  const message = document.createElement("span");
-  message.className = "save-state" + (state.saveError ? " is-error" : state.dirty ? " is-dirty" : "");
-  message.textContent = state.saveError ? state.saveMessage
-    : state.dirty ? "未保存の変更があります"
-    : state.saveMessage;
-
-  const foot = document.createElement("div");
-  foot.className = "card-foot";
-  foot.append(save, message);
-
-  card.append(title, note, rows, add, foot);
+  card.append(list, el("div", "segments-note",
+    "コーナーの種類ごとにタイトルの型が決まっています。"
+    + "タイトルはメタデータの工程で、この並びとテーマから作られます。"));
   return card;
 }
 
 function markDirty() {
-  state.dirty = true;
-  state.saveError = false;
-  state.saveMessage = "";
-  const message = document.querySelector(".save-state");
-  if (message) {
-    message.className = "save-state is-dirty";
-    message.textContent = "未保存の変更があります";
+  if (state.save !== "dirty") {
+    state.save = "dirty";
+    state.saveError = "";
+    renderMain();
   }
 }
 
 async function saveSegments() {
+  state.save = "saving";
+  renderMain();
   try {
     const saved = await api(`/api/episodes/${state.selected.name}/segments`, {
       method: "PUT",
       body: JSON.stringify({ segments: state.selected.segments }),
     });
     state.selected = saved;
-    state.dirty = false;
-    state.saveError = false;
-    state.saveMessage = "保存しました";
+    resetRows(saved.segments);
+    state.save = "saved";
+    state.saveError = "";
+    await reload({ keep: saved.name, keepSelected: true });
   } catch (err) {
-    state.saveError = true;
-    state.saveMessage = `保存できませんでした: ${err.message}`;
+    state.save = "error";
+    // 「保存できませんでした」はバッジが出すので、帯には理由だけ書く
+    state.saveError = err.message;
+    renderMain();
   }
-  await reload({ keep: state.selected.name });
 }
 
 // ---------------------------------------------------------------- 部品2 新しい回ダイアログ
 
 function openNewEpisode() {
-  const overlay = document.createElement("div");
-  overlay.className = "overlay";
+  const overlay = el("div", "overlay");
+  const dialog = el("div", "dialog");
 
-  const dialog = document.createElement("div");
-  dialog.className = "dialog";
-
-  const number = document.createElement("input");
-  number.className = "field";
+  const number = el("input", "field");
   number.type = "number";
   number.min = "1";
   number.value = String(state.nextNumber);
 
-  const error = document.createElement("div");
-  error.className = "form-error";
+  const numberLabel = el("span", "form-label", "回の番号");
+  const error = el("div", "form-error");
   error.hidden = true;
 
   const select = seriesSelect(Object.keys(state.series)[0]);
-  const theme = document.createElement("input");
-  theme.className = "field";
-  theme.placeholder = "例: OSI参照モデルの7層";
+  const theme = el("input", "field");
+  theme.placeholder = themeHint(select.value);
+  select.onchange = () => { theme.placeholder = themeHint(select.value); };
 
-  const cancel = document.createElement("button");
-  cancel.className = "btn-plain";
-  cancel.textContent = "キャンセル";
+  const cancel = el("button", "btn-plain", "キャンセル");
+  const create = el("button", "btn-primary", "作成");
+  const fields = [number, select, theme];
+
+  const setBusy = (busy) => {
+    fields.forEach((node) => { node.disabled = busy; });
+    cancel.disabled = busy;
+    create.disabled = busy;
+    create.innerHTML = "";
+    if (busy) {
+      create.append(el("span", "spinner"), document.createTextNode("作成中"));
+    } else {
+      create.textContent = "作成";
+    }
+  };
+
   cancel.onclick = () => overlay.remove();
-
-  const create = document.createElement("button");
-  create.className = "btn-primary";
-  create.textContent = "作成";
   create.onclick = async () => {
-    create.disabled = true;
-    create.textContent = "作成中";
+    setBusy(true);
     error.hidden = true;
+    number.classList.remove("is-wrong");
+    numberLabel.classList.remove("is-wrong");
     try {
       const made = await api("/api/episodes", {
         method: "POST",
@@ -359,19 +407,20 @@ function openNewEpisode() {
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
-      create.disabled = false;
-      create.textContent = "作成";
+      // 回の番号が原因なら、その欄を赤くする
+      if (err.message.includes("番号")) {
+        number.classList.add("is-wrong");
+        numberLabel.classList.add("is-wrong");
+      }
+      setBusy(false);
     }
   };
 
-  dialog.innerHTML = `<div class="dialog-title">新しい回</div>`;
-  dialog.append(
-    field("回の番号", number), error,
-    field("コーナー", select),
-    field("テーマ", theme),
-  );
-  const foot = document.createElement("div");
-  foot.className = "dialog-foot";
+  dialog.appendChild(el("div", "dialog-title", "新しい回"));
+  dialog.append(field(numberLabel, number), error,
+                field(el("span", "form-label", "コーナー"), select),
+                field(el("span", "form-label", "テーマ"), theme));
+  const foot = el("div", "dialog-foot");
   foot.append(cancel, create);
   dialog.appendChild(foot);
 
@@ -382,32 +431,28 @@ function openNewEpisode() {
 }
 
 function field(label, input) {
-  const row = document.createElement("label");
-  row.className = "form-row";
-  const text = document.createElement("span");
-  text.className = "form-label";
-  text.textContent = label;
-  row.append(text, input);
+  const row = el("label", "form-row");
+  row.append(label, input);
   return row;
 }
 
 // ---------------------------------------------------------------- 読み込み
 
 async function selectEpisode(name) {
-  if (state.dirty && state.selected && state.selected.name !== name) {
-    const ok = confirm("保存していない変更があります。破棄して別の回に移りますか？");
-    if (!ok) return;
+  const unsaved = state.save === "dirty" || state.save === "error";
+  if (unsaved && state.selected && state.selected.name !== name) {
+    if (!confirm("保存していない変更があります。破棄して別の回に移りますか？")) return;
   }
   state.selected = await api(`/api/episodes/${name}`);
-  state.dirty = false;
-  state.saveMessage = "";
-  state.saveError = false;
+  resetRows(state.selected.segments);
+  state.save = "saved";
+  state.saveError = "";
   renderEpisodes();
   renderSteps();
   renderMain();
 }
 
-async function reload({ keep } = {}) {
+async function reload({ keep, keepSelected } = {}) {
   const data = await api("/api/episodes");
   state.episodes = data.episodes;
   state.series = data.series;
@@ -415,18 +460,22 @@ async function reload({ keep } = {}) {
 
   const wanted = keep || (state.selected && state.selected.name);
   const found = state.episodes.find((ep) => ep.name === wanted) || state.episodes[0];
-  if (found) {
-    await selectEpisode(found.name);
-  } else {
+  if (!found) {
     state.selected = null;
-    renderEpisodes();
-    renderSteps();
-    renderMain();
+  } else if (keepSelected && state.selected && state.selected.name === found.name) {
+    // 保存した直後。読み直すと編集中の表示が消えるので、選び直さない
+    state.selected.steps = found.steps;
+  } else {
+    await selectEpisode(found.name);
+    return;
   }
+  renderEpisodes();
+  renderSteps();
+  renderMain();
 }
 
-document.querySelectorAll(".tab").forEach((el) => {
-  el.onclick = () => selectTab(el.dataset.tab);
+document.querySelectorAll(".tab").forEach((node) => {
+  node.onclick = () => selectTab(node.dataset.tab);
 });
 $("new-episode").onclick = openNewEpisode;
 

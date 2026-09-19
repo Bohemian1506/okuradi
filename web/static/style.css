@@ -255,7 +255,7 @@ button, input, select, textarea { font-family: inherit; }
 
 /* ---------------------------------------------------------------- メイン */
 
-.panel-main { padding: 20px 24px; overflow: auto; min-height: 0; }
+.panel-main { padding: 28px 32px 32px; overflow: auto; min-height: 0; }
 
 .placeholder {
   height: 100%; border: 2px dashed var(--rule-strong); border-radius: 14px;
@@ -264,40 +264,153 @@ button, input, select, textarea { font-family: inherit; }
 }
 .placeholder-title { font-size: 15px; font-weight: 700; color: var(--muted); }
 
-.card {
-  background: var(--cream); border-radius: 14px;
+/* ---------------------------------------------------------------- 部品8 コーナー・テーマ編集
+   見本: docs/design/screen1-episode-settings.dc.html */
+
+.segments-card {
+  max-width: 760px;
+  background: var(--cream-dim); border-radius: 14px;
   box-shadow: inset 0 0 0 1px var(--rule-strong);
   padding: 22px 24px; display: flex; flex-direction: column; gap: 16px;
-  max-width: 900px;
 }
-.card-title { font-size: 16px; font-weight: 900; }
-.card-note { font-size: 12px; color: var(--muted); line-height: 1.7; }
 
-/* ---------------------------------------------------------------- 部品8 コーナー・テーマ編集 */
-
-.segments { display: flex; flex-direction: column; gap: 10px; }
-
-.segment {
-  display: grid; grid-template-columns: 24px 200px minmax(0, 1fr) auto;
-  gap: 10px; align-items: center;
+.segments-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap;
 }
-.segment-order { font: 500 13px var(--mono); color: var(--muted); text-align: right; }
+.segments-title { font-size: 18px; font-weight: 900; }
+.segments-actions { display: flex; align-items: center; gap: 12px; }
+
+/* 保存の状態バッジ（保存済み / 未保存の変更あり / 保存中） */
+.save-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 12px; border-radius: 999px;
+  font-size: 12px; font-weight: 700;
+}
+.save-badge .mark { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+.save-badge.is-saved {
+  color: oklch(0.45 0.13 150); background: #eef5ec;
+  border: 1.5px solid oklch(0.6 0.13 150 / .4);
+}
+.save-badge.is-saved .mark { background: var(--done); }
+
+.save-badge.is-dirty {
+  color: oklch(0.5 0.18 45); background: #fdf1e4;
+  border: 1.5px solid oklch(0.65 0.18 45 / .5);
+}
+.save-badge.is-dirty .mark {
+  background: var(--accent); box-shadow: 0 0 6px var(--accent-glow);
+  animation: blink 1.4s infinite;
+}
+
+.save-badge.is-error {
+  color: oklch(0.45 0.2 25); background: #fbeee8;
+  border: 1.5px solid oklch(0.55 0.2 25 / .45);
+}
+.save-badge.is-error .mark { background: oklch(0.55 0.2 25); }
+
+.save-badge.is-saving {
+  color: var(--muted); background: var(--cream); border: 1.5px solid var(--rule);
+}
+.save-badge.is-saving .mark {
+  width: 10px; height: 10px; background: none;
+  border: 2px solid var(--accent); border-top-color: transparent;
+  animation: spin .9s linear infinite;
+}
+
+.btn-save {
+  padding: 9px 18px; border: none; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 700;
+  cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .25);
+}
+.btn-save:hover:not(:disabled) { background: var(--accent-deep); }
+.btn-save:disabled { cursor: default; box-shadow: none; }
+.btn-save.is-saved:disabled { background: var(--rule); color: var(--disabled); }
+/* 保存中は、押せないが「いま動いている」ことが分かるよう半透明の橙にする */
+.btn-save.is-saving:disabled { background: oklch(0.65 0.18 45 / .55); color: #fff; }
+.btn-save.is-error {
+  background: var(--cream); color: oklch(0.5 0.2 25);
+  border: 2px solid oklch(0.55 0.2 25); box-shadow: none;
+}
+.btn-save.is-error:hover { background: #fbeee8; }
+
+/* エラーの帯 */
+.save-error {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 12px;
+  border: 1.5px solid oklch(0.55 0.2 25 / .45); background: #fbeee8;
+  font-size: 13px;
+}
+.save-error .mark {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  background: var(--error-text); color: #fff;
+  font: 700 10px/14px sans-serif; text-align: center;
+}
+
+
+/* 一覧（外側のカードの中に、明るい面で浮かせる） */
+.segment-list {
+  background: var(--cream); border-radius: 14px;
+  padding: 14px 0 16px; display: flex; flex-direction: column; gap: 6px;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.segment-list.is-dirty { box-shadow: inset 0 0 0 2px var(--accent); }
+.segment-list.is-saving { opacity: .6; }
+
+.segment-head, .segment {
+  display: grid; grid-template-columns: 44px 200px minmax(0, 1fr) 36px;
+  gap: 12px; align-items: center;
+}
+.segment-head {
+  padding: 0 14px 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--disabled);
+}
+.segment { padding: 10px 14px; border-radius: 12px; }
+.segment.is-changed {
+  background: #fdf1e4; box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.segment-no {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--ink); color: var(--cream-on-wood);
+  display: flex; align-items: center; justify-content: center;
+  font: 500 16px var(--mono);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .35);
+}
 
 .field {
   font-size: 14px; padding: 10px 12px;
   border: 1.5px solid var(--rule-strong); border-radius: 10px;
-  background: #fff; color: var(--ink);
+  background: #fff; color: var(--ink); min-width: 0;
   outline-color: var(--accent);
 }
 .field:disabled { background: var(--cream-dim); color: var(--disabled); }
+.field.is-wrong { border-color: var(--error-text); }
+select.field { font-weight: 500; }
+
+.btn-icon {
+  width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: transparent; color: var(--disabled);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.btn-icon:hover:not(:disabled) { background: #fbeee8; color: oklch(0.5 0.2 25); }
+.btn-icon:disabled { color: var(--rule); cursor: not-allowed; }
+
+.btn-add {
+  margin: 6px 14px 0; align-self: flex-start;
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border: 1.5px dashed var(--rule-strong); border-radius: 999px;
+  background: transparent; font-size: 13px; font-weight: 500;
+  color: var(--muted); cursor: pointer;
+}
+.btn-add:hover { border-color: var(--ink); color: var(--ink); }
+
+.segments-note { font-size: 12px; color: var(--disabled); line-height: 1.8; }
 
 .form-row { display: flex; flex-direction: column; gap: 6px; }
 .form-label { font-size: 12px; font-weight: 500; color: var(--muted); }
-
-.card-foot { display: flex; align-items: center; gap: 12px; }
-.save-state { font-size: 12px; color: var(--muted); }
-.save-state.is-dirty { color: var(--accent-text); font-weight: 700; }
-.save-state.is-error { color: var(--error-text); font-weight: 700; }
+.form-label.is-wrong { color: var(--error-text); font-weight: 700; }
 
 /* ---------------------------------------------------------------- 部品5 処理状況バー（何もしていない） */
 
@@ -326,3 +439,10 @@ button, input, select, textarea { font-family: inherit; }
 .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 .form-error { font-size: 12px; font-weight: 700; color: var(--error-text); }
+
+/* 「作成中」のくるくる */
+.spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  animation: spin .9s linear infinite; flex: none;
+}

@@ -202,9 +202,9 @@ def test_壊れた回があってもコーナーの選択肢と次の番号は�
     broken.mkdir()
     (broken / "config.yml").write_text("episode: [壊れた\n", encoding="utf-8")
 
-    assert episodes.series_rules(tmp_path) == {
-        "imasara": "今更聞けない", "it_news": "ITニュースざっくり",
-    }
+    rules = episodes.series_rules(tmp_path)
+    assert sorted(rules) == ["imasara", "it_news"]
+    assert rules["imasara"]["label"] == "今更聞けない"
     assert episodes.next_number(tmp_path) == 3
 
 
@@ -262,3 +262,13 @@ def test_読めない理由は1行におさめる(tmp_path):
     (broken / "config.yml").write_text("episode: [壊れた\n", encoding="utf-8")
     message = episodes.list_episodes(tmp_path)[0]["error"]
     assert len(message.splitlines()) == 1
+
+
+def test_テーマ欄のヒントは型を示す最初の文だけ使う(tmp_path):
+    config = dict(CONFIG)
+    config["series_rules"] = {
+        "imasara": {"label": "今更聞けない",
+                    "title_hint": "「今更聞けない○○」の形。○○は具体的な用語や概念にする"},
+    }
+    make_episode(tmp_path, config=config)
+    assert episodes.series_rules(tmp_path)["imasara"]["hint"] == "「今更聞けない○○」の形"
