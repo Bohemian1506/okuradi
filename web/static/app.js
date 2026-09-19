@@ -55,6 +55,7 @@ const state = {
   chat: null,        // 相談チャット
   chatDraft: "",
   chatWaiting: false,
+  chatError: "",
   detailLog: null,
   stream: null,
   source: null,      // いま入っている収録ファイル
@@ -1741,6 +1742,11 @@ function renderChat() {
   sub.append(what, clear);
 
   const body = el("div", "chat-body");
+  if (data.stale) {
+    const note = el("div", "chat-stale");
+    note.append(el("span", "mark", "!"), el("span", null, data.stale));
+    body.appendChild(note);
+  }
   if (!data.messages.length) {
     body.appendChild(el("div", "chat-empty",
       "この回の文字起こしを読んだ Claude に聞けます。\n例:「オープニングが長い気がする。どこで切れそう？」"));
@@ -1748,7 +1754,18 @@ function renderChat() {
   for (const line of data.messages) {
     body.appendChild(el("div", line.who === "あなた" ? "say-me" : "say-claude", line.text));
   }
-  if (state.chatWaiting) body.appendChild(el("div", "say-waiting", "考えています…"));
+  if (state.chatWaiting) {
+    const wait = el("div", "say-waiting");
+    wait.append(el("span", "dots"), document.createTextNode("考えています…"));
+    body.appendChild(wait);
+  }
+  if (state.chatError) {
+    const bad = el("div", "say-error");
+    const again = el("button", "btn-tiny is-plain", "もう一度送る");
+    again.onclick = () => sendChat();
+    bad.append(el("span", "mark", "!"), el("span", null, state.chatError), again);
+    body.appendChild(bad);
+  }
 
   const foot = el("div", "chat-foot");
   const input = el("div", "chat-input");
@@ -1774,8 +1791,10 @@ function renderChat() {
 
   const memo = el("button", "btn-memo");
   memo.innerHTML = icon(SVG.memo, 13) + "改善メモに残す";
-  memo.disabled = true;
-  memo.title = "この続きは #8 で入れます";
+  memo.disabled = !data.messages.length || state.chatWaiting;
+  memo.title = data.messages.length ? "会話から Issue の下書きを作ります"
+                                    : "先に相談してください";
+  memo.onclick = () => openMemo();
 
   foot.append(input, memo);
   box.append(head, sub, body, foot);
@@ -1798,6 +1817,7 @@ async function sendChat() {
   const question = state.chatDraft.trim();
   if (!question || state.chatWaiting) return;
   state.chatWaiting = true;
+  state.chatError = "";
   state.chatDraft = "";
   // 送ったことがすぐ見えるように、先に画面へ足す
   if (state.chat) state.chat.messages = state.chat.messages.concat({ who: "あなた", text: question });
@@ -1806,11 +1826,11 @@ async function sendChat() {
     state.chat = await api(`/api/episodes/${state.selected.name}/chat`, {
       method: "POST", body: JSON.stringify({ question }),
     });
+    state.chatError = "";
   } catch (err) {
-    state.actionError = err.message;
+    // 送った質問は消さない。理由もチャットの中に出す
+    state.chatError = err.message;
     state.chatDraft = question;      // 打ち直さなくて済むように戻す
-    await loadChat();
-    renderMain();
   }
   state.chatWaiting = false;
   renderChat();
@@ -1825,6 +1845,106 @@ async function resetChat() {
     renderMain();
   }
   renderChat();
+}
+
+// ---------------------------------------------------------------- 部品7 改善メモの下書き
+
+function openMemo() {
+  const overlay = el("div", "overlay");
+  const dialog = el("div", "dialog is-wide");
+  overlay.appendChild(dialog);
+  const memo = { state: "作成中", title: "", body: "", url: "", error: "" };
+  // 登録中は閉じさせない。閉じると結果が伝わらず、二重に登録しかねない
+  const canClose = () => memo.state !== "登録中";
+  overlay.onclick = (event) => {
+    if (event.target === overlay && canClose()) overlay.remove();
+  };
+  document.body.appendChild(overlay);
+
+  const draw = () => {
+    dialog.innerHTML = "";
+    const head = el("div", "memo-head");
+    head.append(el("div", "dialog-title", "改善メモの下書き"),
+                el("span", "memo-label", "ラベル: 改善メモ"));
+    dialog.appendChild(head);
+    dialog.appendChild(el("div", "segments-note",
+      "公開リポジトリの Issue に出ます。人に見せたくないことは消してください。"));
+
+    if (memo.state === "作成中") {
+      const wait = el("div", "memo-waiting");
+      wait.append(el("span", "spinner"), document.createTextNode("会話を要約しています"));
+      dialog.appendChild(wait);
+    } else if (memo.state === "登録済み") {
+      const done = el("div", "memo-done");
+      const link = el("a", null, memo.url || "Issue を開く");
+      link.href = memo.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      done.append(document.createTextNode("Issue に登録しました"), link);
+      dialog.appendChild(done);
+    } else {
+      if (memo.error) dialog.appendChild(el("div", "form-error", memo.error));
+      const busy = memo.state === "登録中";
+      const title = el("input", "field");
+      title.value = memo.title;
+      title.disabled = busy;
+      title.oninput = () => { memo.title = title.value; };
+      const body = el("textarea", "memo-text");
+      body.rows = 6;
+      body.value = memo.body;
+      body.disabled = busy;
+      body.oninput = () => { memo.body = body.value; };
+      dialog.append(field(el("span", "form-label", "タイトル"), title),
+                    field(el("span", "form-label", "本文"), body));
+    }
+
+    const foot = el("div", "dialog-foot");
+    const close = el("button", "btn-plain", memo.state === "登録済み" ? "閉じる" : "キャンセル");
+    close.disabled = !canClose();
+    close.onclick = () => { if (canClose()) overlay.remove(); };
+    foot.appendChild(close);
+
+    if (memo.state !== "登録済み") {
+      const create = el("button", "btn-primary");
+      if (memo.state === "登録中") {
+        create.append(el("span", "spinner"), document.createTextNode("登録中"));
+      } else {
+        create.textContent = "Issueに登録";
+      }
+      create.disabled = memo.state !== "編集中" || !memo.title.trim();
+      create.onclick = async () => {
+        memo.state = "登録中"; memo.error = ""; draw();
+        try {
+          const got = await api(`/api/episodes/${state.selected.name}/memo`, {
+            method: "POST",
+            body: JSON.stringify({ title: memo.title, body: memo.body }),
+          });
+          memo.url = got.url;
+          memo.state = "登録済み";
+        } catch (err) {
+          memo.error = err.message;
+          memo.state = "編集中";
+        }
+        draw();
+      };
+      foot.appendChild(create);
+    }
+    dialog.appendChild(foot);
+  };
+
+  draw();
+  api(`/api/episodes/${state.selected.name}/memo/draft`, { method: "POST" })
+    .then((got) => {
+      memo.title = got.title;
+      memo.body = got.body;
+      memo.state = "編集中";
+      draw();
+    })
+    .catch((err) => {
+      memo.error = err.message;
+      memo.state = "編集中";
+      draw();
+    });
 }
 
 // ---------------------------------------------------------------- 部品5 処理状況バーとログ
@@ -2054,7 +2174,7 @@ async function finishJob() {
     const done = state.job;
     setTimeout(() => {
       if (state.job === done) { state.job = null; state.showLog = false; renderStatus(); renderMain(); }
-    }, 5000);   // 完了は数秒で消える（見本）
+    }, 5000);   // 完了は数秒で消える（見本）。エラー・中止は残す
   }
 }
 
@@ -2212,16 +2332,17 @@ document.querySelectorAll(".tab[data-tab]").forEach((node) => {
 $("new-episode").onclick = openNewEpisode;
 $("chat-toggle").onclick = () => toggleChat();
 
-// 画面を開き直したときに、動いている工程があれば拾う
+// 画面を開き直したときに、直前の工程を拾う。
+// 処理中なら続きを流し、終わっていても結果とログを見られるようにする
+// （待っている間にタブを開き直すと、失敗の理由が見えなくなっていた）
 async function attachRunningJob() {
   try {
     const job = await api("/api/job");
-    if (job && job.state === "処理中") {
-      state.job = job;
-      renderStatus();
-      renderMain();
-      openStream();
-    }
+    if (!job || job.state === "なし") return;
+    state.job = job;
+    renderStatus();
+    renderMain();
+    if (job.state === "処理中") openStream();
   } catch (err) { /* 拾えなくても画面は使える */ }
 }
 

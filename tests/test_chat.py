@@ -130,3 +130,38 @@ def test_会話の記録が壊れていても落ちない(ep, monkeypatch):
     (ep / "00_logs" / "chat.json").write_text("{壊れた", encoding="utf-8")
     got = chat.read_chat("ep01")
     assert got["messages"] == [] and got["session"] is None
+
+
+# ---------------------------------------------------------------- 読んでいるものの取り違え
+
+def test_会話を始めた版を覚えておく(ep, monkeypatch):
+    write_text_file(ep, "scan.json", [{"start": 0, "text": "あ"}])
+    fake_claude(monkeypatch)
+    chat.ask("ep01", "質問")
+    assert chat.read_chat("ep01")["reading"] == "下見"
+    assert chat.read_chat("ep01")["stale"] is None
+
+
+def test_あとで確定版ができたらお知らせを出す(ep, monkeypatch):
+    """材料は1回目にしか渡していないので、画面が取り違えないようにする。"""
+    write_text_file(ep, "scan.json", [{"start": 0, "text": "あ"}])
+    fake_claude(monkeypatch)
+    chat.ask("ep01", "質問")
+
+    write_text_file(ep, "transcript.json", [{"start": 0, "text": "い"}])
+    got = chat.read_chat("ep01")
+    assert got["reading"] == "下見"                  # 会話を始めた版のまま
+    assert "リセット" in got["stale"]
+
+
+def test_リセットしたあとは確定版で始まる(ep, monkeypatch):
+    write_text_file(ep, "scan.json", [{"start": 0, "text": "あ"}])
+    seen = fake_claude(monkeypatch)
+    chat.ask("ep01", "1回目")
+    write_text_file(ep, "transcript.json", [{"start": 0, "text": "い"}])
+    chat.reset("ep01")
+    chat.ask("ep01", "2回目")
+
+    assert seen["persist"] is True                   # 新しいセッション
+    assert chat.read_chat("ep01")["reading"] == "確定版"
+    assert chat.read_chat("ep01")["stale"] is None

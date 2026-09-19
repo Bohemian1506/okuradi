@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 import build
 
 
@@ -91,3 +93,28 @@ def test_ログが書けなくても工程は止まらない(tmp_path, capsys):
     out = capsys.readouterr().out
     build.close_detail_log()
     assert "くわしいログを残せません" in out or out == ""
+
+
+# ---------------------------------------------------------------- claude を呼べないとき
+
+def test_claude_が無ければ理由を言って断る(monkeypatch):
+    """subprocess.run の例外も RuntimeError にして、画面まで理由を届ける。"""
+    import subprocess
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "claude")
+
+    monkeypatch.setattr(build.subprocess, "run", missing)
+    with pytest.raises(RuntimeError, match="claude コマンドが見つかりません"):
+        build.call_claude("あ")
+
+
+def test_claude_が時間切れなら理由を言って断る(monkeypatch):
+    import subprocess
+
+    def slow(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=600)
+
+    monkeypatch.setattr(build.subprocess, "run", slow)
+    with pytest.raises(RuntimeError, match="10分を過ぎました"):
+        build.call_claude("あ")

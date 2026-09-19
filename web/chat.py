@@ -50,17 +50,28 @@ def read_chat(name):
     """いまの会話。画面を開き直しても続きから見える。"""
     ep_dir = episodes.resolve(name)
     path = chat_path(ep_dir)
-    reading, _ = pick_transcript(ep_dir)
+    now, _ = pick_transcript(ep_dir)
+    empty = {"reading": now, "messages": [], "session": None, "stale": None}
     if not path.exists():
-        return {"reading": reading, "messages": [], "session": None}
+        return empty
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return {"reading": reading, "messages": [], "session": None}
+        return empty
+
+    # 材料は会話の1回目にしか渡していない。あとで確定版ができても、
+    # Claude が覚えているのは渡した版のまま。画面がそれを取り違えないようにする。
+    sent = data.get("reading")
+    messages = data.get("messages") or []
+    stale = None
+    if messages and sent and sent != now:
+        stale = (f"会話は「{sent}」で始めています。いまは「{now}」があるので、"
+                 "そちらで聞きたいときは会話をリセットしてください")
     return {
-        "reading": reading,
-        "messages": data.get("messages") or [],
+        "reading": sent or now,
+        "messages": messages,
         "session": data.get("session"),
+        "stale": stale,
     }
 
 
@@ -106,6 +117,7 @@ def ask(name, question):
     chat = read_chat(name)
     session = chat["session"]
 
+    sent = chat["reading"] if session else None
     try:
         if session:
             # 2回目から。セッションが材料を覚えている
@@ -113,6 +125,7 @@ def ask(name, question):
         else:
             cfg = episodes.read_config(ep_dir)
             kind, rows = pick_transcript(ep_dir)
+            sent = kind
             body = "\n".join(f"[{build.hhmmss(r.get('start', 0))}] {r.get('text', '')}"
                              for r in rows) or "（まだ文字起こしがありません）"
             prompt = FIRST.format(
@@ -131,7 +144,7 @@ def ask(name, question):
         {"who": "Claude", "text": answer},
     ]
     save_chat(ep_dir, {"session": result.get("session_id") or session,
-                       "messages": messages})
+                       "reading": sent, "messages": messages})
     return read_chat(name)
 
 

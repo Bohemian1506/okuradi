@@ -508,8 +508,16 @@ def call_claude(prompt, schema=None, system=None, resume=None, persist=False):
     # APIキーがあるとサブスクではなく従量課金で呼ばれるので外す
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
     # --resume は同じ作業ディレクトリでないとセッションを見つけられない
-    proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                          env=env, cwd=Path(__file__).parent, timeout=600)
+    try:
+        proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                              env=env, cwd=Path(__file__).parent, timeout=600)
+    except FileNotFoundError:
+        raise RuntimeError(
+            "claude コマンドが見つかりません（Claude Code を入れてログインしてください）")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("claude の返事が10分を過ぎました。もう一度お試しください")
+    except OSError as exc:
+        raise RuntimeError(f"claude を呼べませんでした: {exc}")
     try:
         res = json.loads(proc.stdout)
     except json.JSONDecodeError:
