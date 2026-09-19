@@ -14,12 +14,17 @@ scan  -> cut -> clean -> transcribe -> meta -> video -> upload
 GUIを使う場合:
 
 ```
-uvicorn web.main:app --reload     # http://127.0.0.1:8000
+.venv/bin/python -m uvicorn web.main:app --reload
+# → http://127.0.0.1:8000 をブラウザで開く（WSL なら Windows 側のブラウザでよい）
 ```
 
 回を作る → 音源を入れる → 下見 → エコー区間 → 整音 → 文字起こしを直す →
 タイトルと章 → 動画 → YouTube に貼る文章のコピー、まで一通りできる。
 この回について Claude に相談したり、会話から改善メモを Issue に残したりもできる。
+
+**GUI が扱うのは6工程**（音源・下見・整音・文字起こし・メタデータ・動画）。
+`cut`（途中のカット）と `upload`（限定公開）はコマンドだけ。
+途中のカットは当面やらないと決めたため、アップロードは手で貼るため。
 
 **ただし、新しい GUI だけで1回分を通したことはまだない**（工程ごとには確かめてある）。
 次の収録で通してみて、問題がなければ下の Streamlit 版を消す。
@@ -27,7 +32,7 @@ uvicorn web.main:app --reload     # http://127.0.0.1:8000
 今までの GUI（Streamlit）も、新しい GUI で1回分を通せるまで残してある:
 
 ```
-streamlit run app.py
+.venv/bin/streamlit run app.py
 ```
 
 ## ディレクトリ
@@ -79,8 +84,11 @@ ffmpeg -version
 
 ### 2. Pythonパッケージ
 
+仮想環境は `.venv/`。**uv で作ってあるので、中に pip は入っていない。**
+入れ直すときも `uv pip` を使う。
+
 ```
-pip install -r requirements.txt
+uv pip install --python .venv/bin/python -r requirements.txt
 ```
 
 NVIDIA の GPU で文字起こしを速くする場合は、CUDA のライブラリも入れる（約2GB）。
@@ -88,7 +96,7 @@ build.py が自動で読み込むので、LD_LIBRARY_PATH の設定は要らな�
 入れなくても CPU で動く（遅くなるだけ）。
 
 ```
-pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
+uv pip install --python .venv/bin/python nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
 ```
 
 ### 3. GitHub CLI
@@ -129,17 +137,17 @@ claude auth status   # authMethod が claude.ai になっていること
 # 1. ep01/00_raw/ に収録ファイルを置く
 # 2. ep01/config.yml の theme を書き換える
 
-python build.py ep01 --to scan           # 下見の文字起こし
+.venv/bin/python build.py ep01 --to scan           # 下見の文字起こし
 #   → 02_text/scan.json を見てカット点を探す
 
-# config.yml の cuts に区間を書く（GUIなら波形上で指定）
+# config.yml の cuts に区間を書く（コマンドだけ。GUI にカット工程は無い）
 
-python build.py ep01 --from cut --to clean   # カットして整音
+.venv/bin/python build.py ep01 --from cut --to clean   # カットして整音
 #   進み具合は tail -f ep01/00_logs/clean.log（ffmpegの出力はここに残る）
 #   → 01_clean/trimmed.wav  前後のトリムまで（エコー区間の時刻はこの音が基準）
 #   → 01_clean/clean.wav    エコーと音量そろえまで。これを聴く（ゲート1）
 
-python build.py ep01 --from transcribe   # 残り全部
+.venv/bin/python build.py ep01 --from transcribe   # 残り全部
 #   → 限定公開のURLが出る（ゲート2）
 
 # 3. YouTubeで観て、良ければ公開ボタン
@@ -148,8 +156,8 @@ python build.py ep01 --from transcribe   # 残り全部
 やり直しは工程単位で効く。
 
 ```
-python build.py ep01 --from meta --to meta     # タイトルだけ作り直す
-python build.py ep01 --from video --to video   # 画像を変えて動画だけ再生成
+.venv/bin/python build.py ep01 --from meta --to meta     # タイトルだけ作り直す
+.venv/bin/python build.py ep01 --from video --to video   # 画像を変えて動画だけ再生成
 ```
 
 ## OBS で録る場合
@@ -160,7 +168,8 @@ python build.py ep01 --from video --to video   # 画像を変えて動画だけ�
 
 ## 一部にだけエコーをかける
 
-タイトルコールなど、短い区間にだけ響きを足せる。config.yml に書く（GUIなら波形上で指定）。
+タイトルコールなど、短い区間にだけ響きを足せる。config.yml に書く。
+**GUI なら波形の上をドラッグして選び、端を掴んで伸び縮みさせられる**（書き込み先は同じ config.yml）。
 
 ```yaml
 echoes:
