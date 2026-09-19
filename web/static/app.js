@@ -1066,6 +1066,12 @@ function cleanCard() {
   box.appendChild(wave);
   const note = waveNote(cw);
   if (note) box.appendChild(note);
+  // 斜線だけに頼らず、言葉でも言う（#65）
+  if ((result.bands || []).length) {
+    box.appendChild(el("div", "result-bands",
+      "斜線の所にエコーがかかっています（ここでは動かせません。"
+      + "変えるときは上の「エコー区間を決める」で直して、整音をやり直します）"));
+  }
 
   box.appendChild(wavePlayer("clean"));
   card.appendChild(box);
@@ -1141,9 +1147,15 @@ const WAVE_CSS = `
 [part~="region"].is-none { border-color: var(--wood-text) !important; }
 [part~="region"].is-picked { box-shadow: inset 0 0 0 2px var(--cream); }
 [part~="region-handle"] { border-color: var(--cream) !important; width: 8px !important; }
-/* 見るだけの帯（整音結果）。掴めないので、その形に見せる */
+/* 見るだけの帯（整音結果）。掴めないので、その形に見せる（#65 案A）。
+   斜線を重ねると、面の手ざわりが変わるので離れて見ても掴める帯と区別が付く。
+   色と札はそのままなので、どのプリセットがかかったかは読める */
 [part~="region"].is-fixed { cursor: default; }
 [part~="region"].is-fixed [part~="region-handle"] { display: none; }
+[part~="region"].is-fixed {
+  background-image: repeating-linear-gradient(45deg,
+    rgba(255, 250, 240, .30) 0 3px, transparent 3px 8px);
+}
 [part~="region"] .tag {
   margin-top: 4px; padding: 1px 7px; border-radius: 999px;
   background: var(--ink-deep); color: var(--cream-on-wood);
