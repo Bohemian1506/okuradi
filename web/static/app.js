@@ -21,7 +21,13 @@ const SVG = {
   trash: '<path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/>',
   up: '<path d="M2 8l4-4 4 4"/>',
   down: '<path d="M2 4l4 4 4-4"/>',
+  play: '<path d="M3 2l9 5-9 5z"/>',
+  redo: '<path d="M11.5 7A4.5 4.5 0 1 1 9.8 3.5M9 1.5l1.5 2L8.3 4.7" stroke-linecap="round"/>',
+  check: '<path d="M1.5 5l2.5 2.5 4.5-5"/>',
 };
+
+// どの画面にどの工程があるか（TAB_OF_STEP の裏返し）
+const STEPS_OF_TAB = { "1": [], "2": ["source", "scan", "clean"], "3": ["transcribe", "meta", "video"] };
 
 const state = {
   episodes: [],
@@ -34,6 +40,9 @@ const state = {
   tab: "1",
   save: "saved",     // saved / dirty / saving / error
   saveError: "",
+  job: null,         // 実行中（か直前に終わった）工程
+  showLog: false,
+  stream: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -177,9 +186,76 @@ function renderMain() {
     main.appendChild(segmentsCard());
     return;
   }
-  const names = { "2": "2. 収録〜整音", "3": "3. 仕上げ" };
+  main.appendChild(runsCard());
+}
+
+// ---------------------------------------------------------------- 部品4 工程実行ボタン
+
+function jobOf(step) {
+  const job = state.job;
+  if (!job || job.episode !== state.selected.name || job.step !== step.key) return null;
+  return job;
+}
+
+function runsCard() {
+  const box = el("div", "runs");
+  const steps = state.selected.steps
+    .filter((step) => STEPS_OF_TAB[state.tab].includes(step.key));
+
   const issues = { "2": "#6", "3": "#7" };
-  main.appendChild(placeholder(names[state.tab], `この画面の中身は ${issues[state.tab]} で入れます`));
+  box.appendChild(el("div", "segments-note",
+    `いまは工程を動かすところだけです。この画面の中身は ${issues[state.tab]} で入れます。`));
+
+  for (const step of steps) {
+    if (step.key === "source") continue;   // 音源は「実行」ではなく追加するもの（#6）
+    box.appendChild(runRow(step));
+  }
+  return box;
+}
+
+function runRow(step) {
+  const row = el("div", "run");
+  const job = jobOf(step);
+  const running = job && job.state === "処理中";
+  const failed = job && (job.state === "エラー" || job.state === "中止");
+
+  let look = "is-ready";
+  let label = `${step.label}を実行`;
+  let mark = SVG.play;
+  let note = "";
+
+  if (running) {
+    look = "is-running"; label = "中止"; mark = null;
+  } else if (failed) {
+    look = "is-failed"; label = "もう一度実行";
+  } else if (step.state === "未実行") {
+    look = "is-todo"; note = step.reason || "";
+  } else if (step.state === "完了") {
+    look = "is-done"; label = "やり直す"; mark = SVG.redo;
+  } else if (step.state === "古い") {
+    note = "前の工程をやり直したので、作り直しが要ります";
+  }
+
+  const button = el("button", `btn-run ${look}`);
+  if (running) {
+    button.append(el("span", "spinner"), document.createTextNode("中止"),
+                  el("span", "elapsed", clock(job.elapsed)));
+    button.onclick = () => cancelJob();
+  } else {
+    button.innerHTML = icon(mark, 14, mark === SVG.redo ? 1.8 : 0) + label;
+    if (mark === SVG.play) button.querySelector("svg").setAttribute("fill", "currentColor");
+    button.disabled = step.state === "未実行" || (state.job && state.job.state === "処理中");
+    button.onclick = () => runStep(step.key);
+  }
+
+  row.appendChild(button);
+  if (note) row.appendChild(el("div", "run-note", note));
+  return row;
+}
+
+function clock(seconds) {
+  const total = Math.floor(seconds || 0);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
 function placeholder(title, note) {
@@ -381,6 +457,149 @@ async function saveSegments() {
   }
 }
 
+// ---------------------------------------------------------------- 部品5 処理状況バーとログ
+
+const STATUS_LOOK = {
+  "処理中": ["is-running", (j) => `${j.label} を処理中`],
+  "完了": ["is-done", (j) => `${j.label} が完了しました`],
+  "エラー": ["is-failed", (j) => `${j.label} でエラー`],
+  "中止": ["is-stopped", (j) => `${j.label} を中止しました`],
+};
+
+function renderStatus() {
+  const box = $("status");
+  box.innerHTML = "";
+  box.className = "status";
+  const job = state.job;
+
+  const line = el("div", "status-line");
+  const logButton = el("button", "btn-log", state.showLog ? "ログ ▴" : "ログ ▾");
+  logButton.disabled = !job || !job.lines || !job.lines.length;
+  logButton.onclick = () => { state.showLog = !state.showLog; renderStatus(); };
+
+  if (!job || !STATUS_LOOK[job.state]) {
+    line.append(el("span", "status-mark is-idle"),
+                el("span", null, "何もしていません"), el("span", "spacer"), logButton);
+    box.appendChild(line);
+    return;
+  }
+
+  const [look, text] = STATUS_LOOK[job.state];
+  box.classList.add(look);
+  const mark = el("span", `status-mark ${look}`);
+  if (job.state === "完了") mark.innerHTML = icon(SVG.check, 9, 2.2, 10).replace('stroke="currentColor"', 'stroke="#fff"');
+  if (job.state === "エラー") mark.textContent = "!";
+  line.append(mark, el("span", "status-what", text(job)));
+
+  if (job.state === "処理中") {
+    line.append(el("span", "status-time", clock(job.elapsed)));
+    const tail = (job.lines || []).filter((l) => l.trim()).slice(-1)[0] || "";
+    line.append(el("span", "status-tail", tail));
+    const stop = el("button", "btn-plain", "中止");
+    stop.onclick = () => cancelJob();
+    line.append(stop);
+  } else if (job.state === "完了") {
+    line.append(el("span", "status-time", clock(job.elapsed)), el("span", "spacer"),
+                el("span", "status-tail", "数秒で消えます"));
+  } else {
+    if (job.state === "中止") {
+      line.append(el("span", null, "結果は前のままです"));
+    } else {
+      const last = (job.lines || []).filter((l) => l.trim()).slice(-1)[0] || "";
+      line.append(el("span", null, last));
+    }
+    line.append(el("span", "spacer"));
+    const again = el("button", "btn-plain", "もう一度実行");
+    again.onclick = () => runStep(job.step);
+    line.append(again);
+  }
+
+  line.appendChild(logButton);
+  box.appendChild(line);
+
+  if (state.showLog && job.lines && job.lines.length) {
+    const log = el("pre", "log", job.lines.join("\n"));
+    box.appendChild(log);
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+// ---------------------------------------------------------------- 工程を動かす
+
+let ticker = null;
+
+async function runStep(step) {
+  try {
+    state.job = await api(`/api/episodes/${state.selected.name}/steps/${step}/run`, { method: "POST" });
+  } catch (err) {
+    state.job = { episode: state.selected.name, step, label: step,
+                  state: "エラー", elapsed: 0, lines: [err.message] };
+    renderStatus();
+    renderMain();
+    return;
+  }
+  state.showLog = false;
+  renderStatus();
+  renderMain();
+  openStream();
+}
+
+async function cancelJob() {
+  try {
+    await api("/api/job/cancel", { method: "POST" });
+  } catch (err) {
+    // すでに終わっていた場合など。流れてくる状態にまかせる
+  }
+}
+
+function openStream() {
+  if (state.stream) state.stream.close();
+  state.stream = new EventSource("/api/job/stream");
+  clearInterval(ticker);
+  ticker = setInterval(() => {
+    if (state.job && state.job.state === "処理中") {
+      state.job.elapsed += 1;
+      renderStatus();
+      renderMain();
+    }
+  }, 1000);
+
+  state.stream.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.kind === "start") {
+      state.job = data.job;
+    } else if (data.kind === "log") {
+      state.job.lines = (state.job.lines || []).concat(data.line);
+    } else if (data.kind === "state") {
+      state.job = { ...state.job, ...data.job };
+    } else if (data.kind === "end") {
+      closeStream();
+      finishJob();
+      return;
+    }
+    renderStatus();
+  };
+  state.stream.onerror = () => { closeStream(); };
+}
+
+function closeStream() {
+  if (state.stream) { state.stream.close(); state.stream = null; }
+  clearInterval(ticker);
+  ticker = null;
+}
+
+async function finishJob() {
+  // 工程が終わると成果物が増えるので、状態を読み直す
+  await reload({ keep: state.selected && state.selected.name, keepSelected: true });
+  renderStatus();
+  if (state.job && state.job.state === "完了") {
+    const done = state.job;
+    setTimeout(() => {
+      if (state.job === done) { state.job = null; state.showLog = false; renderStatus(); renderMain(); }
+    }, 5000);   // 完了は数秒で消える（見本）
+  }
+}
+
 // ---------------------------------------------------------------- 部品2 新しい回ダイアログ
 
 function openNewEpisode() {
@@ -479,6 +698,7 @@ async function selectEpisode(name) {
   renderEpisodes();
   renderSteps();
   renderMain();
+  renderStatus();
 }
 
 async function reload({ keep, keepSelected } = {}) {
@@ -501,6 +721,7 @@ async function reload({ keep, keepSelected } = {}) {
   renderEpisodes();
   renderSteps();
   renderMain();
+  renderStatus();
 }
 
 document.querySelectorAll(".tab").forEach((node) => {
@@ -508,7 +729,20 @@ document.querySelectorAll(".tab").forEach((node) => {
 });
 $("new-episode").onclick = openNewEpisode;
 
-reload().catch((err) => {
+// 画面を開き直したときに、動いている工程があれば拾う
+async function attachRunningJob() {
+  try {
+    const job = await api("/api/job");
+    if (job && job.state === "処理中") {
+      state.job = job;
+      renderStatus();
+      renderMain();
+      openStream();
+    }
+  } catch (err) { /* 拾えなくても画面は使える */ }
+}
+
+reload().then(attachRunningJob).catch((err) => {
   $("main").innerHTML = "";
   $("main").appendChild(placeholder("読み込めませんでした", err.message));
 });

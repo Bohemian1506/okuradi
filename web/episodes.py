@@ -139,14 +139,27 @@ def step_states(ep_dir, cfg):
         key = step["key"]
         mine = mtimes[key]
         deps = DEPS[key]
+        row = {"key": key, "label": step["label"]}
         if mine is None:
-            ready = bool(deps) and all(mtimes[d] is not None for d in deps)
-            state = "実行できる" if ready else "未実行"
+            missing = [d for d in deps if mtimes[d] is None]
+            row["state"] = "未実行" if (missing or not deps) else "実行できる"
+            if row["state"] == "未実行":
+                row["reason"] = _why_not(missing)
         else:
             stale = any(mtimes[d] is not None and mtimes[d] > mine for d in deps)
-            state = "古い" if stale else "完了"
-        states.append({"key": key, "label": step["label"], "state": state})
+            row["state"] = "古い" if stale else "完了"
+        states.append(row)
     return states
+
+
+def _why_not(missing):
+    """まだ実行できない理由。画面のボタンの下に出す。"""
+    if not missing:
+        return "先に音源を追加してください"
+    labels = [s["label"] for s in STEPS if s["key"] in missing]
+    if labels == ["音源"]:
+        return "先に音源を追加してください"
+    return "先に" + "と".join(labels) + "を済ませてください"
 
 
 # ---------------------------------------------------------------- 一覧

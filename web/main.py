@@ -9,12 +9,15 @@ build.py の関数をそのまま呼ぶだけの皮。処理の実体は build.p
 
 from pathlib import Path
 
+import json
+import queue
+
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from web import episodes
+from web import episodes, runner
 
 STATIC = Path(__file__).parent / "static"
 
@@ -72,6 +75,58 @@ def get_episode(name: str):
 @app.put("/api/episodes/{name}/segments")
 def put_segments(name: str, body: Segments):
     return _guard(episodes.save_segments, name, _as_dicts(body.segments))
+
+
+# ---------------------------------------------------------------- 工程の実行
+
+
+@app.post("/api/episodes/{name}/steps/{step}/run")
+def run_step(name: str, step: str):
+    return _guard(runner.start, name, step).snapshot()
+
+
+@app.post("/api/job/cancel")
+def cancel_job():
+    return _guard(runner.cancel).snapshot(with_lines=False)
+
+
+@app.get("/api/job")
+def get_job():
+    job = runner.current()
+    return job.snapshot() if job else {"state": "なし"}
+
+
+@app.get("/api/job/stream")
+def stream_job():
+    """実行中の工程のログと状態を流す（SSE）。"""
+    job = runner.current()
+    if job is None:
+        raise HTTPException(status_code=404, detail="実行中の工程がありません")
+
+    def events():
+        channel = job.subscribe()
+        try:
+            # つないだ時点までのログを先に渡す
+            yield _sse({"kind": "start", "job": job.snapshot()})
+            while True:
+                try:
+                    event = channel.get(timeout=15)
+                except queue.Empty:
+                    yield ": keep-alive\n\n"   # 途中で切られないようにする
+                    continue
+                yield _sse(event)
+                if event["kind"] == "end":
+                    break
+        finally:
+            job.unsubscribe(channel)
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+def _sse(event):
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 @app.get("/")
