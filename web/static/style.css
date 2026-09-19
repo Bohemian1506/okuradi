@@ -891,11 +891,11 @@ select.field { font-weight: 500; }
   border: 1.5px solid oklch(0.55 0.2 25 / .45); background: #fbeee8;
   color: var(--ink); font-family: inherit; font-size: 13px;
 }
+/* 丸の大きさと字体も .save-error にそろえる（#59。色だけでは揃わない） */
 .wave-note .mark {
-  flex: none; width: 18px; height: 18px; border-radius: 50%;
+  flex: none; width: 14px; height: 14px; border-radius: 50%;
   background: var(--accent); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font: 700 12px var(--mono);
+  font: 700 10px/14px sans-serif; text-align: center;
 }
 .wave-note.is-error .mark { background: var(--error-text); }
 

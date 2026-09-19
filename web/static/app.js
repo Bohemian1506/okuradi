@@ -2762,10 +2762,19 @@ function unsavedThings() {
   if (state.save === "dirty" || state.save === "error") rows.push("コーナー・テーマ");
   try {
     if (echoDirty()) rows.push("エコー区間");
+    // まだ確定していない行も数える。確定（Enter / 「この行を確定」）を
+    // 通るまで state.texts は変わらないので、打ちかけが黙って消えていた
+    if (state.editing >= 0
+        && state.draft.trim() !== (state.texts[state.editing] || "")) {
+      rows.push("書きかけの行");
+    }
     if (state.transcript && textsDirty()) rows.push("文字起こしの直し");
     if (state.draftMeta && metaDirty()) rows.push("タイトル・概要欄");
   } catch (err) {
-    // 数えられなくても、画面を止めない
+    // 数えられなかったときは「無い」ことにしない。黙って閉じさせると、
+    // #60 で防ごうとしたことがそのまま起きる
+    console.warn("未保存のものを数えられませんでした", err);
+    rows.push("保存していないもの");
   }
   return rows;
 }
