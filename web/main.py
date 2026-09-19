@@ -198,6 +198,12 @@ def get_copy(name: str):
     return _guard(media.copy_texts, name)
 
 
+@app.post("/api/episodes/{name}/copy")
+def post_copy(name: str, body: Meta):
+    """保存前の直しから、コピー用のひとそろいを作る。"""
+    return _guard(media.copy_texts, name, body.model_dump())
+
+
 @app.get("/api/episodes/{name}/video")
 def get_video(name: str):
     return _guard(media.video_view, name)

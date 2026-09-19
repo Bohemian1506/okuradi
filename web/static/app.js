@@ -73,7 +73,9 @@ const state = {
   metaSaved: "",
   newTag: "",
   video: null,       // 動画の様子
-  copyText: null,    // コピー用のひとそろい
+  copyText: null,    // コピー用のひとそろい（保存済みから）
+  copyDraft: null,   // コピー用のひとそろい（保存前の直しから）
+  copyBusy: false,
   copied: "",        // いまコピーしたもの（数秒だけ出す）
 };
 
@@ -217,6 +219,9 @@ function renderMain() {
   const main = $("main");
   main.innerHTML = "";
 
+  // 失敗はどの画面でも見えるようにする（CLAUDE.md「静かに失敗させない」）
+  if (state.actionError) main.appendChild(errorBanner());
+
   if (!state.selected) {
     main.appendChild(placeholder("回がありません", "左の「新しい回」から作ってください"));
     return;
@@ -310,7 +315,7 @@ function videoCard() {
   if (data.state !== "完了") {
     const box = el("div", "video-panel");
     box.appendChild(el("div", "lines-empty",
-      "まだ動画がありません。右上の「動画化を実行」を押すと作られます。"));
+      "まだ動画がありません。右上の「動画を実行」を押すと作られます。"));
     return box;
   }
 
@@ -334,6 +339,8 @@ function videoCard() {
   const body = el("div", "video-body");
   const player = el("video");
   player.controls = true;
+  // 音声と動画が同時に鳴らないようにする
+  player.onplay = () => audio.pause();
   player.preload = "metadata";
   player.src = `/api/episodes/${state.selected.name}/video/file`;
   body.appendChild(player);
@@ -361,7 +368,7 @@ async function openVideoFolder() {
   try {
     await api(`/api/episodes/${state.selected.name}/video/folder`, { method: "POST" });
   } catch (err) {
-    state.sourceError = err.message;
+    state.actionError = err.message;
     renderMain();
   }
 }
@@ -379,15 +386,14 @@ function studioLink() {
 
 function copyCard() {
   const box = el("div", "copy-panel");
-  const data = state.copyText;
+  const data = state.copyDraft || state.copyText;
   if (!data) {
     box.appendChild(el("div", "lines-empty",
       "まだメタデータがありません。②で作ると、ここからコピーできます。"));
     return box;
   }
 
-  // 保存前の直しも見たいので、画面の下書きで数え直す
-  const issues = state.draftMeta ? pendingIssues(state.draftMeta) : data.issues;
+  const issues = data.issues;
   if (issues.length) {
     const warn = el("div", "copy-warn");
     warn.append(el("span", "mark", "!"), document.createTextNode(
@@ -424,7 +430,7 @@ async function copyOne(key, text) {
       if (state.copied === key) { state.copied = ""; renderMain(); }
     }, 2000);
   } catch (err) {
-    state.sourceError = `コピーできませんでした: ${err.message}`;
+    state.actionError = `コピーできませんでした: ${err.message}`;
     renderMain();
   }
 }
@@ -450,6 +456,24 @@ function metaSave() {
   return box;
 }
 
+let copyTimer = null;
+
+function refreshCopy() {
+  // 打つたびに呼ばれるので、少し待ってからまとめて聞く
+  clearTimeout(copyTimer);
+  copyTimer = setTimeout(async () => {
+    if (!state.draftMeta || !state.selected) return;
+    try {
+      state.copyDraft = await api(`/api/episodes/${state.selected.name}/copy`, {
+        method: "POST", body: JSON.stringify(state.draftMeta),
+      });
+    } catch (err) {
+      state.copyDraft = null;      // 作れなければ保存済みのほうを使う
+    }
+    renderMain();
+  }, 300);
+}
+
 function metaCard() {
   const box = el("div", "section");
   const data = state.meta || { state: "未実行" };
@@ -462,7 +486,7 @@ function metaCard() {
   }
   if (data.state !== "表示" || !state.draftMeta) {
     box.appendChild(el("div", "lines-empty",
-      "まだ作っていません。右上の「メタデータ生成を実行」を押すと作られます。"));
+      "まだ作っていません。右上の「メタデータを実行」を押すと作られます。"));
     return box;
   }
 
@@ -481,7 +505,7 @@ function metaCard() {
                  `${draft.title.length} / ${TITLE_LIMIT}`));
   const title = el("input", `meta-input ${over ? "is-over" : ""}`);
   title.value = draft.title;
-  title.oninput = () => { draft.title = title.value; renderMain(); };
+  title.oninput = () => { draft.title = title.value; refreshCopy(); renderMain(); };
   titleField.append(head, title);
   if (over) {
     titleField.appendChild(el("div", "meta-warn",
@@ -494,7 +518,7 @@ function metaCard() {
   const desc = el("textarea", "meta-text");
   desc.rows = 9;
   desc.value = draft.description;
-  desc.oninput = () => { draft.description = desc.value; renderMain(); };
+  desc.oninput = () => { draft.description = desc.value; refreshCopy(); renderMain(); };
   descField.append(el("div", "meta-label", "概要欄"), desc,
                    el("div", "meta-note", "章はコピー時に概要欄の末尾へ自動で付きます"));
   card.appendChild(descField);
@@ -554,13 +578,13 @@ function chaptersField(draft) {
     const label = el("input");
     label.value = chapter.label;
     label.placeholder = "見出し";
-    label.oninput = () => { chapter.label = label.value; renderMain(); };
+    label.oninput = () => { chapter.label = label.value; refreshCopy(); renderMain(); };
 
     const remove = el("button", "btn-x");
     remove.innerHTML = icon(SVG.trash, 13);
     remove.title = "この章を削除";
     remove.setAttribute("aria-label", "この章を削除");
-    remove.onclick = () => { draft.chapters.splice(index, 1); renderMain(); };
+    remove.onclick = () => { draft.chapters.splice(index, 1); refreshCopy(); renderMain(); };
 
     row.append(at, label, remove);
     list.appendChild(row);
@@ -574,6 +598,7 @@ function chaptersField(draft) {
     if (draft.chapters.some((c) => Math.abs(c.seconds - at) < 0.5)) return;
     draft.chapters.push({ seconds: at, label: "" });
     draft.chapters.sort((a, b) => a.seconds - b.seconds);
+    refreshCopy();
     renderMain();
   };
   field.appendChild(add);
@@ -592,7 +617,7 @@ function tagsField(draft) {
       stroke="currentColor" stroke-width="2.2"><path d="M2 2l10 10M12 2L2 12"/></svg>`;
     x.title = "タグを削除";
     x.setAttribute("aria-label", "タグを削除");
-    x.onclick = () => { draft.tags.splice(index, 1); renderMain(); };
+    x.onclick = () => { draft.tags.splice(index, 1); refreshCopy(); renderMain(); };
     chip.appendChild(x);
     box.appendChild(chip);
   });
@@ -607,6 +632,7 @@ function tagsField(draft) {
     const name = input.value.trim();
     if (name && !draft.tags.includes(name)) draft.tags.push(name);
     state.newTag = "";
+    refreshCopy();
     renderMain();
   };
   box.appendChild(input);
@@ -624,7 +650,7 @@ async function saveMeta() {
       .catch(() => null);
     await reload({ keep: state.selected.name, keepSelected: true });
   } catch (err) {
-    state.sourceError = `メタデータを保存できませんでした: ${err.message}`;
+    state.actionError = `メタデータを保存できませんでした: ${err.message}`;
   }
   renderMain();
 }
@@ -642,6 +668,7 @@ async function loadMeta(name) {
   state.meta = await api(`/api/episodes/${name}/meta`).catch(() => null);
   setDraftMeta(state.meta);
   state.copyText = await api(`/api/episodes/${name}/copy`).catch(() => null);
+  state.copyDraft = null;
 }
 
 async function loadVideo(name) {
@@ -790,7 +817,7 @@ async function saveTranscript() {
     state.textsSaved = JSON.stringify(state.texts);
     await reload({ keep: state.selected.name, keepSelected: true });
   } catch (err) {
-    state.sourceError = `文字起こしを保存できませんでした: ${err.message}`;
+    state.actionError = `文字起こしを保存できませんでした: ${err.message}`;
   }
   renderMain();
 }
@@ -903,6 +930,8 @@ function cleanPlayer(result) {
 }
 
 function listenTo(kind, at) {
+  const video = document.querySelector(".video-body video");
+  if (video && !video.paused) video.pause();
   const url = `/api/episodes/${state.selected.name}/audio/${kind}`;
   if (state.listening !== kind || !audio.src.includes(`/audio/${kind}`)) {
     state.listening = kind;
@@ -911,7 +940,7 @@ function listenTo(kind, at) {
   audio.currentTime = at || 0;
   state.at = at || 0;
   audio.play().catch((err) => {
-    state.sourceError = `再生できませんでした: ${err.message}`;
+    state.actionError = `再生できませんでした: ${err.message}`;
     renderMain();
   });
 }
@@ -921,7 +950,7 @@ async function confirmClean() {
     state.clean = await api(`/api/episodes/${state.selected.name}/clean/confirm`,
                             { method: "POST" });
   } catch (err) {
-    state.sourceError = `確認を記録できませんでした: ${err.message}`;
+    state.actionError = `確認を記録できませんでした: ${err.message}`;
   }
   renderMain();
 }
@@ -1103,7 +1132,7 @@ async function previewEcho(index) {
       + `?start=${echo.start}&end=${echo.end}&preset=${echo.preset}&t=${Date.now()}`;
     await audio.play();
   } catch (err) {
-    state.sourceError = `試聴できませんでした: ${err.message}`;
+    state.actionError = `試聴できませんでした: ${err.message}`;
   }
   state.previewing = -1;
   renderMain();
@@ -1117,7 +1146,7 @@ async function saveEchoes() {
     state.echoes = got.echoes;
     state.echoesSaved = JSON.stringify(got.echoes);
   } catch (err) {
-    state.sourceError = `区間を保存できませんでした: ${err.message}`;
+    state.actionError = `区間を保存できませんでした: ${err.message}`;
   }
   renderMain();
 }
@@ -1208,7 +1237,7 @@ function togglePlay() {
   } else {
     audio.play().catch((err) => {
       state.playing = false;
-      state.sourceError = `再生できませんでした: ${err.message}`;
+      state.actionError = `再生できませんでした: ${err.message}`;
       renderMain();
     });
   }
@@ -1245,7 +1274,7 @@ function sourceCard() {
   replace.onclick = () => {
     if (confirm("いまの音源を差し替えますか？（00_raw のファイルを入れ替えます）")) {
       state.source = { state: "空" };
-      state.sourceError = "";
+      state.actionError = "";
       renderMain();
     }
   };
@@ -1256,12 +1285,6 @@ function sourceCard() {
 function sourceAdd() {
   const box = el("div", "source-add");
   box.appendChild(el("div", "source-add-title", "音源を追加"));
-
-  if (state.sourceError) {
-    const bad = el("div", "source-error");
-    bad.append(el("span", "mark", "!"), el("span", null, state.sourceError));
-    box.appendChild(bad);
-  }
 
   const zone = el("div", "dropzone");
   zone.innerHTML = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none"
@@ -1366,7 +1389,7 @@ function openObsDialog() {
 
 async function uploadSource(file) {
   state.sourceBusy = true;
-  state.sourceError = "";
+  state.actionError = "";
   renderMain();
   const form = new FormData();
   form.append("file", file);
@@ -1377,7 +1400,7 @@ async function uploadSource(file) {
     if (!res.ok) throw new Error(body.detail || `${res.status}`);
     state.source = body;
   } catch (err) {
-    state.sourceError = err.message;
+    state.actionError = err.message;
   }
   state.sourceBusy = false;
   await reload({ keep: state.selected.name, keepSelected: true });
@@ -1386,14 +1409,14 @@ async function uploadSource(file) {
 
 async function takeFromObs(name) {
   state.sourceBusy = true;
-  state.sourceError = "";
+  state.actionError = "";
   renderMain();
   try {
     state.source = await api(`/api/episodes/${state.selected.name}/source/from-obs`, {
       method: "POST", body: JSON.stringify({ file: name }),
     });
   } catch (err) {
-    state.sourceError = err.message;
+    state.actionError = err.message;
   }
   state.sourceBusy = false;
   await reload({ keep: state.selected.name, keepSelected: true });
@@ -1469,6 +1492,15 @@ function runRow(step) {
 function clock(seconds) {
   const total = Math.floor(seconds || 0);
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function errorBanner() {
+  const box = el("div", "save-error");
+  const close = el("button", "btn-tiny is-plain", "閉じる");
+  close.onclick = () => { state.actionError = ""; renderMain(); };
+  box.append(el("span", "mark", "!"), el("span", null, state.actionError),
+             el("span", "spacer"), close);
+  return box;
 }
 
 function placeholder(title, note) {
@@ -1948,7 +1980,7 @@ async function selectEpisode(name) {
   }
   state.selected = await api(`/api/episodes/${name}`);
   resetRows(state.selected.segments);
-  state.sourceError = "";
+  state.actionError = "";
   audio.pause();
   audio.removeAttribute("src");
   state.at = 0;

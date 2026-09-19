@@ -416,11 +416,18 @@ def save_meta(name, title, description, chapters, tags):
     return meta_view(data)
 
 
-def copy_texts(name):
-    """YouTube に貼るためのひとそろい。章は概要欄の末尾に付ける。"""
-    meta = read_meta(name)
-    if meta["state"] != "表示":
-        raise episodes.EpisodeError("まだメタデータを作っていません")
+def copy_texts(name, draft=None):
+    """YouTube に貼るためのひとそろい。章は概要欄の末尾に付ける。
+
+    draft を渡すと、保存前の直しから作る。画面が「押せる」と判断した中身と、
+    実際にコピーされる中身をそろえるため（#47 のレビュー）。
+    """
+    if draft is None:
+        meta = read_meta(name)
+        if meta["state"] != "表示":
+            raise episodes.EpisodeError("まだメタデータを作っていません")
+    else:
+        meta = meta_view(draft)
     return {
         "issues": meta["issues"],
         "title": meta["title"],
@@ -440,7 +447,7 @@ def duration_of(path):
     """長さ（秒）。読めなければ None。"""
     try:
         return build.audio_duration(path)
-    except (ValueError, OSError):
+    except (ValueError, OSError, subprocess.SubprocessError):
         return None
 
 
@@ -498,8 +505,13 @@ def open_folder(name):
     try:
         win = subprocess.run(["wslpath", "-w", str(folder)],
                              capture_output=True, text=True, timeout=10)
+        where = win.stdout.strip()
+        if win.returncode != 0 or not where:
+            # 空のまま渡すと、explorer は黙って既定のフォルダを開いてしまう
+            raise episodes.EpisodeError(
+                f"フォルダの場所が分かりませんでした: {win.stderr.strip() or folder}")
         # explorer.exe は成功しても 1 を返すことがあるので、返り値は見ない
-        subprocess.Popen(["explorer.exe", win.stdout.strip()])
+        subprocess.Popen(["explorer.exe", where])
     except (OSError, subprocess.SubprocessError) as exc:
         raise episodes.EpisodeError(f"フォルダを開けませんでした: {exc}") from exc
     return {"opened": str(folder)}

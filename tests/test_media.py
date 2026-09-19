@@ -452,3 +452,38 @@ def test_動画の置き場が無ければフォルダを開けない(ep):
     (ep / "04_video").rmdir()
     with pytest.raises(episodes.EpisodeError, match="置き場"):
         media.open_folder("ep01")
+
+
+# ---------------------------------------------------------------- コピー（保存前の直しから）
+
+def test_コピーは保存前の直しからも作れる(ep):
+    write_meta(ep, title="（保留中）", description="（保留中）", chapters=[])
+    draft = {"title": "直した題", "description": "直した本文",
+             "chapters": [{"seconds": 0, "label": "あいさつ"}], "tags": ["RUNTEQ"]}
+    got = media.copy_texts("ep01", draft)
+    assert got["issues"] == []
+    assert got["title"] == "直した題"
+    assert got["description"] == "直した本文\n\n--- 目次 ---\n0:00 あいさつ"
+
+
+def test_下書きが保留のままなら問題を返す(ep):
+    write_meta(ep)
+    draft = {"title": "（保留中）", "description": "本文", "chapters": [], "tags": []}
+    assert len(media.copy_texts("ep01", draft)["issues"]) >= 2
+
+
+# ---------------------------------------------------------------- 読めないとき
+
+def test_長さが読めなくても落ちない(ep):
+    assert media.duration_of(ep / "ありません.mp4") is None
+
+
+def test_大きさが読めなくても落ちない(ep):
+    assert media.video_size(ep / "ありません.mp4") == ""
+
+
+def test_開く手立てが無ければ場所を伝えて断る(ep, monkeypatch):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    with pytest.raises(episodes.EpisodeError, match="この環境では開けません"):
+        media.open_folder("ep01")

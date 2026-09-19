@@ -55,3 +55,14 @@ def test_文字起こしは元の文字を各行に残す(tmp_path, monkeypatch)
 
     saved = json.loads((tmp_path / "transcript.json").read_text(encoding="utf-8"))
     assert saved["segments"][0]["original"] == "こんばんは"
+
+
+def test_古い概要欄には目次を足さない():
+    """#7 より前の meta.json は、概要欄にすでに目次が焼き込まれている。"""
+    old = {
+        "description": "本文です。\n\n--- 目次 ---\n0:00 あいさつ",
+        "chapters": [{"seconds": 0, "label": "あいさつ"}],
+    }
+    got = build.youtube_description(old)
+    assert got.count("--- 目次 ---") == 1
+    assert got == old["description"]
