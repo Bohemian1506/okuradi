@@ -74,11 +74,13 @@ CLI で流れが通ったので、確認と編集を GUI でできるように�
 ### 残っていること
 | Issue | ラベル | 内容 |
 |---|---|---|
-| [#42](https://github.com/Bohemian1506/okuradi/issues/42) | `enhancement` | 整音結果パネルの状態を見本にそろえる |
 | [#53](https://github.com/Bohemian1506/okuradi/issues/53) | `v1` | 新しい GUI だけで1回分を通し、`app.py`（Streamlit）を消す |
+| [#59](https://github.com/Bohemian1506/okuradi/issues/59) | `enhancement` | 波形まわりの見た目と読み上げを見本にそろえる |
+| [#60](https://github.com/Bohemian1506/okuradi/issues/60) | `enhancement` | 未保存の区間があるとき、閉じる前に知らせる |
+| [#61](https://github.com/Bohemian1506/okuradi/issues/61) | `bug` | 整音結果の取り直しの失敗を黙らせない |
 
 **v1 の線は #53** — 実際の収録で最初から最後まで通せたら、最初の版とする。これは実物の音声が要るのでユーザーが行う。
-#42 は見た目の作り込みで、機能としては動くため `enhancement` にしてある。#53 より先にやっても後にしてもよい。
+#59〜#61 は #58 / #63 のレビューから分けたもので、どれも操作は妨げない。#53 より先にやっても後にしてもよい。
 
 ### 後回しにしたものを、いつ考えるか
 - **途中のカット / Claude のカット候補**: v1 を何回か使って、前後のトリムだけで足りるか分かってから（決定 3・6）

@@ -275,6 +275,117 @@ def test_clean_json_が壊れた形でも落ちない(ep):
     assert got["echoes"] == 0
 
 
+def test_整音後の波形に出す帯を返す(ep):
+    """帯は clean.wav の時刻。trimmed の時刻のままだと後ろほどずれる（#42）。"""
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(json.dumps({
+        "trimmed_duration": 57.1149, "duration": 57.31,
+        "echoes": [{"start": 10.0, "end": 20.0, "preset": "light"},
+                   {"start": 30.0, "end": 35.0, "preset": "hall"}],
+    }), encoding="utf-8")
+    bands = media.clean_result("ep01")["bands"]
+    assert [b["preset"] for b in bands] == ["light", "hall"]
+    assert bands[0]["start"] == 9.98          # 継ぎ目のぶん前へ詰まる
+    assert bands[1]["start"] == 30.01         # 前の区間の尾のぶん後ろへ
+    assert bands[1]["end"] == 35.22
+
+
+def test_エコーが無ければ帯も無い(ep):
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(json.dumps({
+        "trimmed_duration": 57.11, "echoes": [],
+    }), encoding="utf-8")
+    assert media.clean_result("ep01")["bands"] == []
+
+
+def test_記録が壊れていても帯で落ちない(ep):
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(json.dumps({
+        "trimmed_duration": 57.11, "echoes": [{"start": "あ", "end": 9}],
+    }), encoding="utf-8")
+    assert media.clean_result("ep01")["bands"] == []
+
+
+def test_記録に長さが無ければ帯は出さない(ep):
+    # trimmed_duration が無いと、どこに来るか計算できない
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(json.dumps({
+        "echoes": [{"start": 10.0, "end": 20.0, "preset": "light"}],
+    }), encoding="utf-8")
+    assert media.clean_result("ep01")["bands"] == []
+
+
+# ---------------------------------------------------------------- 動画のポスター
+
+def test_動画が無ければポスターも無い(ep):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    path, why = media.make_poster(ep)
+    assert path is None and why is None
+
+
+def test_ffmpegが無ければ理由を返す(ep, monkeypatch):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"a")
+
+    def missing(cmd):
+        raise FileNotFoundError("ffmpeg")
+    monkeypatch.setattr(media.build, "run", missing)
+    path, why = media.make_poster(ep)
+    assert path is None
+    assert "ffmpeg" in why            # 黙って隠さない
+
+
+def test_ffmpegが何も出さなければ理由を返す(ep, monkeypatch):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"a")
+    monkeypatch.setattr(media.build, "run", lambda cmd: None)
+    path, why = media.make_poster(ep)
+    assert path is None
+    assert why
+
+
+def test_ffmpegが失敗しても理由を返す(ep, monkeypatch):
+    """build.run は終了コードが0でないと RuntimeError を投げる。
+
+    ここで拾わないと、絵が作れないだけで動画パネルごと消える（#63 のレビュー）。
+    """
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "04_video" / "ep01.mp4").write_bytes("こわれた動画".encode())
+
+    def fails(cmd):
+        raise RuntimeError("コマンドが失敗しました: ffmpeg")
+    monkeypatch.setattr(media.build, "run", fails)
+    path, why = media.make_poster(ep)
+    assert path is None
+    assert "ffmpeg" in why
+
+
+def test_ポスターが作れなくても動画の様子は出す(ep, monkeypatch):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"x" * 2048)
+    monkeypatch.setattr(media, "duration_of", lambda path: 60.0)
+    monkeypatch.setattr(media, "video_size", lambda path: "1920x1080")
+
+    def fails(cmd):
+        raise RuntimeError("コマンドが失敗しました: ffmpeg")
+    monkeypatch.setattr(media.build, "run", fails)
+    got = media.video_view("ep01")
+    assert got["state"] in ("完了", "古い")      # パネルは消えない
+    assert got["poster"] is None
+    assert got["poster_error"]                   # 黙って隠さない
+
+
+def test_動画より新しいポスターは作り直さない(ep, monkeypatch):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"a")
+    (ep / "04_video" / "poster.jpg").write_bytes(b"p")
+    called = []
+    monkeypatch.setattr(media.build, "run", lambda cmd: called.append(cmd))
+    path, why = media.make_poster(ep)
+    assert path is not None and why is None
+    assert called == []               # ffmpeg を動かさない
+
+
 # ---------------------------------------------------------------- 確定版の文字起こし
 
 def write_transcript(ep_dir, rows):

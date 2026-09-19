@@ -339,11 +339,13 @@ def normalize_echoes(echoes, total, report=True):
     return merged
 
 
-def echo_graph(regions, total):
-    """区間だけにエコーをかけるフィルタグラフを組む。
+def echo_parts(regions, total):
+    """音をどこで分けるか。(開始, 終了, プリセット) を順に返す。
 
-    aecho は区間指定（enable）に対応していないので、
-    atrim で分けて、かける所だけ通し、acrossfade で繋ぎ直す。
+    エコーをかける所と、かけない所を交互に並べる。
+    フィルタグラフ（echo_graph）と、整音後の位置（echo_positions）の
+    両方がこれを使う。分け方を1か所にしておかないと、片方だけ直したときに
+    帯の位置が静かにずれる。
     """
     parts, at = [], 0.0
     for start, end, preset in regions:
@@ -353,6 +355,16 @@ def echo_graph(regions, total):
         at = end
     if at < total:
         parts.append((at, total, None))
+    return parts
+
+
+def echo_graph(regions, total):
+    """区間だけにエコーをかけるフィルタグラフを組む。
+
+    aecho は区間指定（enable）に対応していないので、
+    atrim で分けて、かける所だけ通し、acrossfade で繋ぎ直す。
+    """
+    parts = echo_parts(regions, total)
 
     lines, labels = [], []
     for index, (start, end, preset) in enumerate(parts):
@@ -372,6 +384,44 @@ def echo_graph(regions, total):
         lines.append(f"[{current}][{labels[index]}]acrossfade=d={ECHO_CROSSFADE}[{out}]")
         current = out
     return ";".join(lines)
+
+
+def echo_tail(preset):
+    """aecho が足す長さ（秒）。いちばん遅いエコーの遅れぶん、音が伸びる。
+
+    プリセットの文字列から読むので、プリセットを変えても数字がずれない。
+    """
+    spec = ECHO_PRESETS.get(preset)
+    if not spec:
+        return 0.0
+    # "aecho=入力:出力:遅れ:減衰"。遅れはミリ秒で、"|" 区切り
+    try:
+        delays = spec.split("=", 1)[1].split(":")[2]
+        return max(float(d) for d in delays.split("|")) / 1000.0
+    except (IndexError, ValueError):
+        return 0.0
+
+
+def echo_positions(regions, total):
+    """trimmed.wav の時刻で決めた区間が、clean.wav ではどこに来るか。
+
+    2つの理由でずれる。
+      - aecho は、いちばん遅いエコーの遅れぶん、その部分を伸ばす
+      - acrossfade は、継ぎ目ごとに ECHO_CROSSFADE 秒だけ重ねて縮める
+    後ろの区間ほど、前の区間のぶんが積み上がってずれる。
+    """
+    parts = echo_parts(regions, total)
+    out, at = [], 0.0
+    for index, (start, end, preset) in enumerate(parts):
+        length = (end - start) + echo_tail(preset)
+        # 継ぎ目の重なりぶんだけ前へ詰まる
+        begin = at - ECHO_CROSSFADE * index
+        if preset:
+            out.append({"start": round(max(0.0, begin), 3),
+                        "end": round(begin + length, 3),
+                        "preset": preset})
+        at += length
+    return out
 
 
 def step_clean(ep, cfg):

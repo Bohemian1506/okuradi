@@ -220,7 +220,7 @@ function renderSteps() {
 
 function selectTab(tab) {
   if (!tab) return;
-  if (tab !== state.tab) stopWaves();   // 見えない場所で鳴らさない
+  if (tab !== state.tab) { stopWaves(); stopVideo(); }  // 見えない場所で鳴らさない
   state.tab = tab;
   document.querySelectorAll(".tab[data-tab]").forEach((node) => {
     node.classList.toggle("is-active", node.dataset.tab === tab);
@@ -316,6 +316,70 @@ function screenFinishing() {
 
 // ---------------------------------------------------------------- 部品19 動画プレビュー
 
+// 動画も、renderMain() のたびに作り直さない。作り直すと再生が止まる。
+const videoView = { node: null, src: null, at: 0, playing: false, duration: 0 };
+
+function videoNode(src, poster) {
+  if (!videoView.node) {
+    const node = el("video");
+    node.preload = "metadata";
+    node.playsInline = true;
+    node.onplay = () => {
+      videoView.playing = true;
+      audio.pause();            // 音は1つだけ鳴らす（自分は止めない）
+      stopWaves();
+      renderMain();
+    };
+    node.onpause = () => { videoView.playing = false; renderMain(); };
+    node.onended = () => { videoView.playing = false; videoView.at = 0; renderMain(); };
+    node.onloadedmetadata = () => { videoView.duration = node.duration || 0; renderMain(); };
+    node.ontimeupdate = () => {
+      // 毎コマ作り直すと重いので、1秒に4回まで
+      if (Math.floor(node.currentTime * 4) === Math.floor(videoView.at * 4)) {
+        videoView.at = node.currentTime;
+        return;
+      }
+      videoView.at = node.currentTime;
+      if (state.tab === "3") renderMain();
+    };
+    videoView.node = node;
+  }
+  // 絵が無いときは消す。消さないと、前の回の絵が残ったまま
+  // 「作れません」の理由と並んで出る（表示が嘘をつく）
+  if (poster) {
+    if (videoView.node.getAttribute("poster") !== poster) videoView.node.poster = poster;
+  } else if (videoView.node.hasAttribute("poster")) {
+    videoView.node.removeAttribute("poster");
+  }
+  if (videoView.src !== src) {
+    videoView.src = src;
+    videoView.node.src = src;      // 作り直したら新しい動画を読む
+    videoView.at = 0;
+    videoView.playing = false;
+    videoView.duration = 0;
+  }
+  return videoView.node;
+}
+
+function toggleVideo() {
+  const node = videoView.node;
+  if (!node) return;
+  if (videoView.playing) { node.pause(); return; }
+  node.play().catch((err) => {
+    state.actionError = `動画を再生できませんでした: ${err.message}`;
+    renderMain();
+  });
+}
+
+function seekVideo(seconds, play = false) {
+  const node = videoView.node;
+  if (!node) return;
+  node.currentTime = seconds;
+  videoView.at = seconds;
+  if (play && !videoView.playing) node.play().catch(() => {});
+  renderMain();
+}
+
 function videoCard() {
   const data = state.video || { state: "未実行" };
   const box = el("div", "video-panel");
@@ -360,14 +424,27 @@ function videoCard() {
     box.appendChild(why);
   }
 
+  // 再生前の絵が作れなかったら、黙って隠さず理由を出す
+  if (data.poster_error) {
+    const note = el("div", "wave-note is-error");
+    note.append(el("span", "mark", "!"), el("span", null, data.poster_error));
+    box.appendChild(note);
+  }
+
   const body = el("div", "video-body");
-  const player = el("video");
-  player.controls = true;
-  // 音声と動画が同時に鳴らないようにする
-  player.onplay = () => audio.pause();
-  player.preload = "metadata";
-  player.src = `/api/episodes/${state.selected.name}/video/file?t=${data.at || 0}`;
-  body.appendChild(player);
+  const stage = el("div", "video-stage");
+  const player = videoNode(
+    `/api/episodes/${state.selected.name}/video/file?t=${data.at || 0}`,
+    data.poster || "");
+  stage.appendChild(player);
+  const total = videoView.duration || data.seconds || 0;
+  stage.appendChild(playerRow({
+    total, at: videoView.at, playing: videoView.playing,
+    disabled: !total,
+    onToggle: () => toggleVideo(),
+    onSeek: (to) => seekVideo(to, true),
+  }));
+  body.appendChild(stage);
 
   const marks = el("div", "video-marks");
   marks.appendChild(el("div", "lead", "章マーカー"));
@@ -380,7 +457,7 @@ function videoCard() {
     row.append(el("span", "at", clock(chapter.seconds)),
                el("span", "what", chapter.label || "（見出しなし）"));
     row.title = "この位置から見る";
-    row.onclick = () => { player.currentTime = chapter.seconds; player.play(); };
+    row.onclick = () => seekVideo(chapter.seconds, true);
     marks.appendChild(row);
   }
   body.appendChild(marks);
@@ -967,7 +1044,9 @@ function cleanCard() {
   const cw = ensureWave("clean", {
     url: `/api/episodes/${state.selected.name}/audio/clean?t=${result.at}`,
     duration: result.duration || 0,
+    regions: true,          // エコーをかけた所を帯で見せる（動かせない）
   });
+  syncRegions("clean", result.bands || [], false);
   const wave = el("div", `result-wave ${stale ? "is-stale" : ""}`);
   wave.appendChild(cw.box);
   box.appendChild(wave);
@@ -993,8 +1072,7 @@ function cleanPlayer(result) {
 }
 
 function listenTo(kind, at) {
-  const video = document.querySelector(".video-body video");
-  if (video && !video.paused) video.pause();
+  stopVideo();
   stopWaves();                      // 音は1つだけ鳴らす
   const url = `/api/episodes/${state.selected.name}/audio/${kind}`;
   if (state.listening !== kind || !audio.src.includes(`/audio/${kind}`)) {
@@ -1049,6 +1127,9 @@ const WAVE_CSS = `
 [part~="region"].is-none { border-color: var(--wood-text) !important; }
 [part~="region"].is-picked { box-shadow: inset 0 0 0 2px var(--cream); }
 [part~="region-handle"] { border-color: var(--cream) !important; width: 8px !important; }
+/* 見るだけの帯（整音結果）。掴めないので、その形に見せる */
+[part~="region"].is-fixed { cursor: default; }
+[part~="region"].is-fixed [part~="region-handle"] { display: none; }
 [part~="region"] .tag {
   margin-top: 4px; padding: 1px 7px; border-radius: 999px;
   background: var(--ink-deep); color: var(--cream-on-wood);
@@ -1093,15 +1174,18 @@ function stopWaves(except) {
   }
 }
 
+function stopVideo() {
+  if (videoView.node && !videoView.node.paused) videoView.node.pause();
+}
+
 // 音は1つだけ鳴らす
 function stopOtherSounds(except) {
   audio.pause();
-  const video = document.querySelector(".video-body video");
-  if (video && !video.paused) video.pause();
+  stopVideo();
   stopWaves(except);
 }
 
-function ensureWave(key, { url, duration = 0, regions = false }) {
+function ensureWave(key, { url, duration = 0, regions = false, editable = false }) {
   const w = waveOf(key);
   if (w.url === url) return w;
 
@@ -1165,7 +1249,7 @@ function ensureWave(key, { url, duration = 0, regions = false }) {
   w.ws.on("ready", () => {
     w.phase = "表示";
     w.duration = w.ws.getDuration() || duration;
-    syncRegions(key);
+    // 帯は、描き直しのときに echoCard / cleanCard が入れ直す
     renderMain();
   });
   w.ws.on("error", (err) => {
@@ -1184,7 +1268,7 @@ function ensureWave(key, { url, duration = 0, regions = false }) {
   w.ws.on("pause", () => { w.playing = false; renderMain(); });
   w.ws.on("finish", () => { w.playing = false; w.at = 0; renderMain(); });
 
-  if (w.regions) bindRegions(key, w);
+  if (w.regions && editable) bindRegions(key, w);
   return w;
 }
 
@@ -1250,26 +1334,29 @@ function bindRegions(key, w) {
   });
 }
 
-// 画面の区間（state.echoes）を、波形の上の帯に映す
-function syncRegions(key) {
+// 区間を、波形の上の帯に映す。
+// rows は {start, end, preset} の並び。editable=false なら見るだけ（動かせない）
+function syncRegions(key, rows, editable = false) {
   const w = waveOf(key);
   if (!w.regions || w.phase !== "表示") return;
-  const sig = `${JSON.stringify(state.echoes)}|${state.picked}`;
+  const picked = editable ? state.picked : -1;
+  const sig = `${JSON.stringify(rows)}|${picked}`;
   if (sig === w.sig) return;
 
   w.applying = true;
   w.regions.clearRegions();
-  state.echoes.forEach((echo, index) => {
-    const tag = el("span", "tag", PRESETS[echo.preset] || echo.preset);
+  rows.forEach((row, index) => {
+    const tag = el("span", "tag", PRESETS[row.preset] || row.preset);
     const region = w.regions.addRegion({
       id: `echo-${index}`,
-      start: echo.start, end: echo.end,
-      drag: true, resize: true,
-      color: WAVE_COLORS[echo.preset] || WAVE_COLORS.light,
+      start: row.start, end: row.end,
+      drag: editable, resize: editable,
+      color: WAVE_COLORS[row.preset] || WAVE_COLORS.light,
       content: tag,
     });
-    region.element.classList.add(`is-${echo.preset}`);
-    if (index === state.picked) region.element.classList.add("is-picked");
+    region.element.classList.add(`is-${row.preset}`);
+    if (!editable) region.element.classList.add("is-fixed");
+    if (index === picked) region.element.classList.add("is-picked");
   });
   w.applying = false;
   w.sig = sig;
@@ -1364,8 +1451,9 @@ function echoCard() {
     url: `${wave.url}?t=${wave.at}`,
     duration: wave.duration,
     regions: true,
+    editable: true,
   });
-  syncRegions("echo");
+  syncRegions("echo", state.echoes, true);
 
   card.appendChild(w.box);
   const note = waveNote(w);
@@ -2621,9 +2709,10 @@ async function selectEpisode(name) {
   state.actionError = "";
   audio.pause();
   audio.removeAttribute("src");
-  // 整音していない回に移ると波形パネルが出ないので、ここで止めないと
+  // 別のタブにいると波形や動画のパネルが出ないので、ここで止めないと
   // 見えない場所で前の回の音が鳴り続ける
   stopWaves();
+  stopVideo();
   state.at = 0;
   state.playing = false;
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
