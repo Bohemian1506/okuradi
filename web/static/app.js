@@ -27,6 +27,9 @@ const SVG = {
   upload: '<path d="M12 16V4M7 9l5-5 5 5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
   playBig: '<path d="M4 2l10 6-10 6z"/>',
   pause: '<path d="M3 2h4v12H3zM9 2h4v12H9z"/>',
+  send: '<path d="M7 12V2M2.5 6.5L7 2l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/>',
+  memo: '<path d="M3 1.5h6l3 3v8H3z" stroke-linejoin="round"/><path d="M5 7h4M5 9.5h4"/>',
+  close: '<path d="M2 2l10 10M12 2L2 12"/>',
 };
 
 const ACCEPTED_TEXT = "wav / m4a / mkv / mp4 / mov / flv";
@@ -48,6 +51,10 @@ const state = {
   job: null,         // 実行中（か直前に終わった）工程
   showLog: false,
   logKind: "かんたん",   // かんたん / くわしい
+  chatOpen: false,
+  chat: null,        // 相談チャット
+  chatDraft: "",
+  chatWaiting: false,
   detailLog: null,
   stream: null,
   source: null,      // いま入っている収録ファイル
@@ -210,7 +217,7 @@ function renderSteps() {
 function selectTab(tab) {
   if (!tab) return;
   state.tab = tab;
-  document.querySelectorAll(".tab").forEach((node) => {
+  document.querySelectorAll(".tab[data-tab]").forEach((node) => {
     node.classList.toggle("is-active", node.dataset.tab === tab);
   });
   renderSteps();
@@ -1704,6 +1711,122 @@ async function saveSegments() {
   }
 }
 
+// ---------------------------------------------------------------- 部品6 相談チャット
+
+function renderChat() {
+  const box = $("chat");
+  document.querySelector(".cabinet").classList.toggle("has-chat", state.chatOpen);
+  $("chat-toggle").classList.toggle("is-active", state.chatOpen);
+  box.hidden = !state.chatOpen;
+  if (!state.chatOpen) return;
+
+  box.innerHTML = "";
+  const data = state.chat || { reading: "…", messages: [] };
+
+  const head = el("div", "chat-head");
+  const close = el("button", "btn-x");
+  close.innerHTML = icon(SVG.close);
+  close.title = "閉じる";
+  close.setAttribute("aria-label", "閉じる");
+  close.onclick = () => toggleChat();
+  head.append(el("div", "title", "相談"), close);
+
+  const sub = el("div", "chat-sub");
+  const what = el("span");
+  what.append(document.createTextNode("読んでいるもの: "),
+              el("strong", null, data.reading));
+  const clear = el("button", null, "会話をリセット");
+  clear.disabled = !data.messages.length;
+  clear.onclick = () => resetChat();
+  sub.append(what, clear);
+
+  const body = el("div", "chat-body");
+  if (!data.messages.length) {
+    body.appendChild(el("div", "chat-empty",
+      "この回の文字起こしを読んだ Claude に聞けます。\n例:「オープニングが長い気がする。どこで切れそう？」"));
+  }
+  for (const line of data.messages) {
+    body.appendChild(el("div", line.who === "あなた" ? "say-me" : "say-claude", line.text));
+  }
+  if (state.chatWaiting) body.appendChild(el("div", "say-waiting", "考えています…"));
+
+  const foot = el("div", "chat-foot");
+  const input = el("div", "chat-input");
+  const text = el("textarea");
+  text.rows = 2;
+  text.placeholder = "この回について聞く";
+  text.value = state.chatDraft;
+  text.disabled = state.chatWaiting;
+  text.oninput = () => { state.chatDraft = text.value; };
+  text.onkeydown = (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      sendChat();
+    }
+  };
+  const send = el("button", "btn-send");
+  send.innerHTML = icon(SVG.send, 14, 2);
+  send.title = "送信（Ctrl+Enter）";
+  send.setAttribute("aria-label", "送信");
+  send.disabled = state.chatWaiting || !state.chatDraft.trim();
+  send.onclick = () => sendChat();
+  input.append(text, send);
+
+  const memo = el("button", "btn-memo");
+  memo.innerHTML = icon(SVG.memo, 13) + "改善メモに残す";
+  memo.disabled = true;
+  memo.title = "この続きは #8 で入れます";
+
+  foot.append(input, memo);
+  box.append(head, sub, body, foot);
+  body.scrollTop = body.scrollHeight;
+}
+
+function toggleChat() {
+  state.chatOpen = !state.chatOpen;
+  if (state.chatOpen && !state.chat) loadChat();
+  renderChat();
+}
+
+async function loadChat() {
+  if (!state.selected) return;
+  state.chat = await api(`/api/episodes/${state.selected.name}/chat`).catch(() => null);
+  renderChat();
+}
+
+async function sendChat() {
+  const question = state.chatDraft.trim();
+  if (!question || state.chatWaiting) return;
+  state.chatWaiting = true;
+  state.chatDraft = "";
+  // 送ったことがすぐ見えるように、先に画面へ足す
+  if (state.chat) state.chat.messages = state.chat.messages.concat({ who: "あなた", text: question });
+  renderChat();
+  try {
+    state.chat = await api(`/api/episodes/${state.selected.name}/chat`, {
+      method: "POST", body: JSON.stringify({ question }),
+    });
+  } catch (err) {
+    state.actionError = err.message;
+    state.chatDraft = question;      // 打ち直さなくて済むように戻す
+    await loadChat();
+    renderMain();
+  }
+  state.chatWaiting = false;
+  renderChat();
+}
+
+async function resetChat() {
+  if (!confirm("この回の会話をリセットしますか？")) return;
+  try {
+    state.chat = await api(`/api/episodes/${state.selected.name}/chat`, { method: "DELETE" });
+  } catch (err) {
+    state.actionError = err.message;
+    renderMain();
+  }
+  renderChat();
+}
+
 // ---------------------------------------------------------------- 部品5 処理状況バーとログ
 
 const STATUS_LOOK = {
@@ -2044,6 +2167,9 @@ async function selectEpisode(name) {
   await loadTranscript(name);
   await loadMeta(name);
   await loadVideo(name);
+  state.chat = null;
+  state.chatDraft = "";
+  if (state.chatOpen) await loadChat();
   [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),
@@ -2077,12 +2203,14 @@ async function reload({ keep, keepSelected } = {}) {
   renderSteps();
   renderMain();
   renderStatus();
+  renderChat();
 }
 
-document.querySelectorAll(".tab").forEach((node) => {
+document.querySelectorAll(".tab[data-tab]").forEach((node) => {
   node.onclick = () => selectTab(node.dataset.tab);
 });
 $("new-episode").onclick = openNewEpisode;
+$("chat-toggle").onclick = () => toggleChat();
 
 // 画面を開き直したときに、動いている工程があれば拾う
 async function attachRunningJob() {

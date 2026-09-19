@@ -35,6 +35,7 @@ okuradi/
 │   ├── runner.py         # 工程の実行・中止・ログの配信
 │   ├── sources.py        # 音源の追加と、アプリ全体の設定
 │   ├── media.py          # 文字起こしを読む・音声を画面に配る
+│   ├── chat.py           # この回について Claude に相談する
 │   └── static/           # index.html / style.css / app.js
 ├── settings.yml          # OBSの録画フォルダなど（git管理外。GUIの画面から作れる）
 ├── tests/
@@ -52,7 +53,7 @@ okuradi/
     ├── 02_text/          # 文字起こし
     ├── 03_meta/          # タイトル・概要欄・チャプター
     ├── 04_video/         # 完成mp4
-    └── 00_logs/          # 工程ごとの、ffmpegなどの出力（くわしいログ）
+    └── 00_logs/          # 工程ごとの、ffmpegなどの出力（くわしいログ）と、相談チャットの記録
 ```
 
 ## セットアップ（初回のみ）

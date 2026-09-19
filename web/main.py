@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from web import episodes, media, runner, sources
+from web import chat, episodes, media, runner, sources
 
 STATIC = Path(__file__).parent / "static"
 
@@ -100,6 +100,10 @@ class Echoes(BaseModel):
 
 class Transcript(BaseModel):
     texts: list[str]
+
+
+class Question(BaseModel):
+    question: str
 
 
 class Chapter(BaseModel):
@@ -242,6 +246,24 @@ def get_audio(name: str, kind: str):
     path = _guard(media.audio_path, name, kind)
     # ブラウザが途中から読めるように（シーク）、Range に対応した返し方にする
     return FileResponse(path, headers={"Accept-Ranges": "bytes"})
+
+
+# ---------------------------------------------------------------- 相談チャット
+
+
+@app.get("/api/episodes/{name}/chat")
+def get_chat(name: str):
+    return _guard(chat.read_chat, name)
+
+
+@app.post("/api/episodes/{name}/chat")
+def post_chat(name: str, body: Question):
+    return _guard(chat.ask, name, body.question)
+
+
+@app.delete("/api/episodes/{name}/chat")
+def delete_chat(name: str):
+    return _guard(chat.reset, name)
 
 
 # ---------------------------------------------------------------- 工程の実行
