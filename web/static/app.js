@@ -436,7 +436,21 @@ function videoCard() {
   const player = videoNode(
     `/api/episodes/${state.selected.name}/video/file?t=${data.at || 0}`,
     data.poster || "");
-  stage.appendChild(player);
+
+  // 絵の中央にも大きな再生ボタンを重ねる（#64）。
+  // 動画だけは「サムネイルを押す＝再生」の慣習が強いので、下のボタンと両方置く。
+  // 止めている間だけ出す（再生中は絵を隠さない）
+  const shell = el("div", "video-shell");
+  shell.appendChild(player);
+  if (!videoView.playing) {
+    const big = el("button", "video-bigplay");
+    big.innerHTML = `<svg width="30" height="30" viewBox="0 0 16 16" fill="currentColor">${SVG.playBig}</svg>`;
+    big.title = "動画を再生";
+    big.setAttribute("aria-label", "動画を再生");
+    big.onclick = () => toggleVideo();
+    shell.appendChild(big);
+  }
+  stage.appendChild(shell);
   const total = videoView.duration || data.seconds || 0;
   stage.appendChild(playerRow({
     total, at: videoView.at, playing: videoView.playing,
