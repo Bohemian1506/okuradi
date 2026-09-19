@@ -19,6 +19,8 @@ const TAB_OF_STEP = {
 const SVG = {
   plus: '<path d="M7 1.5v11M1.5 7h11"/>',
   trash: '<path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/>',
+  up: '<path d="M2 8l4-4 4 4"/>',
+  down: '<path d="M2 4l4 4 4-4"/>',
 };
 
 const state = {
@@ -36,8 +38,8 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
-function icon(path, size = 14, width = 1.8) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 14 14" fill="none"
+function icon(path, size = 14, width = 1.8, box = 14) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${box} ${box}" fill="none"
     stroke="currentColor" stroke-width="${width}">${path}</svg>`;
 }
 
@@ -112,6 +114,10 @@ function renderEpisodes() {
       button.appendChild(dots);
     }
     list.appendChild(button);
+    // 回が増えると、選んでいる回が一覧の外に隠れてしまう
+    if (button.classList.contains("is-selected")) {
+      button.scrollIntoView({ block: "nearest" });
+    }
   }
 }
 
@@ -266,7 +272,7 @@ function segmentsCard() {
   if (state.save === "saving") list.classList.add("is-saving");
 
   const head = el("div", "segment-head");
-  head.append(el("span", null, "順"), el("span", null, "コーナー"),
+  head.append(el("span"), el("span", null, "順"), el("span", null, "コーナー"),
               el("span", null, "テーマ"), el("span"));
   list.appendChild(head);
 
@@ -302,7 +308,10 @@ function segmentsCard() {
       renderMain();
     };
 
-    row.append(el("div", "segment-no", String(index + 1)), select, theme, remove);
+    const arrows = el("div", "segment-move");
+    arrows.append(moveButton(index, -1, busy), moveButton(index, 1, busy));
+
+    row.append(arrows, el("div", "segment-no", String(index + 1)), select, theme, remove);
     list.appendChild(row);
   });
 
@@ -322,6 +331,26 @@ function segmentsCard() {
     + "タイトルはメタデータの工程で、この並びとテーマから作られます。"));
   return card;
 }
+
+function moveButton(index, step, busy) {
+  const segments = state.selected.segments;
+  const up = step < 0;
+  const button = el("button", "btn-move");
+  button.innerHTML = icon(up ? SVG.up : SVG.down, 12, 2, 12);
+  button.title = up ? "上へ" : "下へ";
+  button.setAttribute("aria-label", up ? "上へ" : "下へ");
+  button.disabled = busy || (up ? index === 0 : index === segments.length - 1);
+  button.onclick = () => {
+    const to = index + step;
+    [segments[index], segments[to]] = [segments[to], segments[index]];
+    // 札も一緒に動かす。そうしないと、直した行の印が別の行に付いてしまう
+    [state.rowIds[index], state.rowIds[to]] = [state.rowIds[to], state.rowIds[index]];
+    markDirty();
+    renderMain();
+  };
+  return button;
+}
+
 
 function markDirty() {
   if (state.save !== "dirty") {
