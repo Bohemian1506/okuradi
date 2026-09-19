@@ -1,8 +1,18 @@
+# 処理（build.py）
 pyyaml
 faster-whisper
 google-api-python-client
 google-auth-oauthlib
+
+# GUI（web/）
+fastapi
+uvicorn
+
+# 今の GUI（app.py / 新しい GUI で1回分を通せたら消す）
 streamlit
 altair
 pandas
 numpy
+
+# テスト
+pytest

@@ -11,7 +11,13 @@ scan  -> cut -> clean -> transcribe -> meta -> video -> upload
 下見     カット  整音     文字起こし   メタ    動画化   限定公開
 ```
 
-GUIを使う場合:
+GUIを使う場合（作っている途中。いまは回の管理だけ）:
+
+```
+uvicorn web.main:app --reload     # http://127.0.0.1:8000
+```
+
+今までの GUI（Streamlit）も、新しい GUI で1回分を通せるまで残してある:
 
 ```
 streamlit run app.py
@@ -22,6 +28,13 @@ streamlit run app.py
 ```
 okuradi/
 ├── build.py              # パイプライン本体（全回共通。基本いじらない）
+├── app.py                # 今までのGUI（Streamlit）
+├── web/                  # 新しいGUI（FastAPI + 素のHTML/CSS/JS）
+│   ├── main.py           # APIと画面の配信
+│   ├── episodes.py       # 回の一覧・作成と、工程の状態
+│   └── static/           # index.html / style.css / app.js
+├── tests/
+├── docs/design/          # 画面のデザインの見本（Claude Design から取り込み）
 ├── requirements.txt
 ├── client_secret.json    # YouTube API の認証情報（自分で配置）
 ├── token.json            # 初回認証後に自動生成

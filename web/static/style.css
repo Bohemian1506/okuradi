@@ -1,0 +1,328 @@
+/* 置くラジ 制作GUI
+   デザイン: docs/design/frame-common-v2.dc.html（案B トランジスタ）
+   見本は要素に直接書かれた style なので、ここで CSS に起こしている。 */
+
+:root {
+  --ink: #3a2418;          /* 文字・濃い面 */
+  --ink-deep: #2a1a10;
+  --cream: #fffaf0;        /* いちばん明るい面 */
+  --cream-dim: #f6efe0;    /* 下地 */
+  --cream-on-wood: #fff3dc;
+  --muted: #7a6250;        /* 薄い文字 */
+  --disabled: #a08c78;     /* 押せない文字 */
+  --rule: #e3d7bf;         /* 罫線（薄い） */
+  --rule-strong: #cdbfa5;  /* 罫線（濃い） */
+  --wood-text: #d9c3a0;
+  --accent: oklch(0.65 0.18 45);
+  --accent-deep: oklch(0.6 0.18 45);
+  --accent-glow: oklch(0.75 0.18 45);
+  --accent-text: oklch(0.55 0.18 45);
+  --done: oklch(0.6 0.13 150);
+  --done-on-wood: oklch(0.75 0.14 150);
+  --done-text: oklch(0.5 0.13 150);
+  --stale: oklch(0.78 0.15 85);
+  --stale-text: oklch(0.6 0.13 75);
+  --error-text: oklch(0.55 0.2 25);
+  --needle: oklch(0.6 0.22 28);
+  --mono: "DM Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #d9cfb8;
+  font-family: "Zen Kaku Gothic New", "Noto Sans JP", system-ui, sans-serif;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea { font-family: inherit; }
+
+@keyframes blink { 0%, 100% { opacity: 1 } 50% { opacity: .4 } }
+@keyframes needle { 0%, 100% { transform: translateX(-1px) } 50% { transform: translateX(1px) } }
+
+/* ---------------------------------------------------------------- 筐体（木目） */
+
+.cabinet {
+  position: relative;
+  width: 100%;
+  min-width: 1280px;
+  height: 100vh;
+  padding: 14px 14px 14px 0;
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 0 14px;
+  background-color: #54341f;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, .2) 0 1px, transparent 1px 7px),
+    repeating-linear-gradient(0deg, rgba(255, 210, 160, .08) 0 2px, transparent 2px 19px),
+    linear-gradient(180deg, #5e3a23, #4a2c1b);
+  box-shadow: inset 0 2px 0 rgba(255, 230, 200, .18), inset 0 -2px 0 rgba(0, 0, 0, .4);
+}
+
+/* ---------------------------------------------------------------- 部品1 回セレクタ */
+
+.episodes {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--cream-dim);
+  padding: 6px 0 0 14px;
+}
+
+.brand { padding: 10px 6px 14px; display: flex; flex-direction: column; gap: 2px; }
+
+.brand-name {
+  font-size: 22px; font-weight: 900; letter-spacing: .02em;
+  color: var(--cream-on-wood); text-shadow: 0 1px 0 rgba(0, 0, 0, .4);
+}
+
+.brand-sub {
+  font: 11px var(--mono); letter-spacing: .18em; color: var(--wood-text);
+}
+
+/* スピーカーの網 */
+.grille {
+  height: 34px; margin: 0 6px 12px; border-radius: 6px;
+  background-color: var(--ink);
+  background-image: radial-gradient(circle, var(--ink-deep) 1.4px, transparent 1.6px);
+  background-size: 7px 7px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, .6);
+}
+
+.episodes-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 0 8px 8px;
+}
+.episodes-head .label {
+  font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--wood-text);
+}
+.episodes-head .count { font: 12px var(--mono); color: #b89e7c; }
+
+.episode-list {
+  display: flex; flex-direction: column; gap: 4px;
+  overflow: auto; flex: 1; padding-right: 2px;
+}
+
+.episode {
+  --dot-done: var(--done-on-wood);
+  display: block; width: 100%; text-align: left;
+  padding: 10px 12px; border: none; border-radius: 10px;
+  background: transparent; color: var(--cream-dim);
+  cursor: pointer;
+}
+.episode:hover { background: rgba(255, 240, 220, .12); }
+.episode.is-selected {
+  --dot-done: var(--done);
+  background: var(--cream-dim); color: var(--ink);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .3);
+}
+
+.episode-top { display: flex; justify-content: space-between; align-items: baseline; }
+.episode-id { font: 500 13px var(--mono); }
+.episode-progress { font: 12px var(--mono); color: var(--wood-text); }
+.episode.is-selected .episode-progress { color: var(--muted); }
+.episode-theme {
+  font-size: 13px; font-weight: 500; line-height: 1.5; margin-top: 3px;
+  text-wrap: pretty;
+}
+.episode-dots { display: flex; gap: 5px; margin-top: 9px; }
+
+.dot { width: 9px; height: 9px; border-radius: 50%; }
+.dot.is-todo { border: 1.5px solid var(--rule-strong); }
+.dot.is-ready { background: var(--accent); }
+.dot.is-done { background: var(--dot-done); }
+.dot.is-stale { background: var(--stale); }
+
+.episode.is-broken { opacity: .75; cursor: not-allowed; }
+.episode-error {
+  font: 11px var(--mono); color: var(--stale); margin-top: 8px; line-height: 1.5;
+}
+
+.episodes-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: var(--wood-text); text-align: center; line-height: 1.7;
+  padding: 0 12px;
+}
+
+.episodes-foot { padding: 12px 6px 4px; }
+
+/* ---------------------------------------------------------------- ボタン */
+
+.btn-primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 11px 20px; border: none; border-radius: 999px;
+  background: var(--accent); color: #fff;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .25), 0 2px 4px rgba(0, 0, 0, .3);
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-deep); }
+.btn-primary:disabled { background: var(--disabled); cursor: not-allowed; box-shadow: none; }
+.btn-primary.is-wide { width: 100%; padding: 11px; }
+
+.btn-plain {
+  padding: 10px 18px; border: 1.5px solid var(--rule-strong); border-radius: 999px;
+  background: var(--cream); color: var(--ink);
+  font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.btn-plain:hover:not(:disabled) { background: var(--cream-dim); }
+.btn-plain:disabled { color: var(--disabled); cursor: not-allowed; }
+
+.btn-quiet {
+  padding: 6px 10px; border: none; border-radius: 8px; background: transparent;
+  color: var(--muted); font-size: 13px; cursor: pointer;
+}
+.btn-quiet:hover:not(:disabled) { background: var(--cream-dim); color: var(--ink); }
+.btn-quiet:disabled { color: var(--rule); cursor: not-allowed; }
+
+/* ---------------------------------------------------------------- 前面板 */
+
+.panel {
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0; min-height: 0; overflow: hidden;
+  background: var(--cream-dim); border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--rule-strong), inset 0 2px 6px rgba(58, 36, 24, .25);
+}
+
+.panel-head {
+  background: var(--cream); border-bottom: 1px solid var(--rule);
+  padding: 16px 24px 0; display: flex; flex-direction: column; gap: 12px;
+  border-radius: 14px 14px 0 0;
+}
+
+/* ---------------------------------------------------------------- 部品3 工程ステッパー */
+
+.tuning { display: flex; align-items: center; gap: 16px; }
+.tuning-label {
+  font: 500 12px var(--mono); letter-spacing: .1em; color: var(--muted);
+}
+
+.steps {
+  position: relative; flex: 1;
+  display: grid; grid-template-columns: repeat(6, 1fr);
+  padding-bottom: 14px; border-bottom: 2px solid var(--ink);
+}
+
+.step {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  padding: 6px 10px; border: none; border-radius: 8px; background: transparent;
+  text-align: left; cursor: pointer;
+}
+.step:hover { background: var(--cream-dim); }
+.step-name { font-size: 14px; font-weight: 700; line-height: 1.3; }
+.step-state { font: 11px var(--mono); }
+
+.step.is-here { background: #fdf1e4; }
+.step.is-todo { color: var(--disabled); }
+.step.is-ready .step-state { color: var(--accent-text); }
+.step.is-done .step-state { color: var(--done-text); }
+.step.is-stale .step-state { color: var(--stale-text); }
+
+/* チューニング目盛りと、今いる工程を指す針 */
+.ticks-fine, .ticks-coarse, .needle { position: absolute; bottom: -2px; }
+.ticks-fine {
+  left: 0; right: 0; height: 6px;
+  background: repeating-linear-gradient(90deg, var(--ink) 0 1px, transparent 1px calc(100% / 48));
+}
+.ticks-coarse {
+  left: 0; right: 0; height: 10px;
+  background: repeating-linear-gradient(90deg, var(--ink) 0 1.5px, transparent 1.5px calc(100% / 6));
+}
+.needle {
+  bottom: -10px; width: 2px; height: 60px;
+  background: var(--needle); box-shadow: 0 0 0 1.5px var(--cream);
+  animation: needle 2.4s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------- タブ */
+
+.tabs { display: flex; gap: 6px; padding-bottom: 12px; align-items: center; }
+.tabs-episode {
+  font: 500 12px var(--mono); letter-spacing: .1em; color: var(--muted);
+  white-space: nowrap; margin-right: 8px;
+}
+.tab {
+  padding: 7px 14px; border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--cream); color: var(--muted);
+  font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.tab:hover:not(.is-active) { background: var(--cream-dim); }
+.tab.is-active {
+  background: var(--ink); border-color: var(--ink);
+  color: var(--cream-on-wood); font-weight: 700;
+}
+
+/* ---------------------------------------------------------------- メイン */
+
+.panel-main { padding: 20px 24px; overflow: auto; min-height: 0; }
+
+.placeholder {
+  height: 100%; border: 2px dashed var(--rule-strong); border-radius: 14px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; color: var(--disabled);
+}
+.placeholder-title { font-size: 15px; font-weight: 700; color: var(--muted); }
+
+.card {
+  background: var(--cream); border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+  padding: 22px 24px; display: flex; flex-direction: column; gap: 16px;
+  max-width: 900px;
+}
+.card-title { font-size: 16px; font-weight: 900; }
+.card-note { font-size: 12px; color: var(--muted); line-height: 1.7; }
+
+/* ---------------------------------------------------------------- 部品8 コーナー・テーマ編集 */
+
+.segments { display: flex; flex-direction: column; gap: 10px; }
+
+.segment {
+  display: grid; grid-template-columns: 24px 200px minmax(0, 1fr) auto;
+  gap: 10px; align-items: center;
+}
+.segment-order { font: 500 13px var(--mono); color: var(--muted); text-align: right; }
+
+.field {
+  font-size: 14px; padding: 10px 12px;
+  border: 1.5px solid var(--rule-strong); border-radius: 10px;
+  background: #fff; color: var(--ink);
+  outline-color: var(--accent);
+}
+.field:disabled { background: var(--cream-dim); color: var(--disabled); }
+
+.form-row { display: flex; flex-direction: column; gap: 6px; }
+.form-label { font-size: 12px; font-weight: 500; color: var(--muted); }
+
+.card-foot { display: flex; align-items: center; gap: 12px; }
+.save-state { font-size: 12px; color: var(--muted); }
+.save-state.is-dirty { color: var(--accent-text); font-weight: 700; }
+.save-state.is-error { color: var(--error-text); font-weight: 700; }
+
+/* ---------------------------------------------------------------- 部品5 処理状況バー（何もしていない） */
+
+.status-bar {
+  background: var(--cream); border-top: 1px solid var(--rule);
+  border-radius: 0 0 14px 14px;
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 24px; min-height: 52px;
+  color: var(--disabled); font-size: 13px;
+}
+.status-bar .spacer { flex: 1; }
+
+/* ---------------------------------------------------------------- 部品2 新しい回ダイアログ */
+
+.overlay {
+  position: fixed; inset: 0; background: rgba(42, 26, 16, .55);
+  display: flex; align-items: center; justify-content: center; z-index: 10;
+}
+
+.dialog {
+  width: 400px; background: var(--cream); border-radius: 18px;
+  box-shadow: inset 0 0 0 1px var(--rule-strong), 0 20px 60px rgba(42, 26, 16, .5);
+  padding: 22px; display: flex; flex-direction: column; gap: 14px;
+}
+.dialog-title { font-size: 18px; font-weight: 900; }
+.dialog-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+.form-error { font-size: 12px; font-weight: 700; color: var(--error-text); }

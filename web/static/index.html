@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>置くラジ 制作GUI</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="cabinet">
+
+  <!-- 部品1 回セレクタ -->
+  <aside class="episodes">
+    <div class="brand">
+      <span class="brand-name">置くラジ</span>
+      <span class="brand-sub">OKURADI · 10 MIN</span>
+    </div>
+    <div class="grille"></div>
+    <div class="episodes-head">
+      <span class="label">回</span>
+      <span class="count" id="episode-count"></span>
+    </div>
+    <div class="episode-list" id="episode-list"></div>
+    <div class="episodes-foot">
+      <button class="btn-primary is-wide" id="new-episode">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 1.5v11M1.5 7h11"/></svg>
+        新しい回
+      </button>
+    </div>
+  </aside>
+
+  <!-- 前面板 -->
+  <div class="panel">
+    <header class="panel-head">
+      <!-- 部品3 工程ステッパー -->
+      <div class="tuning">
+        <div class="tuning-label">TUNING</div>
+        <div class="steps" id="steps">
+          <span class="ticks-fine"></span>
+          <span class="ticks-coarse"></span>
+          <span class="needle" id="needle" hidden></span>
+        </div>
+      </div>
+      <div class="tabs">
+        <span class="tabs-episode" id="tabs-episode"></span>
+        <button class="tab is-active" data-tab="1">1. 回の設定</button>
+        <button class="tab" data-tab="2">2. 収録〜整音</button>
+        <button class="tab" data-tab="3">3. 仕上げ</button>
+      </div>
+    </header>
+
+    <main class="panel-main" id="main"></main>
+
+    <!-- 部品5 処理状況バー（工程の実行は #8 で足す） -->
+    <footer class="status-bar">
+      <span class="dot is-todo"></span>
+      <span>何もしていません</span>
+      <span class="spacer"></span>
+    </footer>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
