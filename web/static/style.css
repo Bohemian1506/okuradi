@@ -41,6 +41,7 @@ button, input, select, textarea { font-family: inherit; }
 
 @keyframes blink { 0%, 100% { opacity: 1 } 50% { opacity: .4 } }
 @keyframes needle { 0%, 100% { transform: translateX(-1px) } 50% { transform: translateX(1px) } }
+@keyframes spin { to { transform: rotate(360deg) } }
 
 /* ---------------------------------------------------------------- 筐体（木目） */
 
