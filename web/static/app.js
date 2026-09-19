@@ -60,6 +60,8 @@ const state = {
   echoesSaved: "",   // 保存されている中身（未保存かを見分ける）
   picked: -1,        // 選んでいる区間
   previewing: -1,    // 試聴中の区間
+  clean: null,       // 整音の結果
+  listening: "scan", // いま鳴らしているもの（scan / clean / preview）
 };
 
 const PRESETS = { none: "なし", light: "軽め", hall: "響く" };
@@ -250,10 +252,131 @@ function screenRecording() {
     echoCard(), null, echoSave()));
 
   box.appendChild(section(4, "整音して聴く",
-    "前後の無音を切り、音量をそろえる。聴いて確かめる1つ目の確認ポイント。",
-    placeholder("整音結果", "聴いて確かめるところは #6 の続きで入れます"),
-    stepOf("clean")));
+    "前後の無音を切り、音量をそろえ、エコーをかける。聴いて確かめる1つ目の確認ポイント。",
+    cleanCard(), stepOf("clean")));
   return box;
+}
+
+// ---------------------------------------------------------------- 部品15 整音結果パネル
+
+function cleanCard() {
+  const card = el("div", "panel-card");
+  const result = state.clean || { state: "未実行" };
+
+  if (result.state === "未実行") {
+    card.appendChild(el("div", "result-empty",
+      "整音を実行すると、ここで聴いて確かめられます"));
+    return card;
+  }
+  const stale = result.state === "古い";
+
+  const box = el("div", "result");
+  const top = el("div", "result-top");
+
+  const badge = el("span", stale ? "badge-stale" : "badge-done");
+  badge.append(el("span", "mark"), document.createTextNode(
+    stale ? "古い" : result.confirmed ? "完了 · 確認済み" : "完了 · 未確認"));
+
+  const about = ["clean.wav", clock(result.duration)];
+  if (result.removed) about.push(`前後で ${result.removed.toFixed(1)}秒を削除`);
+  if (result.target_lufs !== undefined && result.target_lufs !== null) {
+    about.push(`目標 ${result.target_lufs} LUFS`);   // 実測ではない
+  }
+  if (result.echoes) about.push(`エコー${result.echoes}区間`);
+
+  const done = el("button", result.confirmed ? "btn-plain" : "btn-primary",
+                  result.confirmed ? "確認済み" : "確認した");
+  done.disabled = result.confirmed || stale;
+  done.title = stale ? "作り直してから確認してください" : "";
+  done.onclick = () => confirmClean();
+
+  top.append(badge, el("span", "result-about", about.join(" · ")),
+             el("span", "spacer"), done);
+  box.appendChild(top);
+
+  if (stale) {
+    const why = el("div", "result-stale");
+    why.append(el("span", "mark", "!"), el("span", null,
+      `${result.stale_reason}。整音をやり直すまで、次の工程には前の結果が使われます。`));
+    box.appendChild(why);
+  }
+
+  // 整音後の波形は、いまは整音前のものを使い回す（形はほぼ同じ）
+  const wave = el("div", "result-wave");
+  const peaks = (state.wave && state.wave.peaks) || [];
+  for (const peak of peaks.filter((_, i) => i % 2 === 0)) {
+    const bar = el("span", "wave-bar");
+    bar.style.height = `${Math.max(2, peak * 100)}%`;
+    wave.appendChild(bar);
+  }
+  if (peaks.length) box.appendChild(wave);
+
+  box.appendChild(cleanPlayer(result));
+  card.appendChild(box);
+  return card;
+}
+
+function cleanPlayer(result) {
+  const row = el("div", "player-row");
+  const total = result.duration || 0;
+  const now = state.listening === "clean";
+
+  const play = el("button", "btn-play");
+  play.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">${
+    now && state.playing ? SVG.pause : SVG.playBig}</svg>`;
+  play.title = now && state.playing ? "停止" : "再生";
+  play.setAttribute("aria-label", "再生/停止");
+  play.onclick = () => {
+    if (now && state.playing) { audio.pause(); return; }
+    listenTo("clean", 0);
+  };
+
+  const seek = el("div", "seek");
+  const track = el("div", "seek-track");
+  const ratio = now && total ? Math.min(state.at / total, 1) : 0;
+  const fill = el("div", "seek-fill");
+  fill.style.width = `${ratio * 100}%`;
+  const knob = el("div", "seek-knob");
+  knob.style.left = `${ratio * 100}%`;
+  track.append(fill, knob);
+  seek.appendChild(track);
+  seek.onclick = (event) => {
+    if (!total) return;
+    const rect = track.getBoundingClientRect();
+    listenTo("clean",
+      Math.max(0, Math.min((event.clientX - rect.left) / rect.width, 1)) * total);
+  };
+
+  const time = el("span", "player-time");
+  time.append(document.createTextNode(clock(now ? state.at : 0)),
+              el("span", "total", ` / ${clock(total)}`));
+
+  row.append(play, seek, time);
+  return row;
+}
+
+function listenTo(kind, at) {
+  const url = `/api/episodes/${state.selected.name}/audio/${kind}`;
+  if (state.listening !== kind || !audio.src.includes(`/audio/${kind}`)) {
+    state.listening = kind;
+    audio.src = url;
+  }
+  audio.currentTime = at || 0;
+  state.at = at || 0;
+  audio.play().catch((err) => {
+    state.sourceError = `再生できませんでした: ${err.message}`;
+    renderMain();
+  });
+}
+
+async function confirmClean() {
+  try {
+    state.clean = await api(`/api/episodes/${state.selected.name}/clean/confirm`,
+                            { method: "POST" });
+  } catch (err) {
+    state.sourceError = `確認を記録できませんでした: ${err.message}`;
+  }
+  renderMain();
 }
 
 // ---------------------------------------------------------------- 部品13・14 波形とエコー区間
@@ -428,6 +551,7 @@ async function previewEcho(index) {
   renderMain();
   try {
     audio.pause();
+    state.listening = "preview";
     audio.src = `/api/episodes/${state.selected.name}/echo-preview`
       + `?start=${echo.start}&end=${echo.end}&preset=${echo.preset}&t=${Date.now()}`;
     await audio.play();
@@ -521,13 +645,10 @@ function player(scan) {
   return box;
 }
 
-function audioUrl() {
-  return `/api/episodes/${state.selected.name}/audio/scan`;
-}
-
 function ensureAudio() {
-  const want = audioUrl();
-  if (!audio.src.endsWith(want)) {
+  const want = `/api/episodes/${state.selected.name}/audio/scan`;
+  if (state.listening !== "scan" || !audio.src.includes("/audio/scan")) {
+    state.listening = "scan";
     audio.src = want;
     state.at = 0;
   }
@@ -1074,6 +1195,15 @@ function renderStatus() {
 let ticker = null;
 
 async function runStep(step) {
+  // エコー区間が未保存のまま整音すると、前の設定の音ができてしまう
+  if (step === "clean" && echoDirty()) {
+    const ok = confirm("エコー区間が未保存です。保存してから整音しますか？\n"
+      + "「キャンセル」を選ぶと、保存されている前の区間で整音します。");
+    if (ok) {
+      await saveEchoes();
+      if (echoDirty()) return;        // 保存に失敗したら、実行しない
+    }
+  }
   try {
     state.job = await api(`/api/episodes/${state.selected.name}/steps/${step}/run`, { method: "POST" });
   } catch (err) {
@@ -1142,6 +1272,7 @@ async function finishJob() {
     }
     if (state.job.step === "clean") {
       state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
+      state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
     }
   }
   await reload({ keep: state.selected && state.selected.name, keepSelected: true });
@@ -1258,6 +1389,8 @@ async function selectEpisode(name) {
   state.echoes = echoes.echoes;
   state.echoesSaved = JSON.stringify(echoes.echoes);
   state.picked = -1;
+  state.listening = "scan";
+  state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
   [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),

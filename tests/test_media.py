@@ -141,3 +141,125 @@ def test_短すぎる区間は試聴できない(ep):
     make_wav(ep / "01_clean" / "trimmed.wav", seconds=3.0)
     with pytest.raises(episodes.EpisodeError, match="短すぎます"):
         media.echo_preview("ep01", 1.0, 1.01, "light")
+
+
+# ---------------------------------------------------------------- 整音の結果
+
+def test_整音していなければ結果は未実行(ep):
+    assert media.clean_result("ep01") == {"state": "未実行"}
+
+
+def test_整音の結果を読む(ep):
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(json.dumps({
+        "duration": 57.14, "removed": 2.47, "target_lufs": -14,
+        "echoes": [{"start": 5, "end": 9, "preset": "light"}],
+    }), encoding="utf-8")
+    got = media.clean_result("ep01")
+    assert got["state"] == "完了"
+    assert got["confirmed"] is False
+    assert got["duration"] == 57.14
+    assert got["removed"] == 2.47
+    assert got["echoes"] == 1
+
+
+def test_記録が無くても結果は出す(ep):
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    got = media.clean_result("ep01")
+    assert got["state"] == "完了"
+    assert got["duration"] is None
+
+
+def test_確認したを押すと確認済みになる(ep):
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    assert media.confirm_clean("ep01")["confirmed"] is True
+    assert media.clean_result("ep01")["confirmed"] is True
+
+
+def test_整音をやり直すと未確認に戻る(ep):
+    import os
+    import time
+    clean = ep / "01_clean" / "clean.wav"
+    clean.write_bytes(b"a")
+    media.confirm_clean("ep01")
+    time.sleep(0.01)
+    os.utime(clean, (time.time(), time.time()))       # やり直した
+    assert media.clean_result("ep01")["confirmed"] is False
+
+
+def test_整音していなければ確認できない(ep):
+    with pytest.raises(episodes.EpisodeError, match="まだ整音していません"):
+        media.confirm_clean("ep01")
+
+
+# ---------------------------------------------------------------- 「古い」の判定
+
+def clean_with(ep_dir, echoes, trimmed=57.11):
+    (ep_dir / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep_dir / "01_clean" / "clean.json").write_text(json.dumps({
+        "duration": 57.14, "removed": 2.47, "target_lufs": -14,
+        "trimmed_duration": trimmed, "echoes": echoes,
+    }), encoding="utf-8")
+
+
+def set_echoes(ep_dir, echoes):
+    import yaml
+    (ep_dir / "config.yml").write_text(
+        yaml.safe_dump({"episode": 1, "echoes": echoes}, allow_unicode=True),
+        encoding="utf-8")
+
+
+def test_エコー区間を変えると古いになる(ep):
+    clean_with(ep, [{"start": 5, "end": 9, "preset": "light"}])
+    set_echoes(ep, [{"start": 20, "end": 24, "preset": "hall"}])
+    got = media.clean_result("ep01")
+    assert got["state"] == "古い"
+    assert "エコー区間" in got["stale_reason"]
+
+
+def test_同じエコー区間なら古くならない(ep):
+    rows = [{"start": 5, "end": 9, "preset": "light"}]
+    clean_with(ep, rows)
+    set_echoes(ep, rows)
+    assert media.clean_result("ep01")["state"] == "完了"
+
+
+def test_かからない区間が残っていても古くならない(ep):
+    """config には飛ばされた区間も残る。clean.json には実際にかけた分だけ入る。"""
+    clean_with(ep, [{"start": 5, "end": 9, "preset": "light"}])
+    set_echoes(ep, [
+        {"start": 5, "end": 9, "preset": "light"},
+        {"start": 9.1, "end": 12, "preset": "hall"},   # 近すぎるので、かからない
+        {"start": 30, "end": 34, "preset": "none"},    # 「なし」なので、かからない
+    ])
+    assert media.clean_result("ep01")["state"] == "完了"
+
+
+def test_音源を差し替えると古いになる(ep):
+    import os
+    import time
+    clean_with(ep, [])
+    set_echoes(ep, [])
+    later = time.time() + 10
+    (ep / "00_raw" / "rec.wav").write_bytes(b"a")
+    os.utime(ep / "00_raw" / "rec.wav", (later, later))
+    got = media.clean_result("ep01")
+    assert got["state"] == "古い"
+    assert "音源" in got["stale_reason"]
+
+
+def test_古いときは確認済みにならない(ep):
+    clean_with(ep, [{"start": 5, "end": 9, "preset": "light"}])
+    set_echoes(ep, [{"start": 5, "end": 9, "preset": "light"}])
+    media.confirm_clean("ep01")
+    assert media.clean_result("ep01")["confirmed"] is True
+    set_echoes(ep, [{"start": 20, "end": 24, "preset": "hall"}])
+    assert media.clean_result("ep01")["confirmed"] is False
+
+
+def test_clean_json_が壊れた形でも落ちない(ep):
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(json.dumps({"echoes": 5}), encoding="utf-8")
+    got = media.clean_result("ep01")
+    assert got["state"] in ("完了", "古い")
+    assert got["echoes"] == 0

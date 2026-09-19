@@ -259,29 +259,45 @@ ECHO_PRESET_LABELS = {"light": "軽め", "hall": "響く"}
 ECHO_MIN = 0.3
 
 
-def normalize_echoes(echoes, total):
-    """エコー区間を整える。時刻は trimmed.wav（前後のトリムまで済ませた音）が基準。"""
+def normalize_echoes(echoes, total, report=True):
+    """エコー区間を整える。時刻は trimmed.wav（前後のトリムまで済ませた音）が基準。
+
+    report=False にすると、飛ばした区間のお知らせを出さない（比べるときに使う）。
+    """
     rows = []
     for echo in echoes or []:
         preset = (echo.get("preset") or "").strip()
-        if preset not in ECHO_PRESETS:
-            continue                      # 「なし」や知らない名前は、かけない
         start = max(0.0, float(echo.get("start", 0)))
         end = min(float(echo.get("end", 0)), total)
+        if preset not in ECHO_PRESETS:
+            if report and preset and preset != "none":
+                print(f"(エコー区間 {hhmmss(start)}–{hhmmss(end)} の"
+                      f"「{preset}」は知らないプリセットなのでかけません)", flush=True)
+            continue                      # 「なし」は、かけないのが正しい
         if end - start < ECHO_MIN:
+            if report:
+                print(f"(エコー区間 {hhmmss(start)}–{hhmmss(end)} は短すぎる"
+                      f"（{ECHO_MIN}秒未満）のでかけません)", flush=True)
             continue
         rows.append((start, end, preset))
 
     rows.sort()
-    merged = []
+    merged, skipped = [], []
     for start, end, preset in rows:
         if merged and start - merged[-1][1] < ECHO_MIN:
-            continue                      # 近すぎる区間は、繋ぎ目が作れないので飛ばす
+            # 繋ぎ目を作るだけのすき間が無い。飛ばすが、黙って消さない
+            skipped.append((start, end))
+            continue
         if start < ECHO_MIN:
             start = 0.0                   # 先頭すぐなら頭から
         if total - end < ECHO_MIN:
             end = total                   # 末尾すぐなら最後まで
         merged.append((start, end, preset))
+
+    if report:
+        for start, end in skipped:
+            print(f"(エコー区間 {hhmmss(start)}–{hhmmss(end)} は、前の区間と近すぎる"
+                  f"（{ECHO_MIN}秒未満）のでかけません)", flush=True)
     return merged
 
 
@@ -338,10 +354,12 @@ def step_clean(ep, cfg):
     if a.get("trim_silence", True):
         trim = "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB"
         filters += [trim, "areverse", trim, "areverse"]
+    before = audio_duration(src)
     run(["ffmpeg", "-y", "-i", str(src), "-af", ",".join(filters) or "anull",
          "-ar", "48000", "-ac", "1", str(trimmed)])
     total = audio_duration(trimmed)
-    print(f"-> {trimmed}  ({hhmmss(total)})  前後のトリムまで")
+    print(f"-> {trimmed}  ({hhmmss(total)})  前後のトリムまで"
+          f"（前後で {before - total:.1f}秒を削除）")
 
     # 2回目: エコーをかけてから正規化。
     # 正規化は必ず最後。エコーで足した分も、ここで天井に収まる。
@@ -359,6 +377,17 @@ def step_clean(ep, cfg):
         run(["ffmpeg", "-y", "-i", str(trimmed), "-af", loudnorm,
              "-ar", "48000", "-ac", "1", str(dst)])
         print(f"-> {dst}  ({hhmmss(audio_duration(dst))})")
+
+    # 整音の結果を残す。GUI がこれを読んで「整音結果」に出す。
+    (ep["01_clean"] / "clean.json").write_text(json.dumps({
+        "source": src.name,
+        "source_duration": round(before, 2),
+        "trimmed_duration": round(total, 2),
+        "duration": round(audio_duration(dst), 2),
+        "removed": round(before - total, 2),
+        "target_lufs": a.get("target_lufs", -14),
+        "echoes": [{"start": s, "end": e, "preset": p} for s, e, p in regions],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ---------------------------------------------------------------- 04. 文字起こし（確定）
