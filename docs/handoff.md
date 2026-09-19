@@ -5,8 +5,8 @@
 ## 2026-09-19（day-3 の終わり）
 
 ### いまの状態
-- main は `4c787d0`。**開いている PR は無し。ローカルのブランチは `main` だけ**（マージ済みのブランチは消してある）
-- day-3 で GUI を最初から最後まで実装した（#5 枠 → #6 収録〜整音 → #7 仕上げ → #8 ログ・チャット・改善メモ）。マージした PR は #18〜#66
+- main は `75ca4fd`。**開いている PR は無し。ローカルのブランチは `main` だけ**（マージ済みのブランチは消してある）
+- day-3 で GUI を最初から最後まで実装した（#5 枠 → #6 収録〜整音 → #7 仕上げ → #8 ログ・チャット・改善メモ）。マージした PR は #18〜#68
 - **必須の17機能と、部品1〜19 の実装がすべて終わった**（`docs/features.md` の「実装の状況」）。`pytest` 187件が通る
 - 波形は wavesurfer.js（#36）。ファイルは `web/static/vendor/` に置いてあり、CDN からは読まない
 - 回のデータは `ep01` だけ。音声と途中のファイルは git の管理外
@@ -18,13 +18,10 @@
 | #59 | 波形まわりの見た目と読み上げを見本にそろえる | 作り込み。操作は妨げない |
 | #60 | 未保存の区間があるとき、閉じる前に知らせる | 作り込み |
 | #61 | 整音結果の取り直しの失敗を黙らせない | 小さい。帯が出せないときの一言も一緒に |
-| #64 | 動画の絵を押して再生するか | **決めごと。ユーザーの判断待ち**（案 a/b/c を本文に書いた） |
-| #65 | 帯が動かせないと分かるようにするか | **決めごと。担当の意見が割れた**（両方の言い分を本文に書いた） |
 
 ### 次にやること
 1. **#53 通しリハーサル**（ユーザー）— 実際の収録で最初から最後まで通して、詰まった所を Issue にする。通せたら `app.py`・`requirements.txt` の streamlit / altair / pandas / **numpy**・`CLAUDE.md` の「古い GUI」の行を消す
-2. #64 / #65 を決める（ユーザー）。どちらも小さいので、決まれば同じ PR で直せる
-3. #59 / #60 / #61 — どれも急がない。#53 の前でも後でもよい
+2. #59 / #60 / #61 — どれも急がない。#53 の前でも後でもよい
 
 ### 作業の始め方
 - GUI: `.venv/bin/python -m uvicorn web.main:app --reload`（`http://127.0.0.1:8000`）
@@ -49,6 +46,7 @@
 | F12 のメニュー（3つ） | `C:\Users\hiros\.wezterm.lua` の `launch_menu` | 書き方は `docs/dev-log/day-2.md` の #13 と `docs/herdr.md` |
 | Herdr の Claude 連携 | `~/.claude/hooks/herdr-agent-state.sh` など | `herdr integration install claude` |
 | Claude が Herdr を操作するスキル | `~/.claude/skills/herdr/SKILL.md` | `herdr --skill > ~/.claude/skills/herdr/SKILL.md`（Herdr を更新したときも） |
+| Claude Design のプロジェクト | `共通の枠を出しました`（claude.ai/design）。**見本はここが正本**。実装が見本を追い越したら、`github.md` の同期メモと一緒に直す（#65 でやった） |
 | Claude Design とつなぐ MCP | `~/.claude.json`（`-s user` で入れた。公開リポジトリなので `.mcp.json` は作らない） | `claude mcp add -s user --transport http claude_design https://api.anthropic.com/v1/design/mcp` → `/design-login` → **Claude を立ち上げ直す**（`claude --continue` で会話の続きから戻る）。詳しくは `docs/dev-log/day-3.md` |
 | main への push を止める git のフック | リポジトリの git 設定 | `git config core.hooksPath .githooks`（clone し直したとき） |
 | GitHub 側の main の保護 | リポジトリの設定（Branches） | 直接 push の禁止・管理者にも適用・承認は不要・強制 push と削除の禁止 |
