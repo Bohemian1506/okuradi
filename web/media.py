@@ -479,12 +479,19 @@ def video_view(name):
     if not path.exists():
         return {"state": "未実行"}
     seconds = duration_of(path)
+    # 整音をやり直したら動画も作り直し（step_video は clean.wav から作る）
+    clean = ep_dir / "01_clean" / "clean.wav"
+    stale = None
+    if clean.exists() and clean.stat().st_mtime > path.stat().st_mtime:
+        stale = "整音をやり直しました"
     return {
-        "state": "完了",
+        "state": "古い" if stale else "完了",
+        "stale_reason": stale,
         "name": f"{ep_dir.name}/04_video/{path.name}",
-        "duration": build.hhmmss(seconds) if seconds else "",
+        "duration": build.hhmmss(seconds) if seconds is not None else "",
         "size": human_size(path.stat().st_size),
         "resolution": video_size(path),
+        "at": int(path.stat().st_mtime),   # 作り直したら新しい動画を読ませる
     }
 
 
