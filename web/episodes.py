@@ -196,10 +196,19 @@ def list_episodes(root=ROOT):
     return rows
 
 
+def rule_view(key, rule):
+    """コーナー1つ分を、画面に出す形にする。"""
+    rule = rule or {}
+    # title_hint は「「今更聞けない○○」の形。○○は…」のように2文で書かれている。
+    # テーマ欄のヒントには、型を示す最初の文だけを使う。
+    hint = (rule.get("title_hint") or "").split("。")[0]
+    return {"label": rule.get("label") or key, "hint": hint}
+
+
 def rules_of(ep_dir):
-    """その回の config.yml の series_rules を {キー: 表示名} にして返す。"""
+    """その回の config.yml の series_rules を、画面に出す形にして返す。"""
     rules = read_config(ep_dir).get("series_rules") or {}
-    return {key: (rule or {}).get("label") or key for key, rule in rules.items()}
+    return {key: rule_view(key, rule) for key, rule in rules.items()}
 
 
 def series_rules(root=ROOT):
@@ -282,7 +291,7 @@ def create_episode(number, segments, root=ROOT):
 
     # ひな型を先に読む。コーナーの検証も、ひな型にする回の series_rules で行う。
     cfg = copy.deepcopy(template_config(number, root))
-    known = {key: (rule or {}).get("label") or key
+    known = {key: rule_view(key, rule)
              for key, rule in (cfg.get("series_rules") or {}).items()}
     cfg["episode"] = number
     cfg["recorded_on"] = None
