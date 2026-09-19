@@ -68,7 +68,7 @@ const state = {
   scan: null,        // 下見の文字起こし
   at: 0,             // 再生位置（秒）
   playing: false,
-  wave: null,        // 波形（trimmed.wav から）
+  wave: null,        // 波形に使う音（trimmed.wav）の在りかと長さ
   echoes: [],        // エコー区間
   echoesSaved: "",   // 保存されている中身（未保存かを見分ける）
   picked: -1,        // 選んでいる区間
@@ -220,6 +220,7 @@ function renderSteps() {
 
 function selectTab(tab) {
   if (!tab) return;
+  if (tab !== state.tab) stopWaves();   // 見えない場所で鳴らさない
   state.tab = tab;
   document.querySelectorAll(".tab[data-tab]").forEach((node) => {
     node.classList.toggle("is-active", node.dataset.tab === tab);
@@ -962,17 +963,18 @@ function cleanCard() {
     box.appendChild(why);
   }
 
-  // 整音後の波形は、いまは整音前のものを使い回す（形はほぼ同じ）
+  // 波形は clean.wav から出す。いま聴いている音そのものなので、長さも形も合う
+  const cw = ensureWave("clean", {
+    url: `/api/episodes/${state.selected.name}/audio/clean?t=${result.at}`,
+    duration: result.duration || 0,
+  });
   const wave = el("div", `result-wave ${stale ? "is-stale" : ""}`);
-  const peaks = (state.wave && state.wave.peaks) || [];
-  for (const peak of peaks.filter((_, i) => i % 2 === 0)) {
-    const bar = el("span", "wave-bar");
-    bar.style.height = `${Math.max(2, peak * 100)}%`;
-    wave.appendChild(bar);
-  }
-  if (peaks.length) box.appendChild(wave);
+  wave.appendChild(cw.box);
+  box.appendChild(wave);
+  const note = waveNote(cw);
+  if (note) box.appendChild(note);
 
-  box.appendChild(cleanPlayer(result));
+  box.appendChild(wavePlayer("clean"));
   card.appendChild(box);
   return card;
 }
@@ -993,6 +995,7 @@ function cleanPlayer(result) {
 function listenTo(kind, at) {
   const video = document.querySelector(".video-body video");
   if (video && !video.paused) video.pause();
+  stopWaves();                      // 音は1つだけ鳴らす
   const url = `/api/episodes/${state.selected.name}/audio/${kind}`;
   if (state.listening !== kind || !audio.src.includes(`/audio/${kind}`)) {
     state.listening = kind;
@@ -1014,6 +1017,312 @@ async function confirmClean() {
     state.actionError = `確認を記録できませんでした: ${err.message}`;
   }
   renderMain();
+}
+
+// ---------------------------------------------------------------- 波形の土台（wavesurfer.js）
+// renderMain() は毎回 DOM を作り直すが、波形は音を読み直すと重い（10分の回で数十MB）。
+// 器と本体は作り直さず、鳴らす音が変わったときだけ読み直す。
+const waves = {};
+
+const ECHO_MIN = 0.3;   // これより短い選択は区間にしない（build.py と同じ）
+
+const WAVE_COLORS = {
+  light: "oklch(0.65 0.18 45 / .26)",
+  hall: "oklch(0.55 0.2 25 / .3)",
+  none: "rgba(230, 211, 179, .18)",
+};
+
+// wavesurfer は波形を shadow DOM の中に描く。style.css はそこへ届かないので、
+// 区間の帯の見た目だけはここに書いて、器ごとに差し込む。
+// （--accent などの色は shadow の中にも受け継がれるので、そのまま使える）
+const WAVE_CSS = `
+[part~="region"] {
+  /* wavesurfer が要素に border-left:none を直接書くので、ここは !important が要る */
+  border-left: 1.5px solid var(--accent) !important;
+  border-right: 1.5px solid var(--accent) !important;
+  box-sizing: border-box;
+  display: flex; align-items: flex-start; justify-content: center;
+  cursor: grab;
+}
+[part~="region"]:active { cursor: grabbing; }
+[part~="region"].is-hall { border-color: oklch(0.55 0.2 25) !important; }
+[part~="region"].is-none { border-color: var(--wood-text) !important; }
+[part~="region"].is-picked { box-shadow: inset 0 0 0 2px var(--cream); }
+[part~="region-handle"] { border-color: var(--cream) !important; width: 8px !important; }
+[part~="region"] .tag {
+  margin-top: 4px; padding: 1px 7px; border-radius: 999px;
+  background: var(--ink-deep); color: var(--cream-on-wood);
+  font: 500 10px var(--mono); white-space: nowrap;
+  pointer-events: none;
+}
+`;
+
+function paintWave(w) {
+  // 器の shadow DOM に、帯の見た目を1度だけ入れる
+  try {
+    const root = w.ws.getWrapper().getRootNode();
+    if (!root || !root.appendChild || root.querySelector("style[data-okuradi]")) return;
+    const style = document.createElement("style");
+    style.dataset.okuradi = "wave";
+    style.textContent = WAVE_CSS;
+    root.appendChild(style);
+  } catch (err) {
+    // 見た目が付かないだけで、波形と区間は使える
+    console.warn("波形の見た目を入れられませんでした", err);
+  }
+}
+
+function waveOf(key) {
+  if (!waves[key]) {
+    waves[key] = {
+      box: el("div", "wave"),   // この器は作り直さない
+      ws: null, regions: null, url: null,
+      phase: "空",              // 空 / 読み込み中 / 表示 / 失敗
+      percent: 0, error: "",
+      at: 0, playing: false, duration: 0,
+      sig: null, applying: false,
+    };
+  }
+  return waves[key];
+}
+
+// 波形の音を止める。器が画面から消えても、本体は生きているので明示的に止める
+function stopWaves(except) {
+  for (const [key, w] of Object.entries(waves)) {
+    if (key !== except && w.ws && w.playing) w.ws.pause();
+  }
+}
+
+// 音は1つだけ鳴らす
+function stopOtherSounds(except) {
+  audio.pause();
+  const video = document.querySelector(".video-body video");
+  if (video && !video.paused) video.pause();
+  stopWaves(except);
+}
+
+function ensureWave(key, { url, duration = 0, regions = false }) {
+  const w = waveOf(key);
+  if (w.url === url) return w;
+
+  if (w.ws) { w.ws.destroy(); w.ws = null; w.regions = null; }
+  w.box.innerHTML = "";
+  Object.assign(w, { url, phase: "読み込み中", percent: 0, error: "",
+                     at: 0, playing: false, duration, sig: null, applying: false });
+
+  // 部品が読めていないことを黙って隠さない。
+  // regions.min.js は本体が無くても window.WaveSurfer を空で作るので、
+  // 「ある/なし」ではなく create が使えるかで見る
+  const lib = window.WaveSurfer;
+  if (!lib || typeof lib.create !== "function") {
+    w.phase = "失敗";
+    w.error = "波形の部品（wavesurfer.js）が読み込めませんでした。"
+            + "web/static/vendor/ にファイルがあるか確かめてください";
+    return w;
+  }
+
+  const plugins = [];
+  if (regions) {
+    if (lib.Regions && typeof lib.Regions.create === "function") {
+      w.regions = lib.Regions.create();
+      plugins.push(w.regions);
+    } else {
+      w.error = "区間を選ぶ部品（regions.min.js）が読み込めませんでした。"
+              + "波形は出ますが、ドラッグで区間を選べません";
+    }
+  }
+
+  try {
+    w.ws = lib.create({
+      container: w.box,
+      height: 120,
+      waveColor: "#8a6f5c",
+      progressColor: "#c98a5a",
+      cursorColor: "#e8c39e",
+      cursorWidth: 2,
+      barWidth: 2, barGap: 1, barRadius: 1,
+      normalize: true,
+      url,
+      plugins,
+    });
+  } catch (err) {
+    // ここで投げると画面がまるごと消える。波形だけ諦めて、理由を出す
+    w.ws = null;
+    w.regions = null;
+    w.phase = "失敗";
+    w.error = `波形を作れませんでした: ${err.message}`;
+    return w;
+  }
+
+  paintWave(w);
+
+  w.ws.on("loading", (percent) => {
+    // 読み込みのたびに画面を作り直すと重いので、5%ごとに出す
+    if (Math.abs(percent - w.percent) < 5 && percent < 100) return;
+    w.percent = percent;
+    renderMain();
+  });
+  w.ws.on("ready", () => {
+    w.phase = "表示";
+    w.duration = w.ws.getDuration() || duration;
+    syncRegions(key);
+    renderMain();
+  });
+  w.ws.on("error", (err) => {
+    w.phase = "失敗";
+    w.error = `波形を作れませんでした: ${(err && err.message) || err}`;
+    renderMain();
+  });
+  w.ws.on("timeupdate", (at) => {
+    // 毎コマ作り直すと重いので、1秒に4回まで
+    if (Math.floor(at * 4) === Math.floor(w.at * 4)) { w.at = at; return; }
+    w.at = at;
+    if (state.tab === "2") renderMain();
+  });
+  w.ws.on("interaction", (at) => { w.at = at; renderMain(); });
+  w.ws.on("play", () => { w.playing = true; renderMain(); });
+  w.ws.on("pause", () => { w.playing = false; renderMain(); });
+  w.ws.on("finish", () => { w.playing = false; w.at = 0; renderMain(); });
+
+  if (w.regions) bindRegions(key, w);
+  return w;
+}
+
+function echoIndexOf(region) {
+  const index = Number(String(region.id).replace("echo-", ""));
+  return Number.isInteger(index) ? index : -1;
+}
+
+function bindRegions(key, w) {
+  w.regions.enableDragSelection({ color: WAVE_COLORS.light });
+
+  // ドラッグで選び終えたとき（enableDragSelection は離した時だけ知らせる）
+  w.regions.on("region-created", (region) => {
+    if (w.applying) return;                       // 自分で並べたものは見ない
+    const start = round2(Math.min(region.start, region.end));
+    const end = round2(Math.max(region.start, region.end));
+    // ここですぐ消すと、wavesurfer が後から付ける後始末と行き違って帯が残る。
+    // 1コマ待ってから、state.echoes をもとに並べ直す
+    setTimeout(() => {
+      region.remove();
+      if (end - start < ECHO_MIN) {
+        seekWave(key, start);
+        return;
+      }
+      state.echoes.push({ start, end, preset: "light" });
+      state.echoes.sort((a, b) => a.start - b.start);
+      state.picked = state.echoes.findIndex((e) => e.start === start);
+      w.sig = null;
+      renderMain();
+    }, 0);
+  });
+
+  // 端を掴んで伸ばした / まるごと動かしたとき
+  w.regions.on("region-updated", (region) => {
+    if (w.applying) return;
+    const echo = state.echoes[echoIndexOf(region)];
+    if (!echo) return;
+    const start = round2(Math.min(region.start, region.end));
+    const end = round2(Math.max(region.start, region.end));
+    // 0.3秒より短い区間は build.py が読み飛ばす。黙って効かない区間を
+    // 作らせず、元の長さに戻して理由を出す
+    if (end - start < ECHO_MIN) {
+      state.actionError = `エコー区間は ${ECHO_MIN}秒より短くできません`
+        + "（短いと整音のときに読み飛ばされます）";
+      w.sig = null;                 // 帯を元の位置に戻す
+      renderMain();
+      return;
+    }
+    echo.start = start;
+    echo.end = end;
+    state.echoes.sort((a, b) => a.start - b.start);
+    state.picked = state.echoes.indexOf(echo);
+    w.sig = null;
+    renderMain();
+  });
+
+  w.regions.on("region-clicked", (region, event) => {
+    event.stopPropagation();
+    const index = echoIndexOf(region);
+    if (index < 0) return;
+    state.picked = index;
+    renderMain();
+  });
+}
+
+// 画面の区間（state.echoes）を、波形の上の帯に映す
+function syncRegions(key) {
+  const w = waveOf(key);
+  if (!w.regions || w.phase !== "表示") return;
+  const sig = `${JSON.stringify(state.echoes)}|${state.picked}`;
+  if (sig === w.sig) return;
+
+  w.applying = true;
+  w.regions.clearRegions();
+  state.echoes.forEach((echo, index) => {
+    const tag = el("span", "tag", PRESETS[echo.preset] || echo.preset);
+    const region = w.regions.addRegion({
+      id: `echo-${index}`,
+      start: echo.start, end: echo.end,
+      drag: true, resize: true,
+      color: WAVE_COLORS[echo.preset] || WAVE_COLORS.light,
+      content: tag,
+    });
+    region.element.classList.add(`is-${echo.preset}`);
+    if (index === state.picked) region.element.classList.add("is-picked");
+  });
+  w.applying = false;
+  w.sig = sig;
+}
+
+function toggleWave(key) {
+  const w = waveOf(key);
+  if (!w.ws || w.phase !== "表示") return;
+  if (w.playing) { w.ws.pause(); return; }
+  stopOtherSounds(key);
+  w.ws.play().catch((err) => {
+    state.actionError = `再生できませんでした: ${err.message}`;
+    renderMain();
+  });
+}
+
+function seekWave(key, seconds, play = false) {
+  const w = waveOf(key);
+  if (!w.ws || w.phase !== "表示") return;
+  w.ws.setTime(seconds);
+  w.at = seconds;
+  if (play && !w.playing) {
+    stopOtherSounds(key);
+    w.ws.play().catch(() => {});
+  }
+  renderMain();
+}
+
+function wavePlayer(key) {
+  const w = waveOf(key);
+  return playerRow({
+    total: w.duration, at: w.at, playing: w.playing,
+    disabled: w.phase !== "表示",
+    onToggle: () => toggleWave(key),
+    onSeek: (to) => seekWave(key, to, true),
+  });
+}
+
+// 読み込み中・失敗を必ず見せる（黙って空のままにしない）
+function waveNote(w) {
+  if (w.phase === "読み込み中") {
+    const box = el("div", "wave-note");
+    box.textContent = w.percent
+      ? `音を読み込んでいます… ${Math.round(w.percent)}%`
+      : "音を読み込んでいます…";
+    return box;
+  }
+  if (w.error) {
+    const box = el("div", "wave-note is-error");
+    box.append(el("span", "mark", "!"), el("span", null, w.error));
+    return box;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- 部品13・14 波形とエコー区間
@@ -1050,74 +1359,25 @@ function echoCard() {
     return card;
   }
 
-  card.appendChild(waveBox(wave));
+  // 整音をやり直したら読み直す（古い音を使い回さない）
+  const w = ensureWave("echo", {
+    url: `${wave.url}?t=${wave.at}`,
+    duration: wave.duration,
+    regions: true,
+  });
+  syncRegions("echo");
+
+  card.appendChild(w.box);
+  const note = waveNote(w);
+  if (note) card.appendChild(note);
 
   const ruler = el("div", "wave-ruler");
+  const total = w.duration || wave.duration;
   for (let i = 0; i < 5; i += 1) {
-    ruler.appendChild(el("span", null, clock(wave.duration * i / 4)));
+    ruler.appendChild(el("span", null, clock(total * i / 4)));
   }
-  card.append(ruler, regionList(wave.duration));
+  card.append(ruler, wavePlayer("echo"), regionList(total));
   return card;
-}
-
-function waveBox(wave) {
-  const box = el("div", "wave");
-  for (const peak of wave.peaks) {
-    const bar = el("span", "wave-bar");
-    bar.style.height = `${Math.max(2, peak * 100)}%`;
-    box.appendChild(bar);
-  }
-
-  state.echoes.forEach((echo, index) => {
-    const band = el("div", `wave-band is-${echo.preset}`);
-    if (index === state.picked) band.classList.add("is-picked");
-    band.style.left = `${(echo.start / wave.duration) * 100}%`;
-    band.style.width = `${((echo.end - echo.start) / wave.duration) * 100}%`;
-    band.appendChild(el("span", "tag", PRESETS[echo.preset] || echo.preset));
-    band.onmousedown = (event) => { event.stopPropagation(); };
-    band.onclick = (event) => { event.stopPropagation(); state.picked = index; renderMain(); };
-    box.appendChild(band);
-  });
-
-  const cursor = el("div", "wave-cursor");
-  cursor.style.left = `${Math.min(state.at / wave.duration, 1) * 100}%`;
-  box.appendChild(cursor);
-
-  // ドラッグで区間を選ぶ
-  const timeAt = (event) => {
-    const rect = box.getBoundingClientRect();
-    const ratio = (event.clientX - rect.left) / rect.width;
-    return Math.max(0, Math.min(ratio, 1)) * wave.duration;
-  };
-  box.onmousedown = (down) => {
-    const from = timeAt(down);
-    const preview = el("div", "wave-band is-light");
-    box.appendChild(preview);
-    const draw = (move) => {
-      const to = timeAt(move);
-      preview.style.left = `${(Math.min(from, to) / wave.duration) * 100}%`;
-      preview.style.width = `${(Math.abs(to - from) / wave.duration) * 100}%`;
-    };
-    const finish = (up) => {
-      document.removeEventListener("mousemove", draw);
-      document.removeEventListener("mouseup", finish);
-      preview.remove();
-      const to = timeAt(up);
-      const start = Math.min(from, to);
-      const end = Math.max(from, to);
-      if (end - start < 0.3) {
-        seekTo(start);          // ほとんど動かなければ、そこへ飛ぶだけ
-        return;
-      }
-      state.echoes.push({ start: round2(start), end: round2(end), preset: "light" });
-      state.echoes.sort((a, b) => a.start - b.start);
-      state.picked = state.echoes.findIndex((e) => e.start === round2(start));
-      renderMain();
-    };
-    document.addEventListener("mousemove", draw);
-    document.addEventListener("mouseup", finish);
-  };
-  return box;
 }
 
 function round2(value) {
@@ -1134,7 +1394,7 @@ function regionList(duration) {
 
   if (!state.echoes.length) {
     box.appendChild(el("div", "region-empty",
-      duration ? "区間はまだありません。波形の上でドラッグして選んでください。"
+      duration ? "区間はまだありません。波形の上でドラッグして選びます。端を掴むと伸び縮みします。"
                : "区間はまだありません。"));
     return box;
   }
@@ -1142,7 +1402,7 @@ function regionList(duration) {
   state.echoes.forEach((echo, index) => {
     const row = el("div", "region");
     if (index === state.picked) row.classList.add("is-picked");
-    row.onclick = () => { state.picked = index; seekTo(echo.start); };
+    row.onclick = () => { state.picked = index; seekWave("echo", echo.start, true); };
 
     row.appendChild(el("span", `region-swatch is-${echo.preset}`));
     row.appendChild(el("span", "region-range",
@@ -1206,6 +1466,9 @@ async function saveEchoes() {
     });
     state.echoes = got.echoes;
     state.echoesSaved = JSON.stringify(got.echoes);
+    // 区間を変えたら整音は「古い」になる。取り直さないとパネルが嘘をつく
+    state.clean = await api(`/api/episodes/${state.selected.name}/clean`)
+      .catch(() => state.clean);
   } catch (err) {
     state.actionError = `区間を保存できませんでした: ${err.message}`;
   }
@@ -1328,6 +1591,7 @@ function togglePlay() {
   if (state.playing) {
     audio.pause();
   } else {
+    stopWaves();                    // 音は1つだけ鳴らす
     audio.play().catch((err) => {
       state.playing = false;
       state.actionError = `再生できませんでした: ${err.message}`;
@@ -2357,6 +2621,9 @@ async function selectEpisode(name) {
   state.actionError = "";
   audio.pause();
   audio.removeAttribute("src");
+  // 整音していない回に移ると波形パネルが出ないので、ここで止めないと
+  // 見えない場所で前の回の音が鳴り続ける
+  stopWaves();
   state.at = 0;
   state.playing = false;
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);

@@ -115,14 +115,24 @@ def test_整音していなければ波形は未実行(ep):
     assert "整音" in got["reason"]
 
 
-def test_波形はtrimmedから作る(ep):
+def test_波形はtrimmedの長さと在りかを返す(ep):
+    # 形（peaks）はブラウザが wav を読んで描くので、サーバーは在りかだけを返す（#36）
     make_wav(ep / "01_clean" / "trimmed.wav", seconds=1.0)
-    got = media.waveform("ep01", points=20)
+    got = media.waveform("ep01")
     assert got["state"] == "表示"
     assert round(got["duration"], 2) == 1.0
-    assert len(got["peaks"]) == 20
-    assert all(0.0 <= p <= 1.0 for p in got["peaks"])
-    assert max(got["peaks"]) > 0.5      # 音が入っている
+    assert got["url"] == "/api/episodes/ep01/audio/trimmed"
+    assert got["at"] > 0                # 作り直したら読み直させるための目印
+
+
+def test_波形の音はtrimmedを配る(ep):
+    make_wav(ep / "01_clean" / "trimmed.wav", seconds=1.0)
+    assert media.audio_path("ep01", "trimmed").name == "trimmed.wav"
+
+
+def test_整音前はtrimmedを配らない(ep):
+    with pytest.raises(episodes.EpisodeError, match="先に整音"):
+        media.audio_path("ep01", "trimmed")
 
 
 def test_波形はcleanではなくtrimmedを見る(ep):

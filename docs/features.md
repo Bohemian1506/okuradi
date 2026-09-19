@@ -74,12 +74,11 @@ CLI で流れが通ったので、確認と編集を GUI でできるように�
 ### 残っていること
 | Issue | ラベル | 内容 |
 |---|---|---|
-| [#36](https://github.com/Bohemian1506/okuradi/issues/36) | `enhancement` | 波形を wavesurfer.js に置き換える（今は自前の棒グラフ） |
 | [#42](https://github.com/Bohemian1506/okuradi/issues/42) | `enhancement` | 整音結果パネルの状態を見本にそろえる |
 | [#53](https://github.com/Bohemian1506/okuradi/issues/53) | `v1` | 新しい GUI だけで1回分を通し、`app.py`（Streamlit）を消す |
 
 **v1 の線は #53** — 実際の収録で最初から最後まで通せたら、最初の版とする。これは実物の音声が要るのでユーザーが行う。
-#36 と #42 は見た目の作り込みで、機能としては動くため `enhancement` にしてある。#53 より先にやっても後にしてもよい。
+#42 は見た目の作り込みで、機能としては動くため `enhancement` にしてある。#53 より先にやっても後にしてもよい。
 
 ### 後回しにしたものを、いつ考えるか
 - **途中のカット / Claude のカット候補**: v1 を何回か使って、前後のトリムだけで足りるか分かってから（決定 3・6）

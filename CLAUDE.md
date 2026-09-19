@@ -35,7 +35,7 @@ clone し直したら `git config core.hooksPath .githooks` を実行する（`.
 | 項目 | 内容 |
 |---|---|
 | 処理 | `build.py`（Python / FFmpeg / faster-whisper / `claude -p`） |
-| 新しい GUI | `web/`。FastAPI + 素の HTML/CSS/JS。工程は別プロセスで動かし、サーバー側のスレッドが見張って SSE で進み具合とログを流す（#3 で決定）。波形は wavesurfer.js に置き換える予定（#36。今は自前の棒グラフ） |
+| 新しい GUI | `web/`。FastAPI + 素の HTML/CSS/JS。工程は別プロセスで動かし、サーバー側のスレッドが見張って SSE で進み具合とログを流す（#3 で決定）。波形は wavesurfer.js（`web/static/vendor/` に置いてある。CDN からは読まない） |
 | 古い GUI | `app.py`（Streamlit）。新しい GUI で 1回分を通せるまで残し、通せたら消す（#53） |
 | 回のデータ | `ep01/` など。`config.yml` だけ git で管理し、音声と途中のファイルは管理外 |
 | 動かす場所 | WSL。仮想環境は `.venv/` |
