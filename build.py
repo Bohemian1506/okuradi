@@ -396,6 +396,9 @@ def step_transcribe(ep, cfg):
     src = ep["01_clean"] / "clean.wav"
     dst = ep["02_text"] / "transcript.json"
     data = transcribe_file(src, cfg)
+    # 聴きながら直せるように、元の文字を各行に残す（GUI が直した行に印を付ける）
+    for row in data["segments"]:
+        row["original"] = row["text"]
     dst.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"-> {dst}  ({len(data['segments'])}セグメント / {len(data['full_text'])}文字)")
 
@@ -478,6 +481,16 @@ def call_claude(prompt, schema=None, system=None, resume=None, persist=False):
     return res
 
 
+def youtube_description(meta):
+    """YouTube に貼る概要欄。概要欄のうしろに目次をつなげる。"""
+    description = (meta.get("description") or "").rstrip()
+    chapters = sorted(meta.get("chapters") or [], key=lambda c: c.get("seconds", 0))
+    if not chapters:
+        return description
+    lines = "\n".join(f"{hhmmss(c['seconds'])} {c['label']}" for c in chapters)
+    return f"{description}\n\n--- 目次 ---\n{lines}"
+
+
 def step_meta(ep, cfg):
     transcript = json.loads((ep["02_text"] / "transcript.json").read_text(encoding="utf-8"))
     dst = ep["03_meta"] / "meta.json"
@@ -506,10 +519,9 @@ def step_meta(ep, cfg):
     meta["tags"] = list(dict.fromkeys(
         meta.get("tags", []) + cfg.get("youtube", {}).get("extra_tags", [])
     ))
-    chapters = sorted(meta.get("chapters", []), key=lambda c: c["seconds"])
-    if chapters:
-        lines = "\n".join(f"{hhmmss(c['seconds'])} {c['label']}" for c in chapters)
-        meta["description"] = f"{meta['description'].rstrip()}\n\n--- 目次 ---\n{lines}"
+    # 章は概要欄に焼き込まない。別に持っておき、YouTube に貼るときにつなげる。
+    # 焼き込むと、章だけを直せなくなる（docs/components.md）。
+    meta["chapters"] = sorted(meta.get("chapters", []), key=lambda c: c["seconds"])
 
     dst.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"-> {dst}\n   タイトル: {meta['title']}")
@@ -582,7 +594,7 @@ def step_upload(ep, cfg):
         body={
             "snippet": {
                 "title": meta["title"],
-                "description": meta["description"],
+                "description": youtube_description(meta),
                 "tags": meta["tags"],
                 "categoryId": yt.get("category_id", "28"),
             },
