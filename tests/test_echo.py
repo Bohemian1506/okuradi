@@ -75,3 +75,31 @@ def test_プリセットは2つとも使える():
     graph = build.echo_graph([(5.0, 9.0, "light"), (20.0, 24.0, "hall")], 60)
     assert build.ECHO_PRESETS["light"] in graph
     assert build.ECHO_PRESETS["hall"] in graph
+
+
+# ---------------------------------------------------------------- 飛ばした区間を黙って消さない
+
+def test_飛ばした区間はお知らせを出す(capsys):
+    build.normalize_echoes(echoes((5, 9, "light"), (9.1, 12, "hall")), 60)
+    out = capsys.readouterr().out
+    assert "0:09" in out and "近すぎる" in out
+
+
+def test_短すぎる区間もお知らせを出す(capsys):
+    build.normalize_echoes(echoes((5, 5.1, "light")), 60)
+    assert "短すぎる" in capsys.readouterr().out
+
+
+def test_知らないプリセットもお知らせを出す(capsys):
+    build.normalize_echoes(echoes((5, 9, "ふしぎ")), 60)
+    assert "知らないプリセット" in capsys.readouterr().out
+
+
+def test_なしは黙っていてよい(capsys):
+    build.normalize_echoes(echoes((5, 9, "none")), 60)
+    assert capsys.readouterr().out == ""
+
+
+def test_比べるときはお知らせを出さない(capsys):
+    build.normalize_echoes(echoes((5, 9, "light"), (9.1, 12, "hall")), 60, report=False)
+    assert capsys.readouterr().out == ""

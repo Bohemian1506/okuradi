@@ -176,14 +176,67 @@ def clean_result(name):
     # やり直したら「確認済み」は外れる（印より clean.wav が新しければ未確認）
     confirmed = mark.exists() and mark.stat().st_mtime >= clean.stat().st_mtime
 
+    stale = _why_stale(ep_dir, clean, detail)
+    made = detail.get("echoes")
     return {
-        "state": "完了",
-        "confirmed": confirmed,
+        "state": "古い" if stale else "完了",
+        "stale_reason": stale,
+        "confirmed": confirmed and not stale,
         "duration": detail.get("duration"),
         "removed": detail.get("removed"),
         "target_lufs": detail.get("target_lufs"),
-        "echoes": len(detail.get("echoes") or []),
+        "echoes": len(made) if isinstance(made, list) else 0,
     }
+
+
+def _same_echoes(made, now):
+    """作ったときのエコー設定と、いまの設定が同じか。"""
+    def key(rows):
+        return [(round(float(r.get("start", 0)), 2), round(float(r.get("end", 0)), 2),
+                 r.get("preset") or "none")
+                for r in rows if (r.get("preset") or "none") != "none"]
+    try:
+        return key(made or []) == key(now or [])
+    except (TypeError, AttributeError, ValueError):
+        return False          # 形が壊れていたら、作り直したほうが安全
+
+
+def _why_stale(ep_dir, clean, detail):
+    """作り直しが要るなら、その理由を返す。要らなければ None。
+
+    docs/components.md 部品15 の「古い（音源やエコーを変えた）」。
+    """
+    source = sources_newest(ep_dir)
+    if source is not None and source > clean.stat().st_mtime:
+        return "音源を差し替えました"
+
+    if not detail:
+        return None           # 作ったときの記録が無い。判断できないので何も言わない
+
+    try:
+        now = episodes.read_config(ep_dir).get("echoes") or []
+    except episodes.EpisodeError:
+        return None
+    # clean.json には「実際にかけた区間」だけが入る。config.yml には飛ばされた
+    # 区間も残るので、比べる前に同じ整え方を通す
+    total = detail.get("trimmed_duration") or detail.get("duration") or 0
+    try:
+        applied = build.normalize_echoes(now, total, report=False)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    wanted = [{"start": s, "end": e, "preset": p} for s, e, p in applied]
+    if not _same_echoes(detail.get("echoes"), wanted):
+        return "エコー区間を変えました"
+    return None
+
+
+def sources_newest(ep_dir):
+    """00_raw の中でいちばん新しい更新日時。音源が無ければ None。"""
+    raw = ep_dir / "00_raw"
+    if not raw.is_dir():
+        return None
+    times = [f.stat().st_mtime for f in raw.iterdir() if f.is_file()]
+    return max(times) if times else None
 
 
 def confirm_clean(name):

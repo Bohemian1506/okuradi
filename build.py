@@ -259,29 +259,45 @@ ECHO_PRESET_LABELS = {"light": "軽め", "hall": "響く"}
 ECHO_MIN = 0.3
 
 
-def normalize_echoes(echoes, total):
-    """エコー区間を整える。時刻は trimmed.wav（前後のトリムまで済ませた音）が基準。"""
+def normalize_echoes(echoes, total, report=True):
+    """エコー区間を整える。時刻は trimmed.wav（前後のトリムまで済ませた音）が基準。
+
+    report=False にすると、飛ばした区間のお知らせを出さない（比べるときに使う）。
+    """
     rows = []
     for echo in echoes or []:
         preset = (echo.get("preset") or "").strip()
-        if preset not in ECHO_PRESETS:
-            continue                      # 「なし」や知らない名前は、かけない
         start = max(0.0, float(echo.get("start", 0)))
         end = min(float(echo.get("end", 0)), total)
+        if preset not in ECHO_PRESETS:
+            if report and preset and preset != "none":
+                print(f"(エコー区間 {hhmmss(start)}–{hhmmss(end)} の"
+                      f"「{preset}」は知らないプリセットなのでかけません)", flush=True)
+            continue                      # 「なし」は、かけないのが正しい
         if end - start < ECHO_MIN:
+            if report:
+                print(f"(エコー区間 {hhmmss(start)}–{hhmmss(end)} は短すぎる"
+                      f"（{ECHO_MIN}秒未満）のでかけません)", flush=True)
             continue
         rows.append((start, end, preset))
 
     rows.sort()
-    merged = []
+    merged, skipped = [], []
     for start, end, preset in rows:
         if merged and start - merged[-1][1] < ECHO_MIN:
-            continue                      # 近すぎる区間は、繋ぎ目が作れないので飛ばす
+            # 繋ぎ目を作るだけのすき間が無い。飛ばすが、黙って消さない
+            skipped.append((start, end))
+            continue
         if start < ECHO_MIN:
             start = 0.0                   # 先頭すぐなら頭から
         if total - end < ECHO_MIN:
             end = total                   # 末尾すぐなら最後まで
         merged.append((start, end, preset))
+
+    if report:
+        for start, end in skipped:
+            print(f"(エコー区間 {hhmmss(start)}–{hhmmss(end)} は、前の区間と近すぎる"
+                  f"（{ECHO_MIN}秒未満）のでかけません)", flush=True)
     return merged
 
 

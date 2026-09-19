@@ -689,6 +689,27 @@ select.field { font-weight: 500; }
 }
 .badge-done .mark { width: 8px; height: 8px; border-radius: 50%; background: var(--done); }
 
+.badge-stale {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 999px; white-space: nowrap;
+  font-size: 12px; font-weight: 700;
+  color: var(--stale-text); background: #fdf1e4;
+  border: 1.5px solid oklch(0.78 0.15 85 / .6);
+}
+.badge-stale .mark { width: 8px; height: 8px; border-radius: 50%; background: var(--stale); }
+
+.result-stale {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 14px; border-radius: 12px;
+  border: 1.5px solid oklch(0.78 0.15 85 / .6); background: #fdf1e4;
+  font-size: 12px; line-height: 1.7;
+}
+.result-stale .mark {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  background: var(--stale); color: var(--ink);
+  font: 700 10px/14px sans-serif; text-align: center;
+}
+
 /* ---------------------------------------------------------------- 部品4 工程実行ボタン */
 
 .runs { display: flex; flex-direction: column; gap: 20px; max-width: 760px; }

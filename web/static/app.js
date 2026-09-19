@@ -263,34 +263,43 @@ function cleanCard() {
   const card = el("div", "panel-card");
   const result = state.clean || { state: "未実行" };
 
-  if (result.state !== "完了") {
+  if (result.state === "未実行") {
     card.appendChild(el("div", "result-empty",
-      "まだ整音していません。右上の「整音を実行」を押すと作られます。"));
+      "整音を実行すると、ここで聴いて確かめられます"));
     return card;
   }
+  const stale = result.state === "古い";
 
   const box = el("div", "result");
   const top = el("div", "result-top");
 
-  const badge = el("span", "badge-done");
-  badge.append(el("span", "mark"),
-               document.createTextNode(result.confirmed ? "完了 · 確認済み" : "完了 · 未確認"));
+  const badge = el("span", stale ? "badge-stale" : "badge-done");
+  badge.append(el("span", "mark"), document.createTextNode(
+    stale ? "古い" : result.confirmed ? "完了 · 確認済み" : "完了 · 未確認"));
 
   const about = ["clean.wav", clock(result.duration)];
   if (result.removed) about.push(`前後で ${result.removed.toFixed(1)}秒を削除`);
   if (result.target_lufs !== undefined && result.target_lufs !== null) {
-    about.push(`${result.target_lufs} LUFS`);
+    about.push(`目標 ${result.target_lufs} LUFS`);   // 実測ではない
   }
   if (result.echoes) about.push(`エコー${result.echoes}区間`);
 
-  const confirm = el("button", result.confirmed ? "btn-plain" : "btn-primary",
-                     result.confirmed ? "確認済み" : "確認した");
-  confirm.disabled = result.confirmed;
-  confirm.onclick = () => confirmClean();
+  const done = el("button", result.confirmed ? "btn-plain" : "btn-primary",
+                  result.confirmed ? "確認済み" : "確認した");
+  done.disabled = result.confirmed || stale;
+  done.title = stale ? "作り直してから確認してください" : "";
+  done.onclick = () => confirmClean();
 
   top.append(badge, el("span", "result-about", about.join(" · ")),
-             el("span", "spacer"), confirm);
+             el("span", "spacer"), done);
   box.appendChild(top);
+
+  if (stale) {
+    const why = el("div", "result-stale");
+    why.append(el("span", "mark", "!"), el("span", null,
+      `${result.stale_reason}。整音をやり直すまで、次の工程には前の結果が使われます。`));
+    box.appendChild(why);
+  }
 
   // 整音後の波形は、いまは整音前のものを使い回す（形はほぼ同じ）
   const wave = el("div", "result-wave");
@@ -1186,6 +1195,15 @@ function renderStatus() {
 let ticker = null;
 
 async function runStep(step) {
+  // エコー区間が未保存のまま整音すると、前の設定の音ができてしまう
+  if (step === "clean" && echoDirty()) {
+    const ok = confirm("エコー区間が未保存です。保存してから整音しますか？\n"
+      + "「キャンセル」を選ぶと、保存されている前の区間で整音します。");
+    if (ok) {
+      await saveEchoes();
+      if (echoDirty()) return;        // 保存に失敗したら、実行しない
+    }
+  }
   try {
     state.job = await api(`/api/episodes/${state.selected.name}/steps/${step}/run`, { method: "POST" });
   } catch (err) {
