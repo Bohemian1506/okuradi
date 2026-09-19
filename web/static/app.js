@@ -68,7 +68,13 @@ const state = {
   editing: -1,       // 書き換え中の行
   draft: "",         // 書き換え中の文字
   showOrig: {},      // 元の文字を開いている行
+  meta: null,        // メタデータ（保存されているもの）
+  draftMeta: null,   // 画面で直しているメタデータ
+  metaSaved: "",
+  newTag: "",
 };
+
+const TITLE_LIMIT = 60;   // YouTube は60文字を超えると途中で切れる
 
 const PRESETS = { none: "なし", light: "軽め", hall: "響く" };
 
@@ -274,7 +280,7 @@ function screenFinishing() {
 
   box.appendChild(section(2, "タイトル・概要欄・章・タグを直す",
     "AIが作った案を直す。直した文字起こしから作り直すこともできます。",
-    placeholder("メタデータ", "この節は #7 の続きで入れます"), stepOf("meta")));
+    metaCard(), stepOf("meta"), metaSave()));
 
   box.appendChild(section(3, "動画を確かめる",
     "背景画像と整音後の音声で mp4 を作る。これを YouTube に上げます。",
@@ -284,6 +290,218 @@ function screenFinishing() {
     "動画をアップロードしたら、順に貼るだけ。章は概要欄の末尾に付きます。",
     placeholder("コピー", "この節は #7 の続きで入れます")));
   return box;
+}
+
+// ---------------------------------------------------------------- 部品16・17 メタデータと保留チェック
+
+function metaDirty() {
+  return JSON.stringify(state.draftMeta) !== state.metaSaved;
+}
+
+function metaSave() {
+  const box = el("div", "segments-actions");
+  if (!state.draftMeta) return box;
+  const dirty = metaDirty();
+  const badge = el("span", `save-badge ${dirty ? "is-dirty" : "is-saved"}`);
+  badge.append(el("span", "mark"),
+               document.createTextNode(dirty ? "未保存の変更あり" : "保存済み"));
+  const save = el("button", `btn-save ${dirty ? "is-dirty" : "is-saved"}`,
+                  dirty ? "保存する" : "保存");
+  save.disabled = !dirty;
+  save.onclick = () => saveMeta();
+  box.append(badge, save);
+  return box;
+}
+
+function metaCard() {
+  const box = el("div", "section");
+  const data = state.meta || { state: "未実行" };
+  const running = state.job && state.job.state === "処理中"
+    && state.job.episode === state.selected.name && state.job.step === "meta";
+
+  if (running) {
+    box.appendChild(el("div", "lines-empty", "タイトル・概要欄・章・タグを作っています…"));
+    return box;
+  }
+  if (data.state !== "表示" || !state.draftMeta) {
+    box.appendChild(el("div", "lines-empty",
+      "まだ作っていません。右上の「メタデータ生成を実行」を押すと作られます。"));
+    return box;
+  }
+
+  const draft = state.draftMeta;
+  const issues = pendingIssues(draft);
+  if (issues.length) box.appendChild(issuesBox(issues));
+
+  const card = el("div", "meta-card");
+
+  // タイトル
+  const titleField = el("div", "meta-field is-wide");
+  const head = el("div", "meta-head");
+  const over = draft.title.length > TITLE_LIMIT;
+  head.append(el("div", "meta-label", "タイトル"),
+              el("span", `meta-count ${over ? "is-over" : ""}`,
+                 `${draft.title.length} / ${TITLE_LIMIT}`));
+  const title = el("input", `meta-input ${over ? "is-over" : ""}`);
+  title.value = draft.title;
+  title.oninput = () => { draft.title = title.value; renderMain(); };
+  titleField.append(head, title);
+  if (over) {
+    titleField.appendChild(el("div", "meta-warn",
+      "60文字を超えています。YouTubeでは途中で切れて表示されます。"));
+  }
+  card.appendChild(titleField);
+
+  // 概要欄
+  const descField = el("div", "meta-field");
+  const desc = el("textarea", "meta-text");
+  desc.rows = 9;
+  desc.value = draft.description;
+  desc.oninput = () => { draft.description = desc.value; renderMain(); };
+  descField.append(el("div", "meta-label", "概要欄"), desc,
+                   el("div", "meta-note", "章はコピー時に概要欄の末尾へ自動で付きます"));
+  card.appendChild(descField);
+
+  // 章とタグ
+  const right = el("div", "meta-field");
+  right.style.gap = "14px";
+  right.append(chaptersField(draft), tagsField(draft));
+  card.appendChild(right);
+
+  box.appendChild(card);
+  return box;
+}
+
+function issuesBox(issues) {
+  const box = el("div", "issues");
+  const body = el("div", "body");
+  body.appendChild(el("div", "lead", "動画化に進む前に直してください"));
+  for (const one of issues) {
+    const row = el("div", "one");
+    row.append(el("span", "dot", "•"), el("span", null, one));
+    body.appendChild(row);
+  }
+  box.append(el("span", "mark", "!"), body);
+  return box;
+}
+
+// サーバーと同じ決まりで見る（保存する前でも出せるように、画面でも数える）
+function pendingIssues(meta) {
+  const issues = [];
+  if (!meta.title.trim()) issues.push("タイトルが空です");
+  else if (meta.title.includes("（保留中）")) issues.push("タイトルが（保留中）のままです");
+  if (!meta.description.trim()) issues.push("概要欄が空です");
+  else if (meta.description.includes("（保留中）")) issues.push("概要欄が（保留中）のままです");
+  if (!meta.chapters.length) issues.push("章がありません。1つ以上必要です");
+  else {
+    const blank = meta.chapters.find((c) => !c.label.trim());
+    if (blank) issues.push(`${clock(blank.seconds)} の章に見出しがありません`);
+  }
+  return issues;
+}
+
+function chaptersField(draft) {
+  const field = el("div", "meta-field");
+  field.appendChild(el("div", "meta-label", "章"));
+
+  const list = el("div", "chapters");
+  if (!draft.chapters.length) {
+    list.appendChild(el("div", "chapters-empty", "章がありません。1つ以上必要です。"));
+  }
+  draft.chapters.forEach((chapter, index) => {
+    const row = el("div", "chapter");
+    const at = el("button", "chapter-at", clock(chapter.seconds));
+    at.title = "この位置から再生";
+    at.onclick = () => listenTo("clean", chapter.seconds);
+
+    const label = el("input");
+    label.value = chapter.label;
+    label.placeholder = "見出し";
+    label.oninput = () => { chapter.label = label.value; renderMain(); };
+
+    const remove = el("button", "btn-x");
+    remove.innerHTML = icon(SVG.trash, 13);
+    remove.title = "この章を削除";
+    remove.setAttribute("aria-label", "この章を削除");
+    remove.onclick = () => { draft.chapters.splice(index, 1); renderMain(); };
+
+    row.append(at, label, remove);
+    list.appendChild(row);
+  });
+  field.appendChild(list);
+
+  const add = el("button", "btn-add-small");
+  add.innerHTML = icon(SVG.plus, 11, 2) + "今の再生位置に章を追加";
+  add.onclick = () => {
+    const at = state.listening === "clean" ? Math.round(state.at) : 0;
+    if (draft.chapters.some((c) => Math.abs(c.seconds - at) < 0.5)) return;
+    draft.chapters.push({ seconds: at, label: "" });
+    draft.chapters.sort((a, b) => a.seconds - b.seconds);
+    renderMain();
+  };
+  field.appendChild(add);
+  return field;
+}
+
+function tagsField(draft) {
+  const field = el("div", "meta-field");
+  field.appendChild(el("div", "meta-label", "タグ"));
+
+  const box = el("div", "tags");
+  draft.tags.forEach((name, index) => {
+    const chip = el("span", "tag", name);
+    const x = el("button");
+    x.innerHTML = `<svg width="9" height="9" viewBox="0 0 14 14" fill="none"
+      stroke="currentColor" stroke-width="2.2"><path d="M2 2l10 10M12 2L2 12"/></svg>`;
+    x.title = "タグを削除";
+    x.setAttribute("aria-label", "タグを削除");
+    x.onclick = () => { draft.tags.splice(index, 1); renderMain(); };
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+
+  const input = el("input");
+  input.placeholder = "追加して Enter";
+  input.value = state.newTag;
+  input.oninput = () => { state.newTag = input.value; };
+  input.onkeydown = (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const name = input.value.trim();
+    if (name && !draft.tags.includes(name)) draft.tags.push(name);
+    state.newTag = "";
+    renderMain();
+  };
+  box.appendChild(input);
+  field.appendChild(box);
+  return field;
+}
+
+async function saveMeta() {
+  try {
+    state.meta = await api(`/api/episodes/${state.selected.name}/meta`, {
+      method: "PUT", body: JSON.stringify(state.draftMeta),
+    });
+    setDraftMeta(state.meta);
+    await reload({ keep: state.selected.name, keepSelected: true });
+  } catch (err) {
+    state.sourceError = `メタデータを保存できませんでした: ${err.message}`;
+  }
+  renderMain();
+}
+
+function setDraftMeta(meta) {
+  state.draftMeta = meta && meta.state === "表示" ? {
+    title: meta.title, description: meta.description,
+    chapters: meta.chapters.map((c) => ({ ...c })), tags: [...meta.tags],
+  } : null;
+  state.metaSaved = JSON.stringify(state.draftMeta);
+  state.newTag = "";
+}
+
+async function loadMeta(name) {
+  state.meta = await api(`/api/episodes/${name}/meta`).catch(() => null);
+  setDraftMeta(state.meta);
 }
 
 // ---------------------------------------------------------------- 部品12 文字起こし（確定版）
@@ -1476,6 +1694,9 @@ async function finishJob() {
     if (state.job.step === "transcribe") {
       await loadTranscript(name);
     }
+    if (state.job.step === "meta") {
+      await loadMeta(name);
+    }
   }
   await reload({ keep: state.selected && state.selected.name, keepSelected: true });
   renderStatus();
@@ -1594,6 +1815,7 @@ async function selectEpisode(name) {
   state.listening = "scan";
   state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
   await loadTranscript(name);
+  await loadMeta(name);
   [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),

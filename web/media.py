@@ -314,3 +314,114 @@ def save_transcript(name, texts):
     data["full_text"] = "".join(r.get("text", "") for r in rows)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return read_transcript(name)
+
+
+# ---------------------------------------------------------------- メタデータ
+
+# Claude がテーマと中身が合わないと判断したときに返す印。
+# これが残ったまま動画化まで進んだことがあるので、見つけて止める（Issue #7）。
+PENDING = "（保留中）"
+
+TITLE_LIMIT = 60          # YouTube は60文字を超えると途中で切れて表示される
+
+
+def meta_path(ep_dir):
+    return ep_dir / "03_meta" / "meta.json"
+
+
+def read_meta(name):
+    """タイトル・概要欄・章・タグ。"""
+    ep_dir = episodes.resolve(name)
+    path = meta_path(ep_dir)
+    if not path.exists():
+        return {"state": "未実行", "title": "", "description": "",
+                "chapters": [], "tags": [], "issues": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise episodes.EpisodeError(
+            f"meta.json が読めません: {str(exc).splitlines()[0]}"
+        ) from exc
+    return meta_view(data)
+
+
+def meta_view(data):
+    chapters = []
+    for row in data.get("chapters") or []:
+        if not isinstance(row, dict):
+            continue
+        chapters.append({"seconds": row.get("seconds", 0),
+                         "label": (row.get("label") or "").strip()})
+    chapters.sort(key=lambda c: c["seconds"])
+    view = {
+        "state": "表示",
+        "title": (data.get("title") or "").strip(),
+        "description": (data.get("description") or "").rstrip(),
+        "chapters": chapters,
+        "tags": [t for t in (data.get("tags") or []) if isinstance(t, str)],
+    }
+    view["issues"] = pending_issues(view)
+    return view
+
+
+def pending_issues(meta):
+    """動画化に進む前に直してほしいこと（部品17 保留チェック）。"""
+    issues = []
+    title = meta.get("title") or ""
+    description = meta.get("description") or ""
+    if not title.strip():
+        issues.append("タイトルが空です")
+    elif PENDING in title:
+        issues.append(f"タイトルが{PENDING}のままです")
+    if not description.strip():
+        issues.append("概要欄が空です")
+    elif PENDING in description:
+        issues.append(f"概要欄が{PENDING}のままです")
+    if not meta.get("chapters"):
+        issues.append("章がありません。1つ以上必要です")
+    else:
+        for chapter in meta["chapters"]:
+            if not (chapter.get("label") or "").strip():
+                issues.append(f"{build.hhmmss(chapter.get('seconds', 0))} の章に見出しがありません")
+                break
+    return issues
+
+
+def save_meta(name, title, description, chapters, tags):
+    ep_dir = episodes.resolve(name)
+    path = meta_path(ep_dir)
+    if not path.exists():
+        raise episodes.EpisodeError("まだメタデータを作っていません")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise episodes.EpisodeError(
+            f"meta.json が読めません: {str(exc).splitlines()[0]}"
+        ) from exc
+
+    data["title"] = (title or "").strip()
+    data["description"] = (description or "").rstrip()
+    data["chapters"] = sorted(
+        [{"seconds": round(float(c.get("seconds", 0)), 2),
+          "label": (c.get("label") or "").strip()} for c in chapters or []],
+        key=lambda c: c["seconds"],
+    )
+    # 同じタグは1つにまとめる（並びは保つ）
+    data["tags"] = list(dict.fromkeys(
+        t.strip() for t in (tags or []) if isinstance(t, str) and t.strip()
+    ))
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return meta_view(data)
+
+
+def copy_texts(name):
+    """YouTube に貼るためのひとそろい。章は概要欄の末尾に付ける。"""
+    meta = read_meta(name)
+    if meta["state"] != "表示":
+        raise episodes.EpisodeError("まだメタデータを作っていません")
+    return {
+        "issues": meta["issues"],
+        "title": meta["title"],
+        "description": build.youtube_description(meta),
+        "tags": ", ".join(meta["tags"]),
+    }
