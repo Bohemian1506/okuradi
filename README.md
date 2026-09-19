@@ -34,6 +34,7 @@ okuradi/
 │   ├── episodes.py       # 回の一覧・作成と、工程の状態
 │   ├── runner.py         # 工程の実行・中止・ログの配信
 │   ├── sources.py        # 音源の追加と、アプリ全体の設定
+│   ├── media.py          # 文字起こしを読む・音声を画面に配る
 │   └── static/           # index.html / style.css / app.js
 ├── settings.yml          # OBSの録画フォルダなど（git管理外。GUIの画面から作れる）
 ├── tests/

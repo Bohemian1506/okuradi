@@ -25,6 +25,8 @@ const SVG = {
   redo: '<path d="M11.5 7A4.5 4.5 0 1 1 9.8 3.5M9 1.5l1.5 2L8.3 4.7" stroke-linecap="round"/>',
   check: '<path d="M1.5 5l2.5 2.5 4.5-5"/>',
   upload: '<path d="M12 16V4M7 9l5-5 5 5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
+  playBig: '<path d="M4 2l10 6-10 6z"/>',
+  pause: '<path d="M3 2h4v12H3zM9 2h4v12H9z"/>',
 };
 
 const ACCEPTED_TEXT = "wav / m4a / mkv / mp4 / mov / flv";
@@ -50,7 +52,13 @@ const state = {
   obs: null,         // OBS のフォルダの様子
   sourceBusy: false,
   sourceError: "",
+  scan: null,        // 下見の文字起こし
+  at: 0,             // 再生位置（秒）
+  playing: false,
 };
+
+// 音は1つだけ鳴らす
+const audio = new Audio();
 
 const $ = (id) => document.getElementById(id);
 
@@ -193,28 +201,163 @@ function renderMain() {
     main.appendChild(segmentsCard());
     return;
   }
-  if (state.tab === "2") main.appendChild(sourceSection());
-  main.appendChild(runsCard());
+  if (state.tab === "2") {
+    main.appendChild(screenRecording());
+  } else {
+    main.appendChild(runsCard());
+  }
 }
 
 // ---------------------------------------------------------------- 部品9・10 音源
 
-function section(no, title, note, body) {
+function section(no, title, note, body, step) {
   const box = el("div", "section");
   const head = el("div", "section-head");
-  const titles = el("div");
+  const titles = el("div", "section-titles");
   titles.append(el("div", "section-title", title), el("div", "section-note", note));
   head.append(el("div", "section-no", String(no)), titles);
+  if (step) head.appendChild(runRow(step));
   box.append(head, body);
   return box;
 }
 
-function sourceSection() {
-  const has = state.source && state.source.state === "使える";
-  return section(1, "音源を入れる",
-    "収録ファイルを1本置く。OBSの録画なら、工程を動かすときに音声を取り出します。",
-    has ? sourceCard() : sourceAdd());
+function stepOf(key) {
+  return state.selected.steps.find((s) => s.key === key);
 }
+
+function screenRecording() {
+  const box = el("div", "sections");
+  const has = state.source && state.source.state === "使える";
+
+  box.appendChild(section(1, "音源を入れる",
+    "収録ファイルを1本置く。OBSの録画なら、工程を動かすときに音声を取り出します。",
+    has ? sourceCard() : sourceAdd()));
+
+  box.appendChild(section(2, "下見を読む",
+    "ざっくりの文字起こし。行を押すとそこから再生。読むだけで直せません（カット点を探す用）。",
+    scanCard(), stepOf("scan")));
+
+  box.appendChild(section(3, "エコー区間を決める",
+    "波形をドラッグして区間を選び、プリセットを付ける。タイトルコールなど一部だけに。",
+    placeholder("波形とエコー区間", "この節は #6 の続きで入れます")));
+
+  box.appendChild(section(4, "整音して聴く",
+    "前後の無音を切り、音量をそろえる。聴いて確かめる1つ目の確認ポイント。",
+    placeholder("整音結果", "聴いて確かめるところは #6 の続きで入れます"),
+    stepOf("clean")));
+  return box;
+}
+
+// ---------------------------------------------------------------- 部品11・12 下見
+
+function scanCard() {
+  const card = el("div", "panel-card");
+  const scan = state.scan || { state: "未実行", segments: [] };
+  const running = state.job && state.job.state === "処理中"
+    && state.job.episode === state.selected.name && state.job.step === "scan";
+
+  card.appendChild(player(scan));
+
+  if (running) {
+    card.appendChild(el("div", "lines-empty", "下見の文字起こしを作っています…"));
+    return card;
+  }
+  if (scan.state !== "表示" || !scan.segments.length) {
+    card.appendChild(el("div", "lines-empty",
+      "まだ下見がありません。右上の「下見を実行」を押すと作られます。"));
+    return card;
+  }
+
+  const list = el("div", "lines");
+  scan.segments.forEach((line) => {
+    const row = el("button", "line");
+    if (state.at >= line.start && state.at < line.end) row.classList.add("is-now");
+    row.append(el("span", "at", clock(line.start)), el("span", "say", line.text));
+    row.onclick = () => seekTo(line.start);
+    list.appendChild(row);
+  });
+  card.appendChild(list);
+  return card;
+}
+
+function player(scan) {
+  const box = el("div", "player");
+  const row = el("div", "player-row");
+  const total = (scan && scan.duration) || audio.duration || 0;
+  const ready = state.source && state.source.state === "使える";
+
+  const play = el("button", "btn-play");
+  play.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">${
+    state.playing ? SVG.pause : SVG.playBig}</svg>`;
+  play.title = state.playing ? "停止" : "再生";
+  play.setAttribute("aria-label", "再生/停止");
+  play.disabled = !ready;
+  play.onclick = () => togglePlay();
+
+  const seek = el("div", "seek");
+  const track = el("div", "seek-track");
+  const ratio = total ? Math.min(state.at / total, 1) : 0;
+  const fill = el("div", "seek-fill");
+  fill.style.width = `${ratio * 100}%`;
+  const knob = el("div", "seek-knob");
+  knob.style.left = `${ratio * 100}%`;
+  track.append(fill, knob);
+  seek.appendChild(track);
+  seek.onclick = (event) => {
+    if (!total) return;
+    const box = track.getBoundingClientRect();
+    seekTo(Math.max(0, Math.min((event.clientX - box.left) / box.width, 1)) * total);
+  };
+
+  const time = el("span", "player-time");
+  time.append(document.createTextNode(clock(state.at)),
+              el("span", "total", ` / ${clock(total)}`));
+
+  row.append(play, seek, time);
+  box.appendChild(row);
+  return box;
+}
+
+function audioUrl() {
+  return `/api/episodes/${state.selected.name}/audio/scan`;
+}
+
+function ensureAudio() {
+  const want = audioUrl();
+  if (!audio.src.endsWith(want)) {
+    audio.src = want;
+    state.at = 0;
+  }
+}
+
+function togglePlay() {
+  ensureAudio();
+  if (state.playing) {
+    audio.pause();
+  } else {
+    audio.play().catch((err) => {
+      state.playing = false;
+      state.sourceError = `再生できませんでした: ${err.message}`;
+      renderMain();
+    });
+  }
+}
+
+function seekTo(seconds) {
+  ensureAudio();
+  audio.currentTime = seconds;
+  state.at = seconds;
+  if (!state.playing) audio.play().catch(() => {});
+  renderMain();
+}
+
+audio.addEventListener("play", () => { state.playing = true; renderMain(); });
+audio.addEventListener("pause", () => { state.playing = false; renderMain(); });
+audio.addEventListener("ended", () => { state.playing = false; state.at = 0; renderMain(); });
+audio.addEventListener("timeupdate", () => {
+  state.at = audio.currentTime;
+  if (state.tab === "2") renderMain();
+});
 
 function sourceCard() {
   const info = state.source;
@@ -789,6 +932,9 @@ function closeStream() {
 
 async function finishJob() {
   // 工程が終わると成果物が増えるので、状態を読み直す
+  if (state.job && state.job.step === "scan" && state.selected) {
+    state.scan = await api(`/api/episodes/${state.selected.name}/scan`).catch(() => null);
+  }
   await reload({ keep: state.selected && state.selected.name, keepSelected: true });
   renderStatus();
   if (state.job && state.job.state === "完了") {
@@ -893,6 +1039,11 @@ async function selectEpisode(name) {
   state.selected = await api(`/api/episodes/${name}`);
   resetRows(state.selected.segments);
   state.sourceError = "";
+  audio.pause();
+  audio.removeAttribute("src");
+  state.at = 0;
+  state.playing = false;
+  state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
   [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),
