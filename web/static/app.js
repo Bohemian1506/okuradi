@@ -72,6 +72,11 @@ const state = {
   draftMeta: null,   // 画面で直しているメタデータ
   metaSaved: "",
   newTag: "",
+  video: null,       // 動画の様子
+  copyText: null,    // コピー用のひとそろい（保存済みから）
+  copyDraft: null,   // コピー用のひとそろい（保存前の直しから）
+  copyBusy: false,
+  copied: "",        // いまコピーしたもの（数秒だけ出す）
 };
 
 const TITLE_LIMIT = 60;   // YouTube は60文字を超えると途中で切れる
@@ -214,6 +219,9 @@ function renderMain() {
   const main = $("main");
   main.innerHTML = "";
 
+  // 失敗はどの画面でも見えるようにする（CLAUDE.md「静かに失敗させない」）
+  if (state.actionError) main.appendChild(errorBanner());
+
   if (!state.selected) {
     main.appendChild(placeholder("回がありません", "左の「新しい回」から作ってください"));
     return;
@@ -284,12 +292,147 @@ function screenFinishing() {
 
   box.appendChild(section(3, "動画を確かめる",
     "背景画像と整音後の音声で mp4 を作る。これを YouTube に上げます。",
-    placeholder("動画プレビュー", "この節は #7 の続きで入れます"), stepOf("video")));
+    videoCard(), stepOf("video")));
 
   box.appendChild(section(4, "コピーして YouTube に貼る",
     "動画をアップロードしたら、順に貼るだけ。章は概要欄の末尾に付きます。",
-    placeholder("コピー", "この節は #7 の続きで入れます")));
+    copyCard(), null, studioLink()));
   return box;
+}
+
+// ---------------------------------------------------------------- 部品19 動画プレビュー
+
+function videoCard() {
+  const data = state.video || { state: "未実行" };
+  const running = state.job && state.job.state === "処理中"
+    && state.job.episode === state.selected.name && state.job.step === "video";
+
+  if (running) {
+    const box = el("div", "video-panel");
+    box.appendChild(el("div", "lines-empty", "動画を作っています…"));
+    return box;
+  }
+  if (data.state !== "完了") {
+    const box = el("div", "video-panel");
+    box.appendChild(el("div", "lines-empty",
+      "まだ動画がありません。右上の「動画を実行」を押すと作られます。"));
+    return box;
+  }
+
+  const box = el("div", "video-panel");
+  const top = el("div", "video-top");
+  const badge = el("span", "badge-done");
+  badge.append(el("span", "mark"), document.createTextNode("完了"));
+  const about = [data.name, data.duration, data.resolution, data.size]
+    .filter(Boolean).join(" · ");
+
+  const open = el("button", "btn-tiny is-quiet");
+  open.innerHTML = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none"
+    stroke="currentColor" stroke-width="1.7"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5
+    1.5h4.5A1.5 1.5 0 0 1 14 6v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12z"/></svg>`
+    + "フォルダを開く";
+  open.onclick = () => openVideoFolder();
+
+  top.append(badge, el("span", "video-about", about), el("span", "spacer"), open);
+  box.appendChild(top);
+
+  const body = el("div", "video-body");
+  const player = el("video");
+  player.controls = true;
+  // 音声と動画が同時に鳴らないようにする
+  player.onplay = () => audio.pause();
+  player.preload = "metadata";
+  player.src = `/api/episodes/${state.selected.name}/video/file`;
+  body.appendChild(player);
+
+  const marks = el("div", "video-marks");
+  marks.appendChild(el("div", "lead", "章マーカー"));
+  const chapters = (state.draftMeta && state.draftMeta.chapters) || [];
+  if (!chapters.length) {
+    marks.appendChild(el("div", "lead", "章がありません（②で足せます）"));
+  }
+  for (const chapter of chapters) {
+    const row = el("button", "video-mark");
+    row.append(el("span", "at", clock(chapter.seconds)),
+               el("span", "what", chapter.label || "（見出しなし）"));
+    row.title = "この位置から見る";
+    row.onclick = () => { player.currentTime = chapter.seconds; player.play(); };
+    marks.appendChild(row);
+  }
+  body.appendChild(marks);
+  box.appendChild(body);
+  return box;
+}
+
+async function openVideoFolder() {
+  try {
+    await api(`/api/episodes/${state.selected.name}/video/folder`, { method: "POST" });
+  } catch (err) {
+    state.actionError = err.message;
+    renderMain();
+  }
+}
+
+// ---------------------------------------------------------------- 部品18 コピーボタン
+
+function studioLink() {
+  const link = el("a", "meta-note", "YouTube Studio を開く ↗");
+  link.href = "https://studio.youtube.com/";
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.style.whiteSpace = "nowrap";
+  return link;
+}
+
+function copyCard() {
+  const box = el("div", "copy-panel");
+  const data = state.copyDraft || state.copyText;
+  if (!data) {
+    box.appendChild(el("div", "lines-empty",
+      "まだメタデータがありません。②で作ると、ここからコピーできます。"));
+    return box;
+  }
+
+  const issues = data.issues;
+  if (issues.length) {
+    const warn = el("div", "copy-warn");
+    warn.append(el("span", "mark", "!"), document.createTextNode(
+      "保留チェックに問題があるので、まだコピーできません（②を直してください）"));
+    box.appendChild(warn);
+  }
+
+  const rows = el("div", "copies");
+  const items = [
+    ["title", "タイトル", data.title],
+    ["description", "概要欄（章つき）", data.description.split("\n")[0]],
+    ["tags", "タグ", data.tags],
+  ];
+  for (const [key, label, peek] of items) {
+    const button = el("button", "btn-copy");
+    if (state.copied === key) button.classList.add("is-copied");
+    button.disabled = issues.length > 0;
+    const what = el("span", "what");
+    what.append(document.createTextNode(state.copied === key ? "コピーしました" : label));
+    button.append(what, el("span", "peek", peek || "（空）"));
+    button.onclick = () => copyOne(key, data[key]);
+    rows.appendChild(button);
+  }
+  box.appendChild(rows);
+  return box;
+}
+
+async function copyOne(key, text) {
+  try {
+    await navigator.clipboard.writeText(text || "");
+    state.copied = key;
+    renderMain();
+    setTimeout(() => {
+      if (state.copied === key) { state.copied = ""; renderMain(); }
+    }, 2000);
+  } catch (err) {
+    state.actionError = `コピーできませんでした: ${err.message}`;
+    renderMain();
+  }
 }
 
 // ---------------------------------------------------------------- 部品16・17 メタデータと保留チェック
@@ -313,6 +456,24 @@ function metaSave() {
   return box;
 }
 
+let copyTimer = null;
+
+function refreshCopy() {
+  // 打つたびに呼ばれるので、少し待ってからまとめて聞く
+  clearTimeout(copyTimer);
+  copyTimer = setTimeout(async () => {
+    if (!state.draftMeta || !state.selected) return;
+    try {
+      state.copyDraft = await api(`/api/episodes/${state.selected.name}/copy`, {
+        method: "POST", body: JSON.stringify(state.draftMeta),
+      });
+    } catch (err) {
+      state.copyDraft = null;      // 作れなければ保存済みのほうを使う
+    }
+    renderMain();
+  }, 300);
+}
+
 function metaCard() {
   const box = el("div", "section");
   const data = state.meta || { state: "未実行" };
@@ -325,7 +486,7 @@ function metaCard() {
   }
   if (data.state !== "表示" || !state.draftMeta) {
     box.appendChild(el("div", "lines-empty",
-      "まだ作っていません。右上の「メタデータ生成を実行」を押すと作られます。"));
+      "まだ作っていません。右上の「メタデータを実行」を押すと作られます。"));
     return box;
   }
 
@@ -344,7 +505,7 @@ function metaCard() {
                  `${draft.title.length} / ${TITLE_LIMIT}`));
   const title = el("input", `meta-input ${over ? "is-over" : ""}`);
   title.value = draft.title;
-  title.oninput = () => { draft.title = title.value; renderMain(); };
+  title.oninput = () => { draft.title = title.value; refreshCopy(); renderMain(); };
   titleField.append(head, title);
   if (over) {
     titleField.appendChild(el("div", "meta-warn",
@@ -357,7 +518,7 @@ function metaCard() {
   const desc = el("textarea", "meta-text");
   desc.rows = 9;
   desc.value = draft.description;
-  desc.oninput = () => { draft.description = desc.value; renderMain(); };
+  desc.oninput = () => { draft.description = desc.value; refreshCopy(); renderMain(); };
   descField.append(el("div", "meta-label", "概要欄"), desc,
                    el("div", "meta-note", "章はコピー時に概要欄の末尾へ自動で付きます"));
   card.appendChild(descField);
@@ -417,13 +578,13 @@ function chaptersField(draft) {
     const label = el("input");
     label.value = chapter.label;
     label.placeholder = "見出し";
-    label.oninput = () => { chapter.label = label.value; renderMain(); };
+    label.oninput = () => { chapter.label = label.value; refreshCopy(); renderMain(); };
 
     const remove = el("button", "btn-x");
     remove.innerHTML = icon(SVG.trash, 13);
     remove.title = "この章を削除";
     remove.setAttribute("aria-label", "この章を削除");
-    remove.onclick = () => { draft.chapters.splice(index, 1); renderMain(); };
+    remove.onclick = () => { draft.chapters.splice(index, 1); refreshCopy(); renderMain(); };
 
     row.append(at, label, remove);
     list.appendChild(row);
@@ -437,6 +598,7 @@ function chaptersField(draft) {
     if (draft.chapters.some((c) => Math.abs(c.seconds - at) < 0.5)) return;
     draft.chapters.push({ seconds: at, label: "" });
     draft.chapters.sort((a, b) => a.seconds - b.seconds);
+    refreshCopy();
     renderMain();
   };
   field.appendChild(add);
@@ -455,7 +617,7 @@ function tagsField(draft) {
       stroke="currentColor" stroke-width="2.2"><path d="M2 2l10 10M12 2L2 12"/></svg>`;
     x.title = "タグを削除";
     x.setAttribute("aria-label", "タグを削除");
-    x.onclick = () => { draft.tags.splice(index, 1); renderMain(); };
+    x.onclick = () => { draft.tags.splice(index, 1); refreshCopy(); renderMain(); };
     chip.appendChild(x);
     box.appendChild(chip);
   });
@@ -470,6 +632,7 @@ function tagsField(draft) {
     const name = input.value.trim();
     if (name && !draft.tags.includes(name)) draft.tags.push(name);
     state.newTag = "";
+    refreshCopy();
     renderMain();
   };
   box.appendChild(input);
@@ -483,9 +646,11 @@ async function saveMeta() {
       method: "PUT", body: JSON.stringify(state.draftMeta),
     });
     setDraftMeta(state.meta);
+    state.copyText = await api(`/api/episodes/${state.selected.name}/copy`)
+      .catch(() => null);
     await reload({ keep: state.selected.name, keepSelected: true });
   } catch (err) {
-    state.sourceError = `メタデータを保存できませんでした: ${err.message}`;
+    state.actionError = `メタデータを保存できませんでした: ${err.message}`;
   }
   renderMain();
 }
@@ -502,6 +667,12 @@ function setDraftMeta(meta) {
 async function loadMeta(name) {
   state.meta = await api(`/api/episodes/${name}/meta`).catch(() => null);
   setDraftMeta(state.meta);
+  state.copyText = await api(`/api/episodes/${name}/copy`).catch(() => null);
+  state.copyDraft = null;
+}
+
+async function loadVideo(name) {
+  state.video = await api(`/api/episodes/${name}/video`).catch(() => null);
 }
 
 // ---------------------------------------------------------------- 部品12 文字起こし（確定版）
@@ -646,7 +817,7 @@ async function saveTranscript() {
     state.textsSaved = JSON.stringify(state.texts);
     await reload({ keep: state.selected.name, keepSelected: true });
   } catch (err) {
-    state.sourceError = `文字起こしを保存できませんでした: ${err.message}`;
+    state.actionError = `文字起こしを保存できませんでした: ${err.message}`;
   }
   renderMain();
 }
@@ -759,6 +930,8 @@ function cleanPlayer(result) {
 }
 
 function listenTo(kind, at) {
+  const video = document.querySelector(".video-body video");
+  if (video && !video.paused) video.pause();
   const url = `/api/episodes/${state.selected.name}/audio/${kind}`;
   if (state.listening !== kind || !audio.src.includes(`/audio/${kind}`)) {
     state.listening = kind;
@@ -767,7 +940,7 @@ function listenTo(kind, at) {
   audio.currentTime = at || 0;
   state.at = at || 0;
   audio.play().catch((err) => {
-    state.sourceError = `再生できませんでした: ${err.message}`;
+    state.actionError = `再生できませんでした: ${err.message}`;
     renderMain();
   });
 }
@@ -777,7 +950,7 @@ async function confirmClean() {
     state.clean = await api(`/api/episodes/${state.selected.name}/clean/confirm`,
                             { method: "POST" });
   } catch (err) {
-    state.sourceError = `確認を記録できませんでした: ${err.message}`;
+    state.actionError = `確認を記録できませんでした: ${err.message}`;
   }
   renderMain();
 }
@@ -959,7 +1132,7 @@ async function previewEcho(index) {
       + `?start=${echo.start}&end=${echo.end}&preset=${echo.preset}&t=${Date.now()}`;
     await audio.play();
   } catch (err) {
-    state.sourceError = `試聴できませんでした: ${err.message}`;
+    state.actionError = `試聴できませんでした: ${err.message}`;
   }
   state.previewing = -1;
   renderMain();
@@ -973,7 +1146,7 @@ async function saveEchoes() {
     state.echoes = got.echoes;
     state.echoesSaved = JSON.stringify(got.echoes);
   } catch (err) {
-    state.sourceError = `区間を保存できませんでした: ${err.message}`;
+    state.actionError = `区間を保存できませんでした: ${err.message}`;
   }
   renderMain();
 }
@@ -1064,7 +1237,7 @@ function togglePlay() {
   } else {
     audio.play().catch((err) => {
       state.playing = false;
-      state.sourceError = `再生できませんでした: ${err.message}`;
+      state.actionError = `再生できませんでした: ${err.message}`;
       renderMain();
     });
   }
@@ -1101,7 +1274,7 @@ function sourceCard() {
   replace.onclick = () => {
     if (confirm("いまの音源を差し替えますか？（00_raw のファイルを入れ替えます）")) {
       state.source = { state: "空" };
-      state.sourceError = "";
+      state.actionError = "";
       renderMain();
     }
   };
@@ -1112,12 +1285,6 @@ function sourceCard() {
 function sourceAdd() {
   const box = el("div", "source-add");
   box.appendChild(el("div", "source-add-title", "音源を追加"));
-
-  if (state.sourceError) {
-    const bad = el("div", "source-error");
-    bad.append(el("span", "mark", "!"), el("span", null, state.sourceError));
-    box.appendChild(bad);
-  }
 
   const zone = el("div", "dropzone");
   zone.innerHTML = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none"
@@ -1222,7 +1389,7 @@ function openObsDialog() {
 
 async function uploadSource(file) {
   state.sourceBusy = true;
-  state.sourceError = "";
+  state.actionError = "";
   renderMain();
   const form = new FormData();
   form.append("file", file);
@@ -1233,7 +1400,7 @@ async function uploadSource(file) {
     if (!res.ok) throw new Error(body.detail || `${res.status}`);
     state.source = body;
   } catch (err) {
-    state.sourceError = err.message;
+    state.actionError = err.message;
   }
   state.sourceBusy = false;
   await reload({ keep: state.selected.name, keepSelected: true });
@@ -1242,14 +1409,14 @@ async function uploadSource(file) {
 
 async function takeFromObs(name) {
   state.sourceBusy = true;
-  state.sourceError = "";
+  state.actionError = "";
   renderMain();
   try {
     state.source = await api(`/api/episodes/${state.selected.name}/source/from-obs`, {
       method: "POST", body: JSON.stringify({ file: name }),
     });
   } catch (err) {
-    state.sourceError = err.message;
+    state.actionError = err.message;
   }
   state.sourceBusy = false;
   await reload({ keep: state.selected.name, keepSelected: true });
@@ -1325,6 +1492,15 @@ function runRow(step) {
 function clock(seconds) {
   const total = Math.floor(seconds || 0);
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function errorBanner() {
+  const box = el("div", "save-error");
+  const close = el("button", "btn-tiny is-plain", "閉じる");
+  close.onclick = () => { state.actionError = ""; renderMain(); };
+  box.append(el("span", "mark", "!"), el("span", null, state.actionError),
+             el("span", "spacer"), close);
+  return box;
 }
 
 function placeholder(title, note) {
@@ -1697,6 +1873,9 @@ async function finishJob() {
     if (state.job.step === "meta") {
       await loadMeta(name);
     }
+    if (state.job.step === "video") {
+      await loadVideo(name);
+    }
   }
   await reload({ keep: state.selected && state.selected.name, keepSelected: true });
   renderStatus();
@@ -1801,7 +1980,7 @@ async function selectEpisode(name) {
   }
   state.selected = await api(`/api/episodes/${name}`);
   resetRows(state.selected.segments);
-  state.sourceError = "";
+  state.actionError = "";
   audio.pause();
   audio.removeAttribute("src");
   state.at = 0;
@@ -1816,6 +1995,7 @@ async function selectEpisode(name) {
   state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
   await loadTranscript(name);
   await loadMeta(name);
+  await loadVideo(name);
   [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),

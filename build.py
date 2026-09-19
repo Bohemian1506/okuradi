@@ -62,10 +62,11 @@ def run(cmd):
 
 
 def audio_duration(path):
+    # 壊れかけのファイルで ffprobe が止まることがあるので、待ちきりにしない
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=30,
     )
     return float(out.stdout.strip())
 
@@ -481,14 +482,21 @@ def call_claude(prompt, schema=None, system=None, resume=None, persist=False):
     return res
 
 
+CHAPTER_HEAD = "--- 目次 ---"
+
+
 def youtube_description(meta):
-    """YouTube に貼る概要欄。概要欄のうしろに目次をつなげる。"""
+    """YouTube に貼る概要欄。概要欄のうしろに目次をつなげる。
+
+    #7 より前に作った meta.json は、概要欄にすでに目次が焼き込まれている。
+    そのときは足さない（足すと目次が二重に付く）。
+    """
     description = (meta.get("description") or "").rstrip()
     chapters = sorted(meta.get("chapters") or [], key=lambda c: c.get("seconds", 0))
-    if not chapters:
+    if not chapters or CHAPTER_HEAD in description:
         return description
     lines = "\n".join(f"{hhmmss(c['seconds'])} {c['label']}" for c in chapters)
-    return f"{description}\n\n--- 目次 ---\n{lines}"
+    return f"{description}\n\n{CHAPTER_HEAD}\n{lines}"
 
 
 def step_meta(ep, cfg):
