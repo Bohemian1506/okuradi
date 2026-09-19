@@ -454,7 +454,7 @@ function videoCard() {
   const total = videoView.duration || data.seconds || 0;
   stage.appendChild(playerRow({
     total, at: videoView.at, playing: videoView.playing,
-    disabled: !total,
+    disabled: !total, label: "動画",
     onToggle: () => toggleVideo(),
     onSeek: (to) => seekVideo(to, true),
   }));
@@ -1061,11 +1061,19 @@ function cleanCard() {
     regions: true,          // エコーをかけた所を帯で見せる（動かせない）
   });
   syncRegions("clean", result.bands || [], false);
+  syncWaveCover(cw);
   const wave = el("div", `result-wave ${stale ? "is-stale" : ""}`);
   wave.appendChild(cw.box);
   box.appendChild(wave);
   const note = waveNote(cw);
   if (note) box.appendChild(note);
+  // エコーをかけたのに帯が出せないときは、そう言う。
+  // 黙っていると「エコー無し」と見分けが付かない（#61）
+  if (result.bands_error) {
+    const why = el("div", "wave-note is-error");
+    why.append(el("span", "mark", "!"), el("span", null, result.bands_error));
+    box.appendChild(why);
+  }
   // 斜線だけに頼らず、言葉でも言う（#65）
   if ((result.bands || []).length) {
     box.appendChild(el("div", "result-bands",
@@ -1083,6 +1091,7 @@ function cleanPlayer(result) {
   const now = state.listening === "clean";
   return playerRow({
     total, at: now ? state.at : 0, playing: now && state.playing,
+    label: "整音結果",
     onToggle: () => {
       if (now && state.playing) { audio.pause(); return; }
       listenTo("clean", now ? state.at : 0);
@@ -1415,21 +1424,31 @@ function wavePlayer(key) {
   const w = waveOf(key);
   return playerRow({
     total: w.duration, at: w.at, playing: w.playing,
-    disabled: w.phase !== "表示",
+    disabled: w.phase !== "表示", label: key === "clean" ? "整音結果" : "波形",
     onToggle: () => toggleWave(key),
     onSeek: (to) => seekWave(key, to, true),
   });
 }
 
-// 読み込み中・失敗を必ず見せる（黙って空のままにしない）
-function waveNote(w) {
-  if (w.phase === "読み込み中") {
-    const box = el("div", "wave-note");
-    box.textContent = w.percent
-      ? `音を読み込んでいます… ${Math.round(w.percent)}%`
-      : "音を読み込んでいます…";
-    return box;
+// 読み込み中は、箱の中に重ねて出す（見本どおり）。
+// 箱の外に小さい文字だけだと、真っ黒な箱が「壊れている」ように見える（#59）
+function syncWaveCover(w) {
+  const have = w.box.querySelector(".wave-cover");
+  if (w.phase !== "読み込み中") {
+    if (have) have.remove();
+    return;
   }
+  const text = w.percent
+    ? `音を読み込んでいます… ${Math.round(w.percent)}%`
+    : "音を読み込んでいます…";
+  if (have) { have.querySelector(".wave-cover-text").textContent = text; return; }
+  const cover = el("div", "wave-cover");
+  cover.append(el("span", "wave-cover-mark"), el("span", "wave-cover-text", text));
+  w.box.appendChild(cover);
+}
+
+// 失敗を必ず見せる（黙って空のままにしない）
+function waveNote(w) {
   if (w.error) {
     const box = el("div", "wave-note is-error");
     box.append(el("span", "mark", "!"), el("span", null, w.error));
@@ -1480,6 +1499,7 @@ function echoCard() {
     editable: true,
   });
   syncRegions("echo", state.echoes, true);
+  syncWaveCover(w);
 
   card.appendChild(w.box);
   const note = waveNote(w);
@@ -1490,7 +1510,10 @@ function echoCard() {
   for (let i = 0; i < 5; i += 1) {
     ruler.appendChild(el("span", null, clock(total * i / 4)));
   }
-  card.append(ruler, wavePlayer("echo"), regionList(total));
+  // ほかのパネルは .player / .result が余白を持つが、ここは器が無い（#59）
+  const pad = el("div", "wave-player");
+  pad.appendChild(wavePlayer("echo"));
+  card.append(ruler, pad, regionList(total));
   return card;
 }
 
@@ -1580,9 +1603,14 @@ async function saveEchoes() {
     });
     state.echoes = got.echoes;
     state.echoesSaved = JSON.stringify(got.echoes);
-    // 区間を変えたら整音は「古い」になる。取り直さないとパネルが嘘をつく
-    state.clean = await api(`/api/episodes/${state.selected.name}/clean`)
-      .catch(() => state.clean);
+    // 区間を変えたら整音は「古い」になる。取り直さないとパネルが嘘をつく。
+    // 取り直しそのものが失敗したときも黙らない（#61）
+    try {
+      state.clean = await api(`/api/episodes/${state.selected.name}/clean`);
+    } catch (err) {
+      state.actionError = "区間は保存しましたが、整音の状態を読み直せませんでした"
+        + `（${err.message}）。画面を開き直してください`;
+    }
   } catch (err) {
     state.actionError = `区間を保存できませんでした: ${err.message}`;
   }
@@ -1622,14 +1650,16 @@ function scanCard() {
 }
 
 // 再生ボタン・シークバー・時刻。部品11（下見）と部品15（整音結果）で同じものを使う
-function playerRow({ total, at, playing, disabled, onToggle, onSeek }) {
+function playerRow({ total, at, playing, disabled, onToggle, onSeek, label }) {
   const row = el("div", "player-row");
 
   const play = el("button", "btn-play");
   play.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">${
     playing ? SVG.pause : SVG.playBig}</svg>`;
-  play.title = playing ? "停止" : "再生";
-  play.setAttribute("aria-label", "再生/停止");
+  // どの音かを言う。画面では見出しで分かるが、読み上げやキーボードでは分からない（#59）
+  const what = label || "";
+  play.title = playing ? `${what}を停止` : `${what}を再生`;
+  play.setAttribute("aria-label", play.title);
   play.disabled = !!disabled;
   play.onclick = onToggle;
 
@@ -1637,7 +1667,7 @@ function playerRow({ total, at, playing, disabled, onToggle, onSeek }) {
   const seek = el("button", "seek");
   seek.type = "button";
   seek.setAttribute("role", "slider");
-  seek.setAttribute("aria-label", "再生位置");
+  seek.setAttribute("aria-label", what ? `${what}の再生位置` : "再生位置");
   seek.setAttribute("aria-valuemin", "0");
   seek.setAttribute("aria-valuemax", String(Math.round(total)));
   seek.setAttribute("aria-valuenow", String(Math.round(at)));
@@ -1684,7 +1714,7 @@ function player(scan) {
   const total = (scan && scan.duration) || audio.duration || 0;
   box.appendChild(playerRow({
     total, at: state.at, playing: state.playing,
-    disabled: !(state.source && state.source.state === "使える"),
+    disabled: !(state.source && state.source.state === "使える"), label: "下見",
     onToggle: () => togglePlay(),
     onSeek: (to) => seekTo(to),
   }));
@@ -2723,12 +2753,46 @@ function field(label, input) {
   return row;
 }
 
+// ---------------------------------------------------------------- 未保存のもの
+
+// 保存していない変更を1か所で数える。回を移るときと、画面を閉じるときの両方で使う（#60）
+function unsavedThings() {
+  const rows = [];
+  if (!state.selected) return rows;
+  if (state.save === "dirty" || state.save === "error") rows.push("コーナー・テーマ");
+  try {
+    if (echoDirty()) rows.push("エコー区間");
+    // まだ確定していない行も数える。確定（Enter / 「この行を確定」）を
+    // 通るまで state.texts は変わらないので、打ちかけが黙って消えていた
+    if (state.editing >= 0
+        && state.draft.trim() !== (state.texts[state.editing] || "")) {
+      rows.push("書きかけの行");
+    }
+    if (state.transcript && textsDirty()) rows.push("文字起こしの直し");
+    if (state.draftMeta && metaDirty()) rows.push("タイトル・概要欄");
+  } catch (err) {
+    // 数えられなかったときは「無い」ことにしない。黙って閉じさせると、
+    // #60 で防ごうとしたことがそのまま起きる
+    console.warn("未保存のものを数えられませんでした", err);
+    rows.push("保存していないもの");
+  }
+  return rows;
+}
+
+// 閉じる／読み込み直すときに、ブラウザに確認を出させる。
+// 前は何も出ず、伸び縮みさせた区間が黙って消えていた（#60）
+window.addEventListener("beforeunload", (event) => {
+  if (!unsavedThings().length) return;
+  event.preventDefault();
+  event.returnValue = "";   // 文言はブラウザが決める
+});
+
 // ---------------------------------------------------------------- 読み込み
 
 async function selectEpisode(name) {
-  const unsaved = state.save === "dirty" || state.save === "error";
-  if (unsaved && state.selected && state.selected.name !== name) {
-    if (!confirm("保存していない変更があります。破棄して別の回に移りますか？")) return;
+  const unsaved = unsavedThings();
+  if (unsaved.length && state.selected && state.selected.name !== name) {
+    if (!confirm(`${unsaved.join("・")}を保存していません。\n破棄して別の回に移りますか？`)) return;
   }
   state.selected = await api(`/api/episodes/${name}`);
   resetRows(state.selected.segments);

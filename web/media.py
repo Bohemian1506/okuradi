@@ -181,8 +181,10 @@ def clean_result(name):
 
     stale = _why_stale(ep_dir, clean, detail)
     made = detail.get("echoes")
+    bands, bands_error = _clean_bands(detail)
     return {
-        "bands": _clean_bands(detail),
+        "bands": bands,
+        "bands_error": bands_error,
         "state": "古い" if stale else "完了",
         "stale_reason": stale,
         "confirmed": confirmed and not stale,
@@ -200,17 +202,25 @@ def _clean_bands(detail):
 
     clean.json に残っているのは trimmed.wav の時刻。clean.wav は
     エコーの尾で伸び、継ぎ目で縮むので、そのまま重ねると後ろほどずれる。
+
+    返すのは (帯, 出せなかった理由)。エコーをかけたのに出せないときは、
+    黙って空にしない（空だと「エコー無し」と見分けが付かない）。
     """
     made = detail.get("echoes")
+    if not isinstance(made, list) or not made:
+        return [], None                # かけていないので、帯が無いのが正しい
+
+    cannot = ("エコーをかけた所を波形に出せません"
+              "（整音をやり直すと出ます）")
     total = detail.get("trimmed_duration")
-    if not isinstance(made, list) or not made or not total:
-        return []
+    if not total:
+        return [], cannot              # 古い clean.json には記録が無い
     try:
         regions = [(float(r["start"]), float(r["end"]), r.get("preset"))
                    for r in made]
-        return build.echo_positions(regions, float(total))
+        return build.echo_positions(regions, float(total)), None
     except (TypeError, ValueError, KeyError, AttributeError):
-        return []          # 記録が壊れていたら、帯を出さないだけにする
+        return [], cannot              # 記録が壊れている
 
 
 def _same_echoes(made, now):

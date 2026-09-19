@@ -857,21 +857,47 @@ select.field { font-weight: 500; }
   user-select: none;
 }
 
-/* 読み込み中と、読めなかったときの知らせ */
+/* エコー区間のプレーヤー。ほかのパネルは器が余白を持つが、ここは持たない（#59） */
+.wave-player { padding: 0 18px; }
+
+/* 読み込み中は、波形の箱の中に重ねて出す（#59） */
+.wave-cover {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; background: rgba(42, 26, 16, .72);
+  color: var(--wood-text); font: 12px var(--mono);
+}
+/* 動いていることを見せる。処理状況バーと同じ「流れる帯」を使う。
+   くるくる（spin）はキーフレームが無くて止まったままなので使わない（#69） */
+.wave-cover-mark {
+  width: 120px; height: 5px; border-radius: 3px;
+  background: rgba(217, 195, 160, .25); overflow: hidden;
+}
+.wave-cover-mark::after {
+  content: ""; display: block; width: 35%; height: 100%;
+  border-radius: 3px; background: var(--accent-glow);
+  animation: slide 1.4s ease-in-out infinite;
+}
+
+/* 読めなかったときの知らせ */
 .wave-note {
   margin: 8px 18px 0; padding: 8px 12px; border-radius: 8px;
   background: var(--cream-dim); color: var(--muted);
   font: 12px var(--mono); display: flex; align-items: center; gap: 8px;
 }
+/* 失敗は、ほかの画面（.save-error など）と同じ赤でそろえる（#59）。
+   アクセント色（オレンジ）だと「エラーではないお知らせ」に見える */
 .wave-note.is-error {
-  background: oklch(0.95 0.04 30); color: var(--ink); font-family: inherit; font-size: 13px;
+  border: 1.5px solid oklch(0.55 0.2 25 / .45); background: #fbeee8;
+  color: var(--ink); font-family: inherit; font-size: 13px;
 }
+/* 丸の大きさと字体も .save-error にそろえる（#59。色だけでは揃わない） */
 .wave-note .mark {
-  flex: none; width: 18px; height: 18px; border-radius: 50%;
+  flex: none; width: 14px; height: 14px; border-radius: 50%;
   background: var(--accent); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font: 700 12px var(--mono);
+  font: 700 10px/14px sans-serif; text-align: center;
 }
+.wave-note.is-error .mark { background: var(--error-text); }
 
 /* 区間の帯と再生位置の線は、wavesurfer が shadow DOM の中に描く。
    style.css は shadow を越えないので、見た目は app.js の WAVE_CSS で入れている。 */
