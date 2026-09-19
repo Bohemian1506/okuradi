@@ -5,8 +5,8 @@
 ## 2026-09-19（day-3 の終わり）
 
 ### いまの状態
-- main は `a33bfb4`。**開いている PR は無し。ローカルのブランチは `main` だけ**（マージ済みのブランチは消してある）
-- day-3 で GUI を最初から最後まで実装した（#5 枠 → #6 収録〜整音 → #7 仕上げ → #8 ログ・チャット・改善メモ）。マージした PR は #18〜#71
+- main は `0d1464c`。**開いている PR は無し。ローカルのブランチは `main` だけ**（マージ済みのブランチは消してある）
+- day-3 で GUI を最初から最後まで実装した（#5 枠 → #6 収録〜整音 → #7 仕上げ → #8 ログ・チャット・改善メモ）。マージした PR は #18〜#73
 - **必須の17機能と、部品1〜19 の実装がすべて終わった**（`docs/features.md` の「実装の状況」）。`pytest` 188件が通る
 - 波形は wavesurfer.js（#36）。ファイルは `web/static/vendor/` に置いてあり、CDN からは読まない
 - 回のデータは `ep01` だけ。音声と途中のファイルは git の管理外
@@ -14,12 +14,12 @@
 ### 開いている Issue
 | Issue | 内容 | いま |
 |---|---|---|
-| #53 | 新しい GUI だけで1回分を通し、`app.py` を消す | **ユーザーが実物の音声でやる**（Claude にはできない）。**v1 の最後の関門** |
-| #69 | くるくる（スピナー）が4か所とも回っていない | `@keyframes spin` を1行足すだけ。直したら実際に処理中の画面で確かめる |
+| #53 | 新しい GUI だけで1回分を通し、`app.py` を消す | **ユーザーが実物の音声でやる**（Claude にはできない）。**これが唯一の残り** |
 
 ### 次にやること
-1. **#53 通しリハーサル**（ユーザー）— 実際の収録で最初から最後まで通して、詰まった所を Issue にする。通せたら `app.py`・`requirements.txt` の streamlit / altair / pandas / **numpy**・`CLAUDE.md` の「古い GUI」の行を消す
-2. **#69 くるくるを直す**（1行）。#53 の前にやっておくと、通しリハーサルで処理中が止まって見えない
+1. **#53 通しリハーサル**（ユーザー）— 実際の収録で最初から最後まで通して、詰まった所を Issue にする
+   - 通せたら消すもの: `app.py` / `requirements.txt` の streamlit・altair・pandas・**numpy** / `CLAUDE.md` の「古い GUI」の行 / `README.md` の Streamlit の節と「まだ1回分を通していない」の断り
+2. 通して詰まった所が出たら、Issue にしてから直す。**Claude ができるのはここから**
 
 ### 作業の始め方
 - GUI: `.venv/bin/python -m uvicorn web.main:app --reload`（`http://127.0.0.1:8000`）
@@ -44,7 +44,7 @@
 | F12 のメニュー（3つ） | `C:\Users\hiros\.wezterm.lua` の `launch_menu` | 書き方は `docs/dev-log/day-2.md` の #13 と `docs/herdr.md` |
 | Herdr の Claude 連携 | `~/.claude/hooks/herdr-agent-state.sh` など | `herdr integration install claude` |
 | Claude が Herdr を操作するスキル | `~/.claude/skills/herdr/SKILL.md` | `herdr --skill > ~/.claude/skills/herdr/SKILL.md`（Herdr を更新したときも） |
-| Claude Design のプロジェクト | `共通の枠を出しました`（claude.ai/design）。**見本はここが正本**。実装が見本を追い越したら、`github.md` の同期メモと一緒に直す（#65 でやった） |
+| Claude Design のプロジェクト | `共通の枠を出しました`（claude.ai/design）。**見本はここが正本**。実装が見本を追い越したら、`github.md` の同期メモと一緒に直す（#65・#70 でやった）。**直したら `docs/design/` にも取り込み直す**（`serve_url` に `&raw=1` を付けると元のファイルが取れる）。どちらの見本を見るかは `docs/design/README.md` の表 |
 | Claude Design とつなぐ MCP | `~/.claude.json`（`-s user` で入れた。公開リポジトリなので `.mcp.json` は作らない） | `claude mcp add -s user --transport http claude_design https://api.anthropic.com/v1/design/mcp` → `/design-login` → **Claude を立ち上げ直す**（`claude --continue` で会話の続きから戻る）。詳しくは `docs/dev-log/day-3.md` |
 | main への push を止める git のフック | リポジトリの git 設定 | `git config core.hooksPath .githooks`（clone し直したとき） |
 | GitHub 側の main の保護 | リポジトリの設定（Branches） | 直接 push の禁止・管理者にも適用・承認は不要・強制 push と削除の禁止 |
