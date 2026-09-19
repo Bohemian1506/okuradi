@@ -1135,6 +1135,30 @@ select.field { font-weight: 500; }
 .btn-memo:hover:not(:disabled) { border-color: var(--ink); }
 .btn-memo:disabled { color: var(--disabled); cursor: not-allowed; }
 
+/* ---------------------------------------------------------------- 部品7 改善メモの下書きダイアログ */
+
+.dialog.is-wide { width: 460px; }
+.memo-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.memo-label {
+  font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 999px;
+  background: var(--cream-dim); border: 1px solid var(--rule); color: var(--muted);
+  white-space: nowrap;
+}
+.memo-waiting {
+  display: flex; align-items: center; gap: 10px; justify-content: center;
+  padding: 28px 0; color: var(--muted); font-size: 13px;
+}
+.memo-text {
+  font-size: 13px; line-height: 1.7; font-family: inherit;
+  padding: 10px 12px; border: 1.5px solid var(--rule-strong); border-radius: 10px;
+  background: #fff; color: var(--ink); resize: vertical; box-sizing: border-box;
+}
+.memo-done {
+  display: flex; flex-direction: column; gap: 10px; align-items: center;
+  padding: 18px 0; font-size: 13px;
+}
+.memo-done a { font-weight: 700; }
+
 /* ---------------------------------------------------------------- 部品2 新しい回ダイアログ */
 
 .overlay {

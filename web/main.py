@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from web import chat, episodes, media, runner, sources
+from web import chat, episodes, media, memo, runner, sources
 
 STATIC = Path(__file__).parent / "static"
 
@@ -104,6 +104,11 @@ class Transcript(BaseModel):
 
 class Question(BaseModel):
     question: str
+
+
+class Memo(BaseModel):
+    title: str
+    body: str = ""
 
 
 class Chapter(BaseModel):
@@ -264,6 +269,17 @@ def post_chat(name: str, body: Question):
 @app.delete("/api/episodes/{name}/chat")
 def delete_chat(name: str):
     return _guard(chat.reset, name)
+
+
+@app.post("/api/episodes/{name}/memo/draft")
+def post_memo_draft(name: str):
+    return _guard(memo.draft, name)
+
+
+@app.post("/api/episodes/{name}/memo")
+def post_memo(name: str, body: Memo):
+    """Issue に登録する。画面で下書きを確認したあとにだけ呼ばれる。"""
+    return _guard(memo.create, name, body.title, body.body)
 
 
 # ---------------------------------------------------------------- 工程の実行

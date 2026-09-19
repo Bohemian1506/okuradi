@@ -1774,8 +1774,10 @@ function renderChat() {
 
   const memo = el("button", "btn-memo");
   memo.innerHTML = icon(SVG.memo, 13) + "改善メモに残す";
-  memo.disabled = true;
-  memo.title = "この続きは #8 で入れます";
+  memo.disabled = !data.messages.length || state.chatWaiting;
+  memo.title = data.messages.length ? "会話から Issue の下書きを作ります"
+                                    : "先に相談してください";
+  memo.onclick = () => openMemo();
 
   foot.append(input, memo);
   box.append(head, sub, body, foot);
@@ -1825,6 +1827,93 @@ async function resetChat() {
     renderMain();
   }
   renderChat();
+}
+
+// ---------------------------------------------------------------- 部品7 改善メモの下書き
+
+function openMemo() {
+  const overlay = el("div", "overlay");
+  const dialog = el("div", "dialog is-wide");
+  overlay.appendChild(dialog);
+  overlay.onclick = (event) => { if (event.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+
+  const memo = { state: "作成中", title: "", body: "", url: "", error: "" };
+
+  const draw = () => {
+    dialog.innerHTML = "";
+    const head = el("div", "memo-head");
+    head.append(el("div", "dialog-title", "改善メモの下書き"),
+                el("span", "memo-label", "ラベル: 改善メモ"));
+    dialog.appendChild(head);
+
+    if (memo.state === "作成中") {
+      const wait = el("div", "memo-waiting");
+      wait.append(el("span", "spinner"), document.createTextNode("会話を要約しています"));
+      dialog.appendChild(wait);
+    } else if (memo.state === "登録済み") {
+      const done = el("div", "memo-done");
+      const link = el("a", null, memo.url || "Issue を開く");
+      link.href = memo.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      done.append(document.createTextNode("Issue に登録しました"), link);
+      dialog.appendChild(done);
+    } else {
+      if (memo.error) dialog.appendChild(el("div", "form-error", memo.error));
+      const title = el("input", "field");
+      title.value = memo.title;
+      title.oninput = () => { memo.title = title.value; };
+      const body = el("textarea", "memo-text");
+      body.rows = 6;
+      body.value = memo.body;
+      body.oninput = () => { memo.body = body.value; };
+      dialog.append(field(el("span", "form-label", "タイトル"), title),
+                    field(el("span", "form-label", "本文"), body));
+    }
+
+    const foot = el("div", "dialog-foot");
+    const close = el("button", "btn-plain", memo.state === "登録済み" ? "閉じる" : "キャンセル");
+    close.onclick = () => overlay.remove();
+    foot.appendChild(close);
+
+    if (memo.state !== "登録済み") {
+      const create = el("button", "btn-primary");
+      create.textContent = memo.state === "登録中" ? "登録中" : "Issueに登録";
+      create.disabled = memo.state !== "編集中" || !memo.title.trim();
+      create.onclick = async () => {
+        memo.state = "登録中"; memo.error = ""; draw();
+        try {
+          const got = await api(`/api/episodes/${state.selected.name}/memo`, {
+            method: "POST",
+            body: JSON.stringify({ title: memo.title, body: memo.body }),
+          });
+          memo.url = got.url;
+          memo.state = "登録済み";
+        } catch (err) {
+          memo.error = err.message;
+          memo.state = "編集中";
+        }
+        draw();
+      };
+      foot.appendChild(create);
+    }
+    dialog.appendChild(foot);
+  };
+
+  draw();
+  api(`/api/episodes/${state.selected.name}/memo/draft`, { method: "POST" })
+    .then((got) => {
+      memo.title = got.title;
+      memo.body = got.body;
+      memo.state = "編集中";
+      draw();
+    })
+    .catch((err) => {
+      memo.error = err.message;
+      memo.state = "編集中";
+      draw();
+    });
 }
 
 // ---------------------------------------------------------------- 部品5 処理状況バーとログ

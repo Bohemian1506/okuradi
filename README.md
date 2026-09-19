@@ -36,6 +36,7 @@ okuradi/
 │   ├── sources.py        # 音源の追加と、アプリ全体の設定
 │   ├── media.py          # 文字起こしを読む・音声を画面に配る
 │   ├── chat.py           # この回について Claude に相談する
+│   ├── memo.py           # 会話から改善メモを作り、Issueに登録する
 │   └── static/           # index.html / style.css / app.js
 ├── settings.yml          # OBSの録画フォルダなど（git管理外。GUIの画面から作れる）
 ├── tests/
