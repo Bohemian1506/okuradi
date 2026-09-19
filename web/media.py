@@ -245,3 +245,72 @@ def confirm_clean(name):
         raise episodes.EpisodeError("まだ整音していません")
     (ep_dir / "01_clean" / "confirmed").write_text("", encoding="utf-8")
     return clean_result(name)
+
+
+# ---------------------------------------------------------------- 確定版の文字起こし
+
+def transcript_path(ep_dir):
+    return ep_dir / "02_text" / "transcript.json"
+
+
+def read_transcript(name):
+    """確定版の文字起こし。時刻は clean.wav が基準。
+
+    `original`（元の文字）は #7 から入れている。古いファイルには無いので、
+    そのときは今の文字で代用する（＝直していない扱い）。
+    """
+    ep_dir = episodes.resolve(name)
+    path = transcript_path(ep_dir)
+    if not path.exists():
+        return {"state": "未実行", "segments": [], "changed": 0}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise episodes.EpisodeError(
+            f"transcript.json が読めません: {str(exc).splitlines()[0]}"
+        ) from exc
+
+    rows = []
+    for row in data.get("segments") or []:
+        text = (row.get("text") or "").strip()
+        original = row.get("original")
+        original = text if original is None else original.strip()
+        rows.append({"start": row.get("start", 0), "end": row.get("end", 0),
+                     "text": text, "original": original,
+                     "changed": text != original})
+    return {
+        "state": "表示",
+        "segments": rows,
+        "changed": sum(1 for r in rows if r["changed"]),
+        "duration": rows[-1]["end"] if rows else 0,
+    }
+
+
+def save_transcript(name, texts):
+    """直した文字を書き戻す。行の数と時刻は変えない。"""
+    ep_dir = episodes.resolve(name)
+    path = transcript_path(ep_dir)
+    if not path.exists():
+        raise episodes.EpisodeError("まだ文字起こしをしていません")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise episodes.EpisodeError(
+            f"transcript.json が読めません: {str(exc).splitlines()[0]}"
+        ) from exc
+
+    rows = data.get("segments") or []
+    if len(texts) != len(rows):
+        raise episodes.EpisodeError(
+            f"行の数が合いません（画面 {len(texts)}行 / ファイル {len(rows)}行）。"
+            "画面を開き直してください"
+        )
+    for row, text in zip(rows, texts):
+        if "original" not in row:
+            row["original"] = row.get("text", "")   # 古いファイルにも元の文字を足す
+        row["text"] = (text or "").strip()
+
+    # full_text も作り直す。メタデータの工程はこちらを読まないが、ずれたままにしない
+    data["full_text"] = "".join(r.get("text", "") for r in rows)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return read_transcript(name)

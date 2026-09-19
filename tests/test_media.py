@@ -263,3 +263,74 @@ def test_clean_json_が壊れた形でも落ちない(ep):
     got = media.clean_result("ep01")
     assert got["state"] in ("完了", "古い")
     assert got["echoes"] == 0
+
+
+# ---------------------------------------------------------------- 確定版の文字起こし
+
+def write_transcript(ep_dir, rows):
+    (ep_dir / "02_text" / "transcript.json").write_text(json.dumps({
+        "segments": rows, "full_text": "".join(r.get("text", "") for r in rows),
+    }, ensure_ascii=False), encoding="utf-8")
+
+
+def test_文字起こしが無ければ未実行(ep):
+    got = media.read_transcript("ep01")
+    assert got["state"] == "未実行" and got["segments"] == []
+
+
+def test_元の文字が無い古いファイルは直していない扱い(ep):
+    write_transcript(ep, [{"start": 0, "end": 4, "text": "こんばんは"}])
+    got = media.read_transcript("ep01")
+    assert got["segments"][0]["original"] == "こんばんは"
+    assert got["segments"][0]["changed"] is False
+    assert got["changed"] == 0
+
+
+def test_直した行に印が付く(ep):
+    write_transcript(ep, [
+        {"start": 0, "end": 4, "text": "直した", "original": "もとの"},
+        {"start": 4, "end": 8, "text": "そのまま", "original": "そのまま"},
+    ])
+    got = media.read_transcript("ep01")
+    assert [r["changed"] for r in got["segments"]] == [True, False]
+    assert got["changed"] == 1
+
+
+def test_保存すると元の文字が残る(ep):
+    write_transcript(ep, [{"start": 0, "end": 4, "text": "もとの"}])
+    got = media.save_transcript("ep01", ["直した"])
+    assert got["segments"][0]["text"] == "直した"
+    assert got["segments"][0]["original"] == "もとの"      # 古いファイルにも足す
+    assert got["changed"] == 1
+
+
+def test_二度目の保存でも最初の元の文字を保つ(ep):
+    write_transcript(ep, [{"start": 0, "end": 4, "text": "もとの"}])
+    media.save_transcript("ep01", ["一度目"])
+    got = media.save_transcript("ep01", ["二度目"])
+    assert got["segments"][0]["original"] == "もとの"
+
+
+def test_行の数が合わなければ断る(ep):
+    write_transcript(ep, [{"start": 0, "end": 4, "text": "あ"}])
+    with pytest.raises(episodes.EpisodeError, match="行の数が合いません"):
+        media.save_transcript("ep01", ["あ", "い"])
+
+
+def test_保存すると全文も作り直す(ep):
+    write_transcript(ep, [{"start": 0, "end": 4, "text": "あ"},
+                          {"start": 4, "end": 8, "text": "い"}])
+    media.save_transcript("ep01", ["A", "B"])
+    saved = json.loads((ep / "02_text" / "transcript.json").read_text(encoding="utf-8"))
+    assert saved["full_text"] == "AB"
+
+
+def test_文字起こしをしていなければ保存できない(ep):
+    with pytest.raises(episodes.EpisodeError, match="まだ文字起こし"):
+        media.save_transcript("ep01", ["あ"])
+
+
+def test_壊れた文字起こしは理由を言って断る(ep):
+    (ep / "02_text" / "transcript.json").write_text("{壊れた", encoding="utf-8")
+    with pytest.raises(episodes.EpisodeError, match="transcript.json が読めません"):
+        media.read_transcript("ep01")

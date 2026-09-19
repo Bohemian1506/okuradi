@@ -584,6 +584,77 @@ select.field { font-weight: 500; }
 }
 .badge-ok .mark { width: 8px; height: 8px; border-radius: 50%; background: var(--done); }
 
+/* ---------------------------------------------------------------- 部品12 文字起こしリスト（確定版・直せる）
+   見本: docs/design/screen3-finishing.dc.html */
+
+.tlines {
+  height: 320px; overflow: auto; padding: 8px 8px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.tline {
+  display: grid; grid-template-columns: 56px minmax(0, 1fr) 84px;
+  gap: 10px; align-items: start;
+  padding: 7px 4px; border-radius: 10px;
+}
+.tline.is-now { background: #fdf1e4; box-shadow: inset 3px 0 0 var(--accent); }
+.tline.is-editing { background: var(--cream-dim); }
+
+.tline-at {
+  font: 12px var(--mono); color: var(--disabled);
+  border: none; background: transparent; cursor: pointer;
+  padding: 4px 2px; text-align: left;
+}
+.tline-at:hover { color: var(--ink); }
+.tline.is-now .tline-at { color: var(--accent-text); font-weight: 500; }
+
+.tline-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tline-text {
+  font-size: 14px; line-height: 1.7; text-align: left; text-wrap: pretty;
+  border: none; background: transparent; color: var(--ink);
+  padding: 4px 10px; border-radius: 8px; cursor: text; width: 100%;
+}
+.tline-text:hover { background: var(--cream-dim); }
+
+.tline-edit {
+  font-size: 14px; line-height: 1.6; font-family: inherit;
+  padding: 10px 12px; border: 1.5px solid var(--accent); border-radius: 10px;
+  background: #fff; color: var(--ink); resize: vertical; min-width: 0; width: 100%;
+  outline-color: var(--accent); box-sizing: border-box;
+}
+.tline-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tline-hint { font-size: 11px; color: var(--disabled); margin-left: auto; }
+
+.btn-tiny {
+  padding: 6px 14px; border: none; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 700;
+  cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .25);
+}
+.btn-tiny.is-plain {
+  background: var(--cream); color: var(--ink);
+  border: 1.5px solid var(--rule-strong); font-weight: 500; box-shadow: none;
+}
+.btn-tiny.is-quiet {
+  background: transparent; color: var(--muted); font-weight: 500;
+  box-shadow: none; display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-tiny.is-quiet:hover { background: var(--cream-dim); color: var(--ink); }
+
+.tline-orig {
+  font-size: 12px; color: var(--muted); line-height: 1.6; padding: 0 10px;
+}
+.tline-orig .label { font-weight: 700; color: var(--disabled); margin-right: 6px; }
+.tline-orig s { text-decoration-color: var(--rule-strong); }
+
+.tline-mark { display: flex; align-items: center; justify-content: flex-end; }
+.btn-mark {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border: 1.5px solid oklch(0.65 0.18 45 / .5); border-radius: 999px;
+  background: var(--cream); color: oklch(0.5 0.18 45);
+  font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.btn-mark:hover { background: #fdf1e4; }
+.btn-mark .mark { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+
 /* ---------------------------------------------------------------- 部品13 波形ビュー */
 
 .wave {

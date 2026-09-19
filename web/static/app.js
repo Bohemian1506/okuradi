@@ -62,6 +62,12 @@ const state = {
   previewing: -1,    // 試聴中の区間
   clean: null,       // 整音の結果
   listening: "scan", // いま鳴らしているもの（scan / clean / preview）
+  transcript: null,  // 確定版の文字起こし
+  texts: [],         // 画面で直している文字（行ごと）
+  textsSaved: "",    // 保存されている中身
+  editing: -1,       // 書き換え中の行
+  draft: "",         // 書き換え中の文字
+  showOrig: {},      // 元の文字を開いている行
 };
 
 const PRESETS = { none: "なし", light: "軽め", hall: "響く" };
@@ -213,7 +219,7 @@ function renderMain() {
   if (state.tab === "2") {
     main.appendChild(screenRecording());
   } else {
-    main.appendChild(runsCard());
+    main.appendChild(screenFinishing());
   }
 }
 
@@ -254,6 +260,185 @@ function screenRecording() {
   box.appendChild(section(4, "整音して聴く",
     "前後の無音を切り、音量をそろえ、エコーをかける。聴いて確かめる1つ目の確認ポイント。",
     cleanCard(), stepOf("clean")));
+  return box;
+}
+
+// ---------------------------------------------------------------- 画面3 仕上げ
+
+function screenFinishing() {
+  const box = el("div", "sections");
+
+  box.appendChild(section(1, "文字起こしを直す",
+    "確定版。文字を押すとその場で書き換え。直した行には印が付き、元の文字も見られます。",
+    transcriptCard(), stepOf("transcribe"), transcriptSave()));
+
+  box.appendChild(section(2, "タイトル・概要欄・章・タグを直す",
+    "AIが作った案を直す。直した文字起こしから作り直すこともできます。",
+    placeholder("メタデータ", "この節は #7 の続きで入れます"), stepOf("meta")));
+
+  box.appendChild(section(3, "動画を確かめる",
+    "背景画像と整音後の音声で mp4 を作る。これを YouTube に上げます。",
+    placeholder("動画プレビュー", "この節は #7 の続きで入れます"), stepOf("video")));
+
+  box.appendChild(section(4, "コピーして YouTube に貼る",
+    "動画をアップロードしたら、順に貼るだけ。章は概要欄の末尾に付きます。",
+    placeholder("コピー", "この節は #7 の続きで入れます")));
+  return box;
+}
+
+// ---------------------------------------------------------------- 部品12 文字起こし（確定版）
+
+function textsDirty() {
+  return JSON.stringify(state.texts) !== state.textsSaved;
+}
+
+function transcriptSave() {
+  const box = el("div", "segments-actions");
+  const dirty = textsDirty();
+  const badge = el("span", `save-badge ${dirty ? "is-dirty" : "is-saved"}`);
+  badge.append(el("span", "mark"),
+               document.createTextNode(dirty ? "未保存の変更あり" : "保存済み"));
+
+  const save = el("button", `btn-save ${dirty ? "is-dirty" : "is-saved"}`,
+                  dirty ? "保存する" : "保存");
+  save.disabled = !dirty;
+  save.onclick = () => saveTranscript();
+  box.append(badge, save);
+  return box;
+}
+
+function transcriptCard() {
+  const card = el("div", "panel-card");
+  const data = state.transcript || { state: "未実行", segments: [] };
+  const running = state.job && state.job.state === "処理中"
+    && state.job.episode === state.selected.name && state.job.step === "transcribe";
+
+  card.appendChild(cleanPlayerRow());
+
+  if (running) {
+    card.appendChild(el("div", "lines-empty", "確定版の文字起こしを作っています…"));
+    return card;
+  }
+  if (data.state !== "表示" || !data.segments.length) {
+    card.appendChild(el("div", "lines-empty",
+      "まだ確定版の文字起こしがありません。右上の「文字起こしを実行」を押すと作られます。"));
+    return card;
+  }
+
+  const list = el("div", "tlines");
+  data.segments.forEach((line, index) => {
+    list.appendChild(transcriptRow(line, index));
+  });
+  card.appendChild(list);
+  return card;
+}
+
+function transcriptRow(line, index) {
+  const row = el("div", "tline");
+  const now = state.listening === "clean" && state.at >= line.start && state.at < line.end;
+  if (now) row.classList.add("is-now");
+  if (state.editing === index) row.classList.add("is-editing");
+
+  const at = el("button", "tline-at", clock(line.start));
+  at.title = "ここから再生";
+  at.onclick = () => listenTo("clean", line.start);
+  row.appendChild(at);
+
+  const body = el("div", "tline-body");
+  const text = state.texts[index];
+  const changed = text !== line.original;
+
+  if (state.editing === index) {
+    const box = el("textarea", "tline-edit");
+    box.rows = 2;
+    box.value = state.draft;
+    box.oninput = () => { state.draft = box.value; };
+    box.onkeydown = (event) => {
+      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); commitEdit(index); }
+      if (event.key === "Escape") { state.editing = -1; renderMain(); }
+    };
+    body.appendChild(box);
+
+    const tools = el("div", "tline-tools");
+    const ok = el("button", "btn-tiny", "この行を確定");
+    ok.onclick = () => commitEdit(index);
+    const no = el("button", "btn-tiny is-plain", "やめる");
+    no.onclick = () => { state.editing = -1; renderMain(); };
+    const again = el("button", "btn-tiny is-quiet");
+    again.innerHTML = icon(SVG.play, 11, 0) + "この行を聴き直す";
+    again.querySelector("svg").setAttribute("fill", "currentColor");
+    again.onclick = () => listenTo("clean", line.start);
+    tools.append(ok, no, again, el("span", "tline-hint", "Enter で確定 · Esc でやめる"));
+    body.appendChild(tools);
+    setTimeout(() => { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }, 0);
+  } else {
+    const show = el("button", "tline-text", text);
+    show.title = "押すと書き換えられます";
+    show.onclick = () => {
+      state.editing = index;
+      state.draft = state.texts[index];
+      renderMain();
+    };
+    body.appendChild(show);
+  }
+
+  if (changed && state.showOrig[index]) {
+    const orig = el("div", "tline-orig");
+    const struck = el("s", null, line.original);
+    orig.append(el("span", "label", "元"), struck);
+    body.appendChild(orig);
+  }
+  row.appendChild(body);
+
+  const markBox = el("div", "tline-mark");
+  if (changed) {
+    const mark = el("button", "btn-mark");
+    mark.append(el("span", "mark"), document.createTextNode("直した"));
+    mark.title = "元の文字起こしを見る";
+    mark.onclick = () => {
+      state.showOrig[index] = !state.showOrig[index];
+      renderMain();
+    };
+    markBox.appendChild(mark);
+  }
+  row.appendChild(markBox);
+  return row;
+}
+
+async function loadTranscript(name) {
+  state.transcript = await api(`/api/episodes/${name}/transcript`).catch(() => null);
+  state.texts = ((state.transcript && state.transcript.segments) || []).map((r) => r.text);
+  state.textsSaved = JSON.stringify(state.texts);
+  state.editing = -1;
+  state.showOrig = {};
+}
+
+function commitEdit(index) {
+  state.texts[index] = state.draft.trim();
+  state.editing = -1;
+  renderMain();
+}
+
+async function saveTranscript() {
+  try {
+    state.transcript = await api(`/api/episodes/${state.selected.name}/transcript`, {
+      method: "PUT", body: JSON.stringify({ texts: state.texts }),
+    });
+    state.texts = state.transcript.segments.map((r) => r.text);
+    state.textsSaved = JSON.stringify(state.texts);
+    await reload({ keep: state.selected.name, keepSelected: true });
+  } catch (err) {
+    state.sourceError = `文字起こしを保存できませんでした: ${err.message}`;
+  }
+  renderMain();
+}
+
+// 整音後の音を鳴らすプレーヤー（確定版の文字起こしは clean.wav が基準）
+function cleanPlayerRow() {
+  const box = el("div", "player");
+  const total = (state.clean && state.clean.duration)
+    || (state.transcript && state.transcript.duration) || 0;
+  box.appendChild(cleanPlayer({ duration: total }));
   return box;
 }
 
@@ -1195,6 +1380,20 @@ function renderStatus() {
 let ticker = null;
 
 async function runStep(step) {
+  // 文字起こしをやり直すと、聴きながら直した分が消える
+  if (step === "transcribe") {
+    const changed = (state.transcript && state.transcript.changed) || 0;
+    const unsaved = textsDirty();
+    if (changed || unsaved) {
+      const what = [];
+      if (changed) what.push(`保存した${changed}行の直し`);
+      if (unsaved) what.push("未保存の直し");
+      if (!confirm(`文字起こしをやり直すと、${what.join("と")}が消えます。\nやり直しますか？`)) {
+        return;
+      }
+    }
+  }
+
   // エコー区間が未保存のまま整音すると、前の設定の音ができてしまう
   if (step === "clean" && echoDirty()) {
     const ok = confirm("エコー区間が未保存です。保存してから整音しますか？\n"
@@ -1273,6 +1472,9 @@ async function finishJob() {
     if (state.job.step === "clean") {
       state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
       state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
+    }
+    if (state.job.step === "transcribe") {
+      await loadTranscript(name);
     }
   }
   await reload({ keep: state.selected && state.selected.name, keepSelected: true });
@@ -1391,6 +1593,7 @@ async function selectEpisode(name) {
   state.picked = -1;
   state.listening = "scan";
   state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
+  await loadTranscript(name);
   [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),
