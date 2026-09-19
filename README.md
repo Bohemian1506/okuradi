@@ -32,7 +32,10 @@ okuradi/
 ├── web/                  # 新しいGUI（FastAPI + 素のHTML/CSS/JS）
 │   ├── main.py           # APIと画面の配信
 │   ├── episodes.py       # 回の一覧・作成と、工程の状態
+│   ├── runner.py         # 工程の実行・中止・ログの配信
+│   ├── sources.py        # 音源の追加と、アプリ全体の設定
 │   └── static/           # index.html / style.css / app.js
+├── settings.yml          # OBSの録画フォルダなど（git管理外。GUIの画面から作れる）
 ├── tests/
 ├── docs/design/          # 画面のデザインの見本（Claude Design から取り込み）
 ├── requirements.txt
