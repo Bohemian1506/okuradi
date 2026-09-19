@@ -88,6 +88,16 @@ class FromObs(BaseModel):
     file: str
 
 
+class Echo(BaseModel):
+    start: float
+    end: float
+    preset: str = "none"
+
+
+class Echoes(BaseModel):
+    echoes: list[Echo]
+
+
 @app.get("/api/settings")
 def get_settings():
     return {"obs_dir": _guard(sources.read_settings).get("obs_dir", "")}
@@ -122,6 +132,28 @@ def post_source_from_obs(name: str, body: FromObs):
 @app.get("/api/episodes/{name}/scan")
 def get_scan(name: str):
     return _guard(media.read_scan, name)
+
+
+@app.get("/api/episodes/{name}/waveform")
+def get_waveform(name: str):
+    return _guard(media.waveform, name)
+
+
+@app.get("/api/episodes/{name}/echoes")
+def get_echoes(name: str):
+    return {"echoes": _guard(episodes.read_echoes, name)}
+
+
+@app.put("/api/episodes/{name}/echoes")
+def put_echoes(name: str, body: Echoes):
+    return {"echoes": _guard(episodes.save_echoes, name,
+                             [e.model_dump() for e in body.echoes])}
+
+
+@app.get("/api/episodes/{name}/echo-preview")
+def get_echo_preview(name: str, start: float, end: float, preset: str = "none"):
+    path = _guard(media.echo_preview, name, start, end, preset)
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/episodes/{name}/audio/{kind}")

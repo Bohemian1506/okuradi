@@ -329,3 +329,30 @@ def save_segments(name, segments, root=ROOT):
     cfg["segments"] = validate_segments(segments, rules_of(ep_dir))
     build.save_config({"dir": ep_dir}, cfg)
     return detail(name, root)
+
+
+def save_echoes(name, echoes, root=ROOT):
+    """エコー区間を config.yml に書く。時刻は trimmed.wav が基準。"""
+    ep_dir = resolve(name, root)
+    cfg = read_config(ep_dir)
+    rows = []
+    for echo in echoes or []:
+        if not isinstance(echo, dict):
+            raise EpisodeError("区間の形が違います")
+        start = round(float(echo.get("start", 0)), 2)
+        end = round(float(echo.get("end", 0)), 2)
+        if end <= start:
+            raise EpisodeError("区間の終わりは、始まりより後にしてください")
+        rows.append({"start": start, "end": end,
+                     "preset": (echo.get("preset") or "none")})
+    rows.sort(key=lambda r: r["start"])
+    cfg["echoes"] = rows
+    build.save_config({"dir": ep_dir}, cfg)
+    return rows
+
+
+def read_echoes(name, root=ROOT):
+    cfg = read_config(resolve(name, root))
+    return [{"start": e.get("start", 0), "end": e.get("end", 0),
+             "preset": e.get("preset") or "none"}
+            for e in (cfg.get("echoes") or [])]

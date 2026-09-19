@@ -7,12 +7,12 @@ google-auth-oauthlib
 # GUI（web/）
 fastapi
 uvicorn
+numpy
 
 # 今の GUI（app.py / 新しい GUI で1回分を通せたら消す）
 streamlit
 altair
 pandas
-numpy
 
 # テスト
 pytest
