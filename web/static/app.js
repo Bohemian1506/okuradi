@@ -1448,6 +1448,9 @@ async function saveEchoes() {
     });
     state.echoes = got.echoes;
     state.echoesSaved = JSON.stringify(got.echoes);
+    // 区間を変えたら整音は「古い」になる。取り直さないとパネルが嘘をつく
+    state.clean = await api(`/api/episodes/${state.selected.name}/clean`)
+      .catch(() => state.clean);
   } catch (err) {
     state.actionError = `区間を保存できませんでした: ${err.message}`;
   }
