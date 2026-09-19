@@ -47,6 +47,8 @@
         <button class="tab is-active" data-tab="1">1. 回の設定</button>
         <button class="tab" data-tab="2">2. 収録〜整音</button>
         <button class="tab" data-tab="3">3. 仕上げ</button>
+        <span style="flex:1"></span>
+        <button class="tab" id="chat-toggle">相談</button>
       </div>
     </header>
 
@@ -55,6 +57,9 @@
     <!-- 部品5 処理状況バーとログ -->
     <footer class="status" id="status"></footer>
   </div>
+
+  <!-- 部品6 相談チャット -->
+  <aside class="chat" id="chat" hidden></aside>
 </div>
 
 <script src="/static/app.js"></script>
