@@ -424,16 +424,76 @@ select.field { font-weight: 500; }
 /* ---------------------------------------------------------------- 画面2・3 の節
    見本: docs/design/screen2-recording-cleanup.dc.html（①音源を入れる → ②…の順） */
 
-.section { display: flex; flex-direction: column; gap: 14px; max-width: 760px; }
-.section-head { display: flex; align-items: flex-start; gap: 12px; }
+.sections { display: flex; flex-direction: column; gap: 28px; max-width: 900px; }
+.section { display: flex; flex-direction: column; gap: 14px; }
+.section-head { display: flex; align-items: center; gap: 14px; }
 .section-no {
-  width: 26px; height: 26px; border-radius: 50%; flex: none;
+  width: 36px; height: 36px; border-radius: 50%; flex: none;
   background: var(--ink); color: var(--cream-on-wood);
   display: flex; align-items: center; justify-content: center;
-  font: 500 13px var(--mono);
+  font: 500 15px var(--mono);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .35);
 }
-.section-title { font-size: 16px; font-weight: 900; }
-.section-note { font-size: 12px; color: var(--muted); line-height: 1.7; margin-top: 2px; }
+.section-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.section-title { font-size: 17px; font-weight: 900; }
+.section-note { font-size: 12px; color: var(--muted); line-height: 1.7; }
+.section-head .run { flex: none; }
+
+/* ---------------------------------------------------------------- 部品11 音声プレーヤー / 部品12 文字起こしリスト */
+
+.panel-card {
+  background: var(--cream); border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--rule);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+.player { padding: 14px 18px; border-bottom: 1px solid var(--rule); }
+.player-row { display: flex; align-items: center; gap: 14px; }
+.btn-play {
+  width: 44px; height: 44px; border-radius: 50%; border: none; flex: none;
+  background: var(--ink); color: var(--cream-on-wood);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .35);
+}
+.btn-play:disabled { background: var(--rule); color: var(--disabled); cursor: not-allowed; }
+
+.seek { flex: 1; height: 28px; display: flex; align-items: center; cursor: pointer; }
+.seek-track {
+  position: relative; flex: 1; height: 6px; border-radius: 3px; background: var(--rule);
+}
+.seek-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 3px; background: var(--accent);
+}
+.seek-knob {
+  position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--cream); border: 2px solid var(--accent);
+  transform: translate(-50%, -50%);
+}
+.player-time {
+  font: 500 13px var(--mono); color: var(--ink); white-space: nowrap;
+}
+.player-time .total { color: var(--disabled); }
+
+.lines {
+  height: 300px; overflow: auto; padding: 8px 8px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.line {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 7px 10px; border: none; border-radius: 10px;
+  background: transparent; cursor: pointer; text-align: left; width: 100%;
+}
+.line:hover { background: var(--cream-dim); }
+.line.is-now { background: #fdf1e4; box-shadow: inset 3px 0 0 var(--accent); }
+.line .at { font: 12px var(--mono); color: var(--disabled); flex: none; }
+.line.is-now .at { color: var(--accent-text); font-weight: 500; }
+.line .say { font-size: 14px; line-height: 1.7; text-wrap: pretty; }
+
+.lines-empty {
+  height: 140px; display: flex; align-items: center; justify-content: center;
+  color: var(--disabled); font-size: 13px; text-align: center; line-height: 1.8;
+}
 
 /* ---------------------------------------------------------------- 部品9 音源の追加 */
 

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from web import episodes, runner, sources
+from web import episodes, media, runner, sources
 
 STATIC = Path(__file__).parent / "static"
 
@@ -117,6 +117,18 @@ async def post_source(name: str, file: UploadFile = File(...)):
 @app.post("/api/episodes/{name}/source/from-obs")
 def post_source_from_obs(name: str, body: FromObs):
     return _guard(sources.add_from_obs, name, body.file)
+
+
+@app.get("/api/episodes/{name}/scan")
+def get_scan(name: str):
+    return _guard(media.read_scan, name)
+
+
+@app.get("/api/episodes/{name}/audio/{kind}")
+def get_audio(name: str, kind: str):
+    path = _guard(media.audio_path, name, kind)
+    # ブラウザが途中から読めるように（シーク）、Range に対応した返し方にする
+    return FileResponse(path, headers={"Accept-Ranges": "bytes"})
 
 
 # ---------------------------------------------------------------- 工程の実行
