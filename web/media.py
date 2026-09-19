@@ -153,3 +153,42 @@ def echo_preview(name, start, end, preset):
     cmd += ["-ar", "48000", "-ac", "1", str(dst)]
     build.run(cmd)
     return dst
+
+
+# ---------------------------------------------------------------- 整音の結果
+
+def clean_result(name):
+    """整音の結果（部品15 整音結果パネル）。"""
+    ep_dir = episodes.resolve(name)
+    clean = ep_dir / "01_clean" / "clean.wav"
+    if not clean.exists():
+        return {"state": "未実行"}
+
+    detail = {}
+    info = ep_dir / "01_clean" / "clean.json"
+    if info.exists():
+        try:
+            detail = json.loads(info.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            detail = {}
+
+    mark = ep_dir / "01_clean" / "confirmed"
+    # やり直したら「確認済み」は外れる（印より clean.wav が新しければ未確認）
+    confirmed = mark.exists() and mark.stat().st_mtime >= clean.stat().st_mtime
+
+    return {
+        "state": "完了",
+        "confirmed": confirmed,
+        "duration": detail.get("duration"),
+        "removed": detail.get("removed"),
+        "target_lufs": detail.get("target_lufs"),
+        "echoes": len(detail.get("echoes") or []),
+    }
+
+
+def confirm_clean(name):
+    ep_dir = episodes.resolve(name)
+    if not (ep_dir / "01_clean" / "clean.wav").exists():
+        raise episodes.EpisodeError("まだ整音していません")
+    (ep_dir / "01_clean" / "confirmed").write_text("", encoding="utf-8")
+    return clean_result(name)

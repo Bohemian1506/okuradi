@@ -156,6 +156,16 @@ def get_echo_preview(name: str, start: float, end: float, preset: str = "none"):
     return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/episodes/{name}/clean")
+def get_clean(name: str):
+    return _guard(media.clean_result, name)
+
+
+@app.post("/api/episodes/{name}/clean/confirm")
+def post_clean_confirm(name: str):
+    return _guard(media.confirm_clean, name)
+
+
 @app.get("/api/episodes/{name}/audio/{kind}")
 def get_audio(name: str, kind: str):
     path = _guard(media.audio_path, name, kind)

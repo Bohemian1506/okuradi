@@ -338,10 +338,12 @@ def step_clean(ep, cfg):
     if a.get("trim_silence", True):
         trim = "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB"
         filters += [trim, "areverse", trim, "areverse"]
+    before = audio_duration(src)
     run(["ffmpeg", "-y", "-i", str(src), "-af", ",".join(filters) or "anull",
          "-ar", "48000", "-ac", "1", str(trimmed)])
     total = audio_duration(trimmed)
-    print(f"-> {trimmed}  ({hhmmss(total)})  前後のトリムまで")
+    print(f"-> {trimmed}  ({hhmmss(total)})  前後のトリムまで"
+          f"（前後で {before - total:.1f}秒を削除）")
 
     # 2回目: エコーをかけてから正規化。
     # 正規化は必ず最後。エコーで足した分も、ここで天井に収まる。
@@ -359,6 +361,17 @@ def step_clean(ep, cfg):
         run(["ffmpeg", "-y", "-i", str(trimmed), "-af", loudnorm,
              "-ar", "48000", "-ac", "1", str(dst)])
         print(f"-> {dst}  ({hhmmss(audio_duration(dst))})")
+
+    # 整音の結果を残す。GUI がこれを読んで「整音結果」に出す。
+    (ep["01_clean"] / "clean.json").write_text(json.dumps({
+        "source": src.name,
+        "source_duration": round(before, 2),
+        "trimmed_duration": round(total, 2),
+        "duration": round(audio_duration(dst), 2),
+        "removed": round(before - total, 2),
+        "target_lufs": a.get("target_lufs", -14),
+        "echoes": [{"start": s, "end": e, "preset": p} for s, e, p in regions],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ---------------------------------------------------------------- 04. 文字起こし（確定）
