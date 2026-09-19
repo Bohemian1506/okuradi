@@ -457,7 +457,11 @@ select.field { font-weight: 500; }
 }
 .btn-play:disabled { background: var(--rule); color: var(--disabled); cursor: not-allowed; }
 
-.seek { flex: 1; height: 28px; display: flex; align-items: center; cursor: pointer; }
+.seek {
+  flex: 1; height: 28px; display: flex; align-items: center; cursor: pointer;
+  border: none; background: none; padding: 0;
+}
+.seek:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .seek-track {
   position: relative; flex: 1; height: 6px; border-radius: 3px; background: var(--rule);
 }
@@ -820,6 +824,7 @@ select.field { font-weight: 500; }
   border-color: var(--done); background: #eef5ec; color: oklch(0.45 0.13 150);
 }
 .btn-copy .what { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }
+.btn-copy .what svg { flex: none; }
 .btn-copy .peek {
   font-size: 11px; opacity: .75; max-width: 100%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -929,6 +934,56 @@ select.field { font-weight: 500; }
   border: 1.5px solid oklch(0.6 0.13 150 / .4);
 }
 .badge-done .mark { width: 8px; height: 8px; border-radius: 50%; background: var(--done); }
+
+/* 確認済みは「押す必要がもう無い」ことが一目で分かるように、塗りつぶしにする */
+.badge-done.is-confirmed {
+  background: var(--done); border-color: var(--done); color: #fff;
+}
+.badge-done.is-confirmed .mark { background: none; display: flex; }
+
+.badge-failed {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 999px; white-space: nowrap;
+  font-size: 12px; font-weight: 700;
+  color: oklch(0.45 0.2 25); background: #fbeee8;
+  border: 1.5px solid oklch(0.55 0.2 25 / .45);
+}
+.badge-failed .mark {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  background: oklch(0.55 0.2 25); color: #fff;
+  font: 700 10px/14px sans-serif; text-align: center;
+}
+
+.badge-running {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 999px; white-space: nowrap;
+  font-size: 12px; font-weight: 700;
+  color: oklch(0.5 0.18 45); background: #fdf1e4;
+  border: 1.5px solid oklch(0.65 0.18 45 / .5);
+}
+.badge-running .mark {
+  width: 9px; height: 9px; border-radius: 50%; flex: none; box-sizing: border-box;
+  border: 2px solid var(--accent); border-top-color: transparent;
+  animation: spin .9s linear infinite;
+}
+
+/* 終わりが読めないので、進み具合ではなく「動いている」ことだけ見せる */
+.running-bar {
+  height: 6px; border-radius: 3px; background: var(--rule); overflow: hidden;
+}
+.running-bar::after {
+  content: ""; display: block; width: 35%; height: 100%;
+  border-radius: 3px; background: var(--accent);
+  animation: slide 1.4s ease-in-out infinite;
+}
+@keyframes slide {
+  0% { margin-left: -35%; } 100% { margin-left: 100%; }
+}
+
+.panel-card.is-stale, .video-panel.is-stale {
+  box-shadow: inset 0 0 0 1.5px oklch(0.78 0.15 85 / .7);
+}
+.result-wave.is-stale .wave-bar { background: #5e3a23; }
 
 .badge-stale {
   display: inline-flex; align-items: center; gap: 6px;

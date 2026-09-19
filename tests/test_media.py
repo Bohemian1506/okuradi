@@ -517,3 +517,48 @@ def test_長いログは末尾だけ返す(ep):
 def test_GUI_で使わない工程のログは断る(ep):
     with pytest.raises(episodes.EpisodeError, match="知らない工程"):
         media.detail_log("ep01", "cut")
+
+
+# ---------------------------------------------------------------- 動画の「古い」
+
+def test_整音をやり直すと動画が古いになる(ep, monkeypatch):
+    import os
+    import time
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    monkeypatch.setattr(media, "duration_of", lambda path: 57.0)
+    monkeypatch.setattr(media, "video_size", lambda path: "1920x1080")
+
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
+    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    later = time.time() + 10
+    os.utime(ep / "01_clean" / "clean.wav", (later, later))
+
+    got = media.video_view("ep01")
+    assert got["state"] == "古い"
+    assert got["stale_reason"] == "整音をやり直しました"
+
+
+def test_整音より新しければ完了のまま(ep, monkeypatch):
+    import os
+    import time
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    monkeypatch.setattr(media, "duration_of", lambda path: 57.0)
+    monkeypatch.setattr(media, "video_size", lambda path: "")
+
+    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
+    later = time.time() + 10
+    os.utime(ep / "04_video" / "ep01.mp4", (later, later))
+
+    got = media.video_view("ep01")
+    assert got["state"] == "完了"
+    assert got["stale_reason"] is None
+    assert got["at"] > 0           # 作り直したら新しい動画を読ませるための印
+
+
+def test_長さが読めなくても完了として出す(ep, monkeypatch):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    monkeypatch.setattr(media, "duration_of", lambda path: None)
+    monkeypatch.setattr(media, "video_size", lambda path: "")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
+    assert media.video_view("ep01")["duration"] == ""

@@ -30,6 +30,9 @@ const SVG = {
   send: '<path d="M7 12V2M2.5 6.5L7 2l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/>',
   memo: '<path d="M3 1.5h6l3 3v8H3z" stroke-linejoin="round"/><path d="M5 7h4M5 9.5h4"/>',
   close: '<path d="M2 2l10 10M12 2L2 12"/>',
+  title: '<path d="M2 3.5h10M4 3.5v7.5M10 3.5v7.5" stroke-linecap="round"/>',
+  lines: '<path d="M2 3h10M2 6h10M2 9h7M2 12h4" stroke-linecap="round"/>',
+  tag: '<path d="M2 2h5l5 5-5 5-5-5z" stroke-linejoin="round"/><circle cx="4.5" cy="4.5" r=".8" fill="currentColor"/>',
 };
 
 const ACCEPTED_TEXT = "wav / m4a / mkv / mp4 / mov / flv";
@@ -314,25 +317,22 @@ function screenFinishing() {
 
 function videoCard() {
   const data = state.video || { state: "未実行" };
-  const running = state.job && state.job.state === "処理中"
-    && state.job.episode === state.selected.name && state.job.step === "video";
+  const box = el("div", "video-panel");
 
-  if (running) {
-    const box = el("div", "video-panel");
-    box.appendChild(el("div", "lines-empty", "動画を作っています…"));
-    return box;
-  }
-  if (data.state !== "完了") {
-    const box = el("div", "video-panel");
+  const banner = jobBanner("video", "動画");
+  if (banner) { box.appendChild(banner); if (data.state === "未実行") return box; }
+
+  if (data.state === "未実行") {
     box.appendChild(el("div", "lines-empty",
       "まだ動画がありません。右上の「動画を実行」を押すと作られます。"));
     return box;
   }
 
-  const box = el("div", "video-panel");
+  const stale = data.state === "古い";
+  if (stale) box.classList.add("is-stale");
   const top = el("div", "video-top");
-  const badge = el("span", "badge-done");
-  badge.append(el("span", "mark"), document.createTextNode("完了"));
+  const badge = el("span", stale ? "badge-stale" : "badge-done");
+  badge.append(el("span", "mark"), document.createTextNode(stale ? "古い" : "完了"));
   const about = [data.name, data.duration, data.resolution, data.size]
     .filter(Boolean).join(" · ");
 
@@ -343,8 +343,21 @@ function videoCard() {
     + "フォルダを開く";
   open.onclick = () => openVideoFolder();
 
-  top.append(badge, el("span", "video-about", about), el("span", "spacer"), open);
+  top.append(badge, el("span", "video-about", about), el("span", "spacer"));
+  if (stale) {
+    const redo = el("button", "btn-primary");
+    redo.innerHTML = icon(SVG.redo, 14) + "動画をやり直す";
+    redo.onclick = () => runStep("video");
+    top.appendChild(redo);
+  }
+  top.appendChild(open);
   box.appendChild(top);
+  if (stale) {
+    const why = el("div", "result-stale");
+    why.append(el("span", "mark", "!"), el("span", null,
+      `${data.stale_reason}。作り直すと、いまの音で動画ができます。`));
+    box.appendChild(why);
+  }
 
   const body = el("div", "video-body");
   const player = el("video");
@@ -352,7 +365,7 @@ function videoCard() {
   // 音声と動画が同時に鳴らないようにする
   player.onplay = () => audio.pause();
   player.preload = "metadata";
-  player.src = `/api/episodes/${state.selected.name}/video/file`;
+  player.src = `/api/episodes/${state.selected.name}/video/file?t=${data.at || 0}`;
   body.appendChild(player);
 
   const marks = el("div", "video-marks");
@@ -412,16 +425,23 @@ function copyCard() {
   }
 
   const rows = el("div", "copies");
+  // 概要欄は、目次が付いているかを押す前に確かめられるようにする
+  const chapters = (data.description.match(/\n\d+:\d\d /g) || []).length;
+  const descPeek = chapters
+    ? `${data.description.split("\n")[0]} …＋目次${chapters}件`
+    : `${data.description.split("\n")[0]}（目次なし）`;
+
   const items = [
-    ["title", "タイトル", data.title],
-    ["description", "概要欄（章つき）", data.description.split("\n")[0]],
-    ["tags", "タグ", data.tags],
+    ["title", "タイトル", SVG.title, data.title],
+    ["description", "概要欄（章つき）", SVG.lines, descPeek],
+    ["tags", "タグ", SVG.tag, data.tags],
   ];
-  for (const [key, label, peek] of items) {
+  for (const [key, label, mark, peek] of items) {
     const button = el("button", "btn-copy");
     if (state.copied === key) button.classList.add("is-copied");
     button.disabled = issues.length > 0;
     const what = el("span", "what");
+    what.innerHTML = icon(mark, 14, 1.6);
     what.append(document.createTextNode(state.copied === key ? "コピーしました" : label));
     button.append(what, el("span", "peek", peek || "（空）"));
     button.onclick = () => copyOne(key, data[key]);
@@ -843,9 +863,55 @@ function cleanPlayerRow() {
 
 // ---------------------------------------------------------------- 部品15 整音結果パネル
 
+// その工程がいま動いているか、直前に失敗・中止したか
+function jobFor(step) {
+  const job = state.job;
+  if (!job || !state.selected) return null;
+  if (job.episode !== state.selected.name || job.step !== step) return null;
+  return job;
+}
+
+// パネルの中に出す「処理中」と「エラー・中止」（見本の部品15・19）
+function jobBanner(step, label) {
+  const job = jobFor(step);
+  if (!job) return null;
+
+  if (job.state === "処理中") {
+    const box = el("div", "result");
+    const top = el("div", "result-top");
+    const badge = el("span", "badge-running");
+    badge.append(el("span", "mark"),
+                 document.createTextNode(`処理中 ${clock(job.elapsed)}`));
+    const tail = (job.lines || []).filter((l) => l.trim()).slice(-1)[0] || "";
+    const stop = el("button", "btn-plain", "中止");
+    stop.onclick = () => cancelJob();
+    top.append(badge, el("span", "result-about", tail), el("span", "spacer"), stop);
+    box.append(top, el("div", "running-bar"));
+    return box;
+  }
+
+  if (job.state === "エラー" || job.state === "中止") {
+    const box = el("div", "result");
+    const top = el("div", "result-top");
+    const badge = el("span", "badge-failed");
+    badge.append(el("span", "mark", "!"), document.createTextNode(job.state));
+    const why = job.state === "中止" ? "結果は前のままです"
+      : ((job.lines || []).filter((l) => l.trim()).slice(-1)[0] || "");
+    const again = el("button", "btn-plain", "もう一度実行");
+    again.onclick = () => runStep(step);
+    top.append(badge, el("span", "result-about", why), el("span", "spacer"), again);
+    box.appendChild(top);
+    return box;
+  }
+  return null;
+}
+
 function cleanCard() {
   const card = el("div", "panel-card");
   const result = state.clean || { state: "未実行" };
+
+  const banner = jobBanner("clean", "整音");
+  if (banner) { card.appendChild(banner); if (result.state === "未実行") return card; }
 
   if (result.state === "未実行") {
     card.appendChild(el("div", "result-empty",
@@ -853,13 +919,19 @@ function cleanCard() {
     return card;
   }
   const stale = result.state === "古い";
+  if (stale) card.classList.add("is-stale");
 
   const box = el("div", "result");
   const top = el("div", "result-top");
 
-  const badge = el("span", stale ? "badge-stale" : "badge-done");
-  badge.append(el("span", "mark"), document.createTextNode(
-    stale ? "古い" : result.confirmed ? "完了 · 確認済み" : "完了 · 未確認"));
+  const badge = el("span", stale ? "badge-stale"
+    : result.confirmed ? "badge-done is-confirmed" : "badge-done");
+  const mark = el("span", "mark");
+  if (result.confirmed && !stale) {
+    mark.innerHTML = icon(SVG.check, 11, 2.2, 10).replace('stroke="currentColor"', 'stroke="#fff"');
+  }
+  badge.append(mark, document.createTextNode(
+    stale ? "古い" : result.confirmed ? "確認した" : "完了 · 未確認"));
 
   const about = ["clean.wav", clock(result.duration)];
   if (result.removed) about.push(`前後で ${result.removed.toFixed(1)}秒を削除`);
@@ -868,14 +940,19 @@ function cleanCard() {
   }
   if (result.echoes) about.push(`エコー${result.echoes}区間`);
 
-  const done = el("button", result.confirmed ? "btn-plain" : "btn-primary",
-                  result.confirmed ? "確認済み" : "確認した");
-  done.disabled = result.confirmed || stale;
-  done.title = stale ? "作り直してから確認してください" : "";
-  done.onclick = () => confirmClean();
-
   top.append(badge, el("span", "result-about", about.join(" · ")),
-             el("span", "spacer"), done);
+             el("span", "spacer"));
+  if (stale) {
+    const redo = el("button", "btn-primary");
+    redo.innerHTML = icon(SVG.redo, 14) + "整音をやり直す";
+    redo.onclick = () => runStep("clean");
+    top.appendChild(redo);
+  } else if (!result.confirmed) {
+    // 確認済みになったらボタンは出さない（もう押す必要がない）
+    const done = el("button", "btn-primary", "確認した");
+    done.onclick = () => confirmClean();
+    top.appendChild(done);
+  }
   box.appendChild(top);
 
   if (stale) {
@@ -886,7 +963,7 @@ function cleanCard() {
   }
 
   // 整音後の波形は、いまは整音前のものを使い回す（形はほぼ同じ）
-  const wave = el("div", "result-wave");
+  const wave = el("div", `result-wave ${stale ? "is-stale" : ""}`);
   const peaks = (state.wave && state.wave.peaks) || [];
   for (const peak of peaks.filter((_, i) => i % 2 === 0)) {
     const bar = el("span", "wave-bar");
@@ -901,42 +978,16 @@ function cleanCard() {
 }
 
 function cleanPlayer(result) {
-  const row = el("div", "player-row");
   const total = result.duration || 0;
   const now = state.listening === "clean";
-
-  const play = el("button", "btn-play");
-  play.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">${
-    now && state.playing ? SVG.pause : SVG.playBig}</svg>`;
-  play.title = now && state.playing ? "停止" : "再生";
-  play.setAttribute("aria-label", "再生/停止");
-  play.onclick = () => {
-    if (now && state.playing) { audio.pause(); return; }
-    listenTo("clean", 0);
-  };
-
-  const seek = el("div", "seek");
-  const track = el("div", "seek-track");
-  const ratio = now && total ? Math.min(state.at / total, 1) : 0;
-  const fill = el("div", "seek-fill");
-  fill.style.width = `${ratio * 100}%`;
-  const knob = el("div", "seek-knob");
-  knob.style.left = `${ratio * 100}%`;
-  track.append(fill, knob);
-  seek.appendChild(track);
-  seek.onclick = (event) => {
-    if (!total) return;
-    const rect = track.getBoundingClientRect();
-    listenTo("clean",
-      Math.max(0, Math.min((event.clientX - rect.left) / rect.width, 1)) * total);
-  };
-
-  const time = el("span", "player-time");
-  time.append(document.createTextNode(clock(now ? state.at : 0)),
-              el("span", "total", ` / ${clock(total)}`));
-
-  row.append(play, seek, time);
-  return row;
+  return playerRow({
+    total, at: now ? state.at : 0, playing: now && state.playing,
+    onToggle: () => {
+      if (now && state.playing) { audio.pause(); return; }
+      listenTo("clean", now ? state.at : 0);
+    },
+    onSeek: (to) => listenTo("clean", to),
+  });
 }
 
 function listenTo(kind, at) {
@@ -1193,41 +1244,73 @@ function scanCard() {
   return card;
 }
 
-function player(scan) {
-  const box = el("div", "player");
+// 再生ボタン・シークバー・時刻。部品11（下見）と部品15（整音結果）で同じものを使う
+function playerRow({ total, at, playing, disabled, onToggle, onSeek }) {
   const row = el("div", "player-row");
-  const total = (scan && scan.duration) || audio.duration || 0;
-  const ready = state.source && state.source.state === "使える";
 
   const play = el("button", "btn-play");
   play.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">${
-    state.playing ? SVG.pause : SVG.playBig}</svg>`;
-  play.title = state.playing ? "停止" : "再生";
+    playing ? SVG.pause : SVG.playBig}</svg>`;
+  play.title = playing ? "停止" : "再生";
   play.setAttribute("aria-label", "再生/停止");
-  play.disabled = !ready;
-  play.onclick = () => togglePlay();
+  play.disabled = !!disabled;
+  play.onclick = onToggle;
 
-  const seek = el("div", "seek");
+  // キーボードでも動かせるようにする（矢印で5秒、Home/End で端へ）
+  const seek = el("button", "seek");
+  seek.type = "button";
+  seek.setAttribute("role", "slider");
+  seek.setAttribute("aria-label", "再生位置");
+  seek.setAttribute("aria-valuemin", "0");
+  seek.setAttribute("aria-valuemax", String(Math.round(total)));
+  seek.setAttribute("aria-valuenow", String(Math.round(at)));
+  seek.setAttribute("aria-valuetext", `${clock(at)} / ${clock(total)}`);
+  seek.disabled = !!disabled || !total;
+
   const track = el("div", "seek-track");
-  const ratio = total ? Math.min(state.at / total, 1) : 0;
+  const ratio = total ? Math.min(at / total, 1) : 0;
   const fill = el("div", "seek-fill");
   fill.style.width = `${ratio * 100}%`;
   const knob = el("div", "seek-knob");
   knob.style.left = `${ratio * 100}%`;
   track.append(fill, knob);
   seek.appendChild(track);
+
   seek.onclick = (event) => {
     if (!total) return;
-    const box = track.getBoundingClientRect();
-    seekTo(Math.max(0, Math.min((event.clientX - box.left) / box.width, 1)) * total);
+    const rect = track.getBoundingClientRect();
+    onSeek(Math.max(0, Math.min((event.clientX - rect.left) / rect.width, 1)) * total);
+  };
+  seek.onkeydown = (event) => {
+    if (!total) return;
+    const step = event.shiftKey ? 30 : 5;
+    const moves = {
+      ArrowLeft: at - step, ArrowRight: at + step,
+      ArrowDown: at - step, ArrowUp: at + step,
+      Home: 0, End: total,
+    };
+    if (!(event.key in moves)) return;
+    event.preventDefault();
+    onSeek(Math.max(0, Math.min(moves[event.key], total)));
   };
 
   const time = el("span", "player-time");
-  time.append(document.createTextNode(clock(state.at)),
+  time.append(document.createTextNode(clock(at)),
               el("span", "total", ` / ${clock(total)}`));
 
   row.append(play, seek, time);
-  box.appendChild(row);
+  return row;
+}
+
+function player(scan) {
+  const box = el("div", "player");
+  const total = (scan && scan.duration) || audio.duration || 0;
+  box.appendChild(playerRow({
+    total, at: state.at, playing: state.playing,
+    disabled: !(state.source && state.source.state === "使える"),
+    onToggle: () => togglePlay(),
+    onSeek: (to) => seekTo(to),
+  }));
   return box;
 }
 
