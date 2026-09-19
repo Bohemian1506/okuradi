@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#d9cfb8;font-family:"Zen Kaku Gothic New","Noto Sans JP",system-ui,sans-serif;color:#3a2418;-webkit-font-smoothing:antialiased}
+a{color:oklch(0.58 0.18 45)} a:hover{color:oklch(0.48 0.18 45)}
+button,input,textarea,select{font-family:inherit}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes needle{0%,100%{transform:translateX(-1px)}50%{transform:translateX(1px)}}
+</style>
+</helmet>
+
+<section id="2a" style="display:flex;flex-direction:column">
+  <div style="display:flex;align-items:baseline;gap:14px;padding:14px 24px;flex-wrap:wrap">
+    <a href="#2a" style="font:500 12px 'DM Mono',monospace;background:#3a2418;color:#fff3dc;padding:3px 8px;border-radius:4px;text-decoration:none">2a</a>
+    <div style="font-size:18px;font-weight:700">共通の枠 — トランジスタラジオ（木目・濃いめ）</div>
+    <div style="font-size:13px;color:#7a6250">木目の筐体にクリームの前面板。工程はチューニング目盛り、赤い針が今の工程を指す。</div>
+  </div>
+
+  <!-- 筐体（木目） -->
+  <div style="position:relative;width:100%;min-width:1280px;height:calc(100vh - 56px);min-height:760px;box-sizing:border-box;padding:14px 14px 14px 0;display:grid;grid-template-columns:236px minmax(0,1fr) auto;gap:0 14px;background-color:#54341f;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='300'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.006 0.5' numOctaves='4' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.6'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E&quot;),repeating-linear-gradient(0deg,rgba(0,0,0,.2) 0 1px,transparent 1px 7px),repeating-linear-gradient(0deg,rgba(255,210,160,.08) 0 2px,transparent 2px 19px),linear-gradient(180deg,#5e3a23,#4a2c1b);background-blend-mode:multiply,normal,normal,normal;box-shadow:inset 0 2px 0 rgba(255,230,200,.18),inset 0 -2px 0 rgba(0,0,0,.4)">
+
+    <!-- 部品1 回セレクタ（木目の上に直接） -->
+    <aside style="display:flex;flex-direction:column;min-height:0;color:#f6efe0;padding:6px 0 0 14px">
+      <div style="padding:10px 6px 14px;display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:22px;font-weight:900;letter-spacing:.02em;color:#fff3dc;text-shadow:0 1px 0 rgba(0,0,0,.4)">置くラジ</span>
+        <span style="font:11px 'DM Mono',monospace;letter-spacing:.18em;color:#d9c3a0">OKURADI · 10 MIN</span>
+      </div>
+      <div style="height:34px;margin:0 6px 12px;border-radius:6px;background-color:#3a2418;background-image:radial-gradient(circle,#1d110b 1.4px,transparent 1.6px);background-size:7px 7px;box-shadow:inset 0 2px 4px rgba(0,0,0,.6)"></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:0 8px 8px">
+        <span style="font-size:11px;font-weight:700;letter-spacing:.14em;color:#d9c3a0">回</span>
+        <span style="font:12px 'DM Mono',monospace;color:#b89e7c">3件</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;overflow:auto;flex:1;padding-right:2px">
+        <sc-for list="{{ episodes }}" as="ep" hint-placeholder-count="3">
+          <button onClick="{{ ep.select }}" style="{{ ep.style }}" style-hover="background:rgba(255,240,220,.12)">
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font:500 13px 'DM Mono',monospace">{{ ep.id }}</span>
+              <span style="{{ ep.progressStyle }}">{{ ep.progress }}</span>
+            </div>
+            <div style="font-size:13px;font-weight:500;line-height:1.5;margin-top:3px;text-wrap:pretty">{{ ep.theme }}</div>
+            <div style="display:flex;gap:5px;margin-top:9px">
+              <sc-for list="{{ ep.dots }}" as="d" hint-placeholder-count="6">
+                <span style="{{ d }}"></span>
+              </sc-for>
+            </div>
+          </button>
+        </sc-for>
+      </div>
+      <div style="padding:12px 6px 4px">
+        <button onClick="{{ openNew }}" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:11px;border:none;border-radius:999px;background:oklch(0.65 0.18 45);color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25),0 2px 4px rgba(0,0,0,.3)" style-hover="background:oklch(0.6 0.18 45)">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 1.5v11M1.5 7h11"/></svg>
+          新しい回
+        </button>
+      </div>
+    </aside>
+
+    <!-- 前面板（クリーム） -->
+    <div style="display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-width:0;min-height:0;overflow:hidden;background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5,inset 0 2px 6px rgba(58,36,24,.25)">
+
+      <!-- 部品3 工程ステッパー = チューニング目盛り -->
+      <header style="background:#fffaf0;border-bottom:1px solid #e3d7bf;padding:16px 24px 0;display:flex;flex-direction:column;gap:12px;border-radius:14px 14px 0 0">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div style="position:relative;flex:1;display:grid;grid-template-columns:repeat(6,1fr);padding-bottom:14px;border-bottom:2px solid #3a2418">
+            <sc-for list="{{ steps }}" as="s" hint-placeholder-count="6">
+              <button onClick="{{ s.go }}" title="{{ s.title }}" style="{{ s.style }}" style-hover="background:#f6efe0">
+                <span style="font-size:14px;font-weight:700;line-height:1.3">{{ s.name }}</span>
+                <span style="{{ s.labelStyle }}">{{ s.status }}</span>
+              </button>
+            </sc-for>
+            <span style="position:absolute;left:0;right:0;bottom:-2px;height:6px;background:repeating-linear-gradient(90deg,#3a2418 0 1px,transparent 1px calc(100%/48));"></span>
+            <span style="position:absolute;left:0;right:0;bottom:-2px;height:10px;background:repeating-linear-gradient(90deg,#3a2418 0 1.5px,transparent 1.5px calc(100%/6))"></span>
+            <span style="{{ needleStyle }}"></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;padding-bottom:12px;align-items:center">
+          <span style="font:500 12px 'DM Mono',monospace;letter-spacing:.1em;color:#7a6250;white-space:nowrap;margin-right:8px">ep02</span>
+          <button onClick="{{ goTab1 }}" style="{{ tab1Style }}">1. 回の設定</button>
+          <button onClick="{{ goTab2 }}" style="{{ tab2Style }}">2. 収録〜整音</button>
+          <button onClick="{{ goTab3 }}" style="{{ tab3Style }}">3. 仕上げ</button>
+          <span style="flex:1"></span>
+          <button onClick="{{ toggleChat }}" style="{{ chatBtnStyle }}">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h12v7H7l-3 2.5v-2.5H2z" stroke-linejoin="round"/></svg>
+            相談
+          </button>
+        </div>
+      </header>
+
+      <main style="padding:20px 24px;overflow:auto;min-height:0">
+        <div style="height:100%;border:2px dashed #cdbfa5;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#a08c78;box-sizing:border-box">
+          <div style="font-size:15px;font-weight:700;color:#7a6250">{{ tabName }}</div>
+          <div style="font-size:13px">この画面の中身は次の依頼で入れます</div>
+        </div>
+      </main>
+
+      <!-- 部品5 処理状況バー / ログ -->
+      <footer style="background:#fffaf0;border-top:1px solid #e3d7bf;border-radius:0 0 14px 14px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:14px;padding:10px 24px;min-height:52px">
+          <span style="width:12px;height:12px;border-radius:50%;background:oklch(0.65 0.18 45);box-shadow:0 0 0 3px #fffaf0,0 0 0 4.5px oklch(0.65 0.18 45),0 0 14px oklch(0.75 0.18 45);animation:blink 1.4s infinite;flex:none"></span>
+          <span style="font-size:13px;font-weight:700">整音 を処理中</span>
+          <span style="font:500 14px 'DM Mono',monospace;color:#7a6250">{{ elapsed }}</span>
+          <span style="flex:1"></span>
+          <button style="padding:7px 16px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418;cursor:pointer" style-hover="border-color:#3a2418">中止</button>
+          <button onClick="{{ toggleLog }}" style="display:flex;align-items:center;gap:6px;padding:7px 12px;border:none;border-radius:999px;background:transparent;font-size:13px;font-weight:500;color:#7a6250;cursor:pointer" style-hover="background:#f6efe0;color:#3a2418">
+            ログ
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" style="{{ logChevronStyle }}"><path d="M2 4l4 4 4-4"/></svg>
+          </button>
+        </div>
+        <sc-if value="{{ logOpen }}" hint-placeholder-val="{{ true }}">
+          <pre style="margin:0 14px 14px;height:168px;overflow:auto;background:#2a1a10;color:#e6d3b3;font:12px/1.7 'DM Mono',monospace;padding:12px 16px;border-radius:10px;box-shadow:inset 0 2px 6px rgba(0,0,0,.5)"><span style="color:#a08c78">[00:00.1]</span> ffmpeg -i ep02_raw.wav -af loudnorm=I=-16:TP=-1.5:LRA=11 …
+<span style="color:#a08c78">[00:03.8]</span> 無音を検出: 先頭 2.4s / 末尾 5.1s を削除
+<span style="color:#a08c78">[00:12.2]</span> エコー区間 2/2 を適用 (軽め 03:12–03:20, 響く 07:45–07:52)
+<span style="color:#a08c78">[00:31.0]</span> ラウドネス正規化 pass 1/2 … 完了
+<span style="color:#a08c78">[00:40.6]</span> ラウドネス正規化 pass 2/2 … <span style="animation:blink 1s infinite">▌</span></pre>
+        </sc-if>
+      </footer>
+    </div>
+
+    <!-- 部品6 相談チャット -->
+    <sc-if value="{{ chatOpen }}" hint-placeholder-val="{{ true }}">
+      <aside style="width:300px;background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5,inset 0 2px 6px rgba(58,36,24,.25);display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;min-height:0;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;background:#fffaf0;border-bottom:1px solid #e3d7bf">
+          <div style="font-size:14px;font-weight:900">相談</div>
+          <button onClick="{{ toggleChat }}" aria-label="閉じる" style="width:28px;height:28px;border:none;border-radius:50%;background:transparent;cursor:pointer;color:#7a6250;display:flex;align-items:center;justify-content:center" style-hover="background:#f6efe0;color:#3a2418">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 2l10 10M12 2L2 12"/></svg>
+          </button>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;border-bottom:1px solid #e3d7bf;font-size:12px;color:#7a6250">
+          <span>読んでいるもの: <strong style="color:#3a2418;font-weight:700">下見</strong></span>
+          <button style="border:none;background:none;padding:0;font-size:12px;color:#7a6250;cursor:pointer;text-decoration:underline;text-underline-offset:3px" style-hover="color:#3a2418">会話をリセット</button>
+        </div>
+        <div style="overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.7">
+          <div style="align-self:flex-end;max-width:85%;background:#3a2418;color:#fff3dc;border-radius:14px 14px 4px 14px;padding:9px 13px">オープニングが長い気がする。どこで切れそう？</div>
+          <div style="max-width:92%;background:#fffaf0;border:1px solid #e3d7bf;border-radius:14px 14px 14px 4px;padding:9px 13px;text-wrap:pretty">下見を読むと、02:10 あたりまで挨拶と前回のふりかえりが続いています。「今日のテーマは」と言い始める 02:14 の直前で切ると、本題に入るまでが 40 秒ほど短くなります。</div>
+        </div>
+        <div style="padding:12px 16px 14px;border-top:1px solid #e3d7bf;display:flex;flex-direction:column;gap:10px;background:#fffaf0">
+          <div style="display:flex;align-items:flex-end;gap:8px;border:1.5px solid #cdbfa5;border-radius:14px;padding:8px 8px 8px 12px;background:#fff">
+            <textarea rows="2" placeholder="この回について聞く" style="flex:1;border:none;outline:none;resize:none;font-size:13px;line-height:1.6;background:transparent;color:#3a2418"></textarea>
+            <button aria-label="送信" style="width:30px;height:30px;border:none;border-radius:50%;background:oklch(0.65 0.18 45);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 12V2M2.5 6.5L7 2l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <button style="align-self:flex-start;display:flex;align-items:center;gap:6px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;padding:6px 12px;font-size:12px;font-weight:500;color:#3a2418;cursor:pointer" style-hover="border-color:#3a2418">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 1.5h6l3 3v8H3z" stroke-linejoin="round"/><path d="M5 7h4M5 9.5h4"/></svg>
+            改善メモに残す
+          </button>
+        </div>
+      </aside>
+    </sc-if>
+
+    <!-- 部品2 新しい回ダイアログ -->
+    <sc-if value="{{ newOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeNew }}" style="position:absolute;inset:0;background:rgba(40,22,12,.5);display:flex;align-items:center;justify-content:center;border-radius:0">
+        <div onClick="{{ stop }}" style="width:440px;background:#fffaf0;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.4),inset 0 0 0 1px #cdbfa5;padding:24px;display:flex;flex-direction:column;gap:16px">
+          <div style="font-size:18px;font-weight:900">新しい回</div>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">回の番号
+            <input value="ep04" style="font:500 14px 'DM Mono',monospace;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff;outline-color:oklch(0.65 0.18 45)"></label>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">コーナー
+            <select style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418"><option>今更聞けない</option><option>ランテック通信</option><option>ITニュースざっくり</option></select></label>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">テーマ
+            <input placeholder="例: OSI参照モデルの7層" style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff;outline-color:oklch(0.65 0.18 45)"></label>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px">
+            <button onClick="{{ closeNew }}" style="padding:10px 18px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;cursor:pointer;color:#3a2418">キャンセル</button>
+            <button onClick="{{ closeNew }}" style="padding:10px 20px;border:none;border-radius:999px;background:oklch(0.65 0.18 45);color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)">作成</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+</section>
+
+<!-- ===================== 状態見本 ===================== -->
+<section id="2b" style="padding:40px 24px 64px;display:flex;flex-direction:column;gap:40px;max-width:1536px">
+  <div style="display:flex;align-items:baseline;gap:14px">
+    <a href="#2b" style="font:500 12px 'DM Mono',monospace;background:#3a2418;color:#fff3dc;padding:3px 8px;border-radius:4px;text-decoration:none">2b</a>
+    <div style="font-size:18px;font-weight:700">状態見本（部品1〜7）</div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font-size:13px;font-weight:700;color:#7a6250">状態の言葉と色（全画面で統一）</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:999px;background:#fffaf0;border:1px solid #e3d7bf;font-size:13px;font-weight:500"><span style="width:9px;height:9px;border-radius:50%;border:1.5px solid #cdbfa5;box-sizing:border-box"></span>未実行</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:999px;background:#fffaf0;border:1px solid #e3d7bf;font-size:13px;font-weight:500"><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.65 0.18 45)"></span>実行できる</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:999px;background:#fffaf0;border:1px solid #e3d7bf;font-size:13px;font-weight:500"><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.65 0.18 45);box-shadow:0 0 8px oklch(0.75 0.18 45);animation:blink 1.4s infinite"></span>処理中</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:999px;background:#fffaf0;border:1px solid #e3d7bf;font-size:13px;font-weight:500"><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.6 0.13 150)"></span>完了</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:999px;background:#fffaf0;border:1px solid #e3d7bf;font-size:13px;font-weight:500"><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.55 0.2 25)"></span>エラー</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:999px;background:#fffaf0;border:1px solid #e3d7bf;font-size:13px;font-weight:500"><span style="width:9px;height:9px;border-radius:50%;background:#8a6f5c"></span>中止</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:999px;background:#fffaf0;border:1px solid #e3d7bf;font-size:13px;font-weight:500"><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.78 0.15 85)"></span>古い</span>
+    </div>
+    <div style="font-size:12px;color:#a08c78">処理中は「灯っているランプ」（点滅＋にじみ）、他は塗りの丸。木目の上では同じ色をそのまま使う。</div>
+  </div>
+
+  <!-- 部品1 -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font-size:13px;font-weight:700;color:#7a6250">部品1 回セレクタ — 回がない / 通常 / 選択中</div>
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+      <div style="width:236px;height:232px;border-radius:12px;padding:14px;box-sizing:border-box;display:flex;flex-direction:column;color:#f6efe0;background-color:#54341f;background-image:repeating-linear-gradient(0deg,rgba(0,0,0,.2) 0 1px,transparent 1px 7px),repeating-linear-gradient(0deg,rgba(255,210,160,.08) 0 2px,transparent 2px 19px),linear-gradient(180deg,#5e3a23,#4a2c1b)">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.14em;color:#d9c3a0">回</div>
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:12px;color:#d9c3a0;text-align:center;line-height:1.7">まだ回がありません</div>
+        <button style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:11px;border:none;border-radius:999px;background:oklch(0.65 0.18 45);color:#fff;font-size:13px;font-weight:700;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25),0 2px 4px rgba(0,0,0,.3)"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 1.5v11M1.5 7h11"/></svg>新しい回</button>
+      </div>
+      <div style="width:236px;border-radius:12px;padding:10px;box-sizing:border-box;color:#f6efe0;background-color:#54341f;background-image:repeating-linear-gradient(0deg,rgba(0,0,0,.2) 0 1px,transparent 1px 7px),repeating-linear-gradient(0deg,rgba(255,210,160,.08) 0 2px,transparent 2px 19px),linear-gradient(180deg,#5e3a23,#4a2c1b)">
+        <div style="padding:10px 12px;border-radius:10px"><div style="display:flex;justify-content:space-between"><span style="font:500 13px 'DM Mono',monospace">ep01</span><span style="font:12px 'DM Mono',monospace;color:#d9c3a0">6/6</span></div><div style="font-size:13px;font-weight:500;line-height:1.5;margin-top:3px">今更聞けない OSI参照モデルの7層</div><div style="display:flex;gap:5px;margin-top:9px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.75 0.14 150)"></span><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.75 0.14 150)"></span><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.75 0.14 150)"></span><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.75 0.14 150)"></span><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.75 0.14 150)"></span><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.75 0.14 150)"></span></div></div>
+        <div style="font-size:11px;color:#d9c3a0;padding:8px 12px 2px">通常（押すと選択）</div>
+      </div>
+      <div style="width:236px;border-radius:12px;padding:10px;box-sizing:border-box;color:#f6efe0;background-color:#54341f;background-image:repeating-linear-gradient(0deg,rgba(0,0,0,.2) 0 1px,transparent 1px 7px),repeating-linear-gradient(0deg,rgba(255,210,160,.08) 0 2px,transparent 2px 19px),linear-gradient(180deg,#5e3a23,#4a2c1b)">
+        <div style="padding:10px 12px;border-radius:10px;background:#f6efe0;color:#3a2418;box-shadow:0 2px 6px rgba(0,0,0,.3)"><div style="display:flex;justify-content:space-between"><span style="font:500 13px 'DM Mono',monospace">ep02</span><span style="font:12px 'DM Mono',monospace;color:#7a6250">2/6</span></div><div style="font-size:13px;font-weight:500;line-height:1.5;margin-top:3px">ランテック通信 #1</div><div style="display:flex;gap:5px;margin-top:9px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.6 0.13 150)"></span><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.6 0.13 150)"></span><span style="width:9px;height:9px;border-radius:50%;background:oklch(0.65 0.18 45);box-shadow:0 0 6px oklch(0.75 0.18 45);animation:blink 1.4s infinite"></span><span style="width:9px;height:9px;border-radius:50%;border:1.5px solid #cdbfa5;box-sizing:border-box"></span><span style="width:9px;height:9px;border-radius:50%;border:1.5px solid #cdbfa5;box-sizing:border-box"></span><span style="width:9px;height:9px;border-radius:50%;border:1.5px solid #cdbfa5;box-sizing:border-box"></span></div></div>
+        <div style="font-size:11px;color:#d9c3a0;padding:8px 12px 2px">選択中（クリームの札が浮く）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 部品2 -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font-size:13px;font-weight:700;color:#7a6250">部品2 新しい回ダイアログ — 入力中 / 作成中 / エラー</div>
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+      <div style="width:400px;background:#fffaf0;border-radius:18px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px;display:flex;flex-direction:column;gap:14px">
+        <div style="font-size:18px;font-weight:900">新しい回</div>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">回の番号<input value="ep04" style="font:500 14px 'DM Mono',monospace;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff"></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">コーナー<select style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418"><option>今更聞けない</option></select></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">テーマ<input value="OSI参照モデルの7層" style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff"></label>
+        <div style="display:flex;justify-content:flex-end;gap:8px"><button style="padding:10px 18px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">キャンセル</button><button style="padding:10px 20px;border:none;border-radius:999px;background:oklch(0.65 0.18 45);color:#fff;font-size:13px;font-weight:700;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)">作成</button></div>
+      </div>
+      <div style="width:400px;background:#fffaf0;border-radius:18px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px;display:flex;flex-direction:column;gap:14px">
+        <div style="font-size:18px;font-weight:900">新しい回</div>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">回の番号<input disabled value="ep04" style="font:500 14px 'DM Mono',monospace;padding:10px 12px;border:1.5px solid #e3d7bf;border-radius:10px;color:#a08c78;background:#f6efe0"></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">コーナー<select disabled style="font-size:14px;padding:10px 12px;border:1.5px solid #e3d7bf;border-radius:10px;background:#f6efe0;color:#a08c78"><option>今更聞けない</option></select></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">テーマ<input disabled value="OSI参照モデルの7層" style="font-size:14px;padding:10px 12px;border:1.5px solid #e3d7bf;border-radius:10px;color:#a08c78;background:#f6efe0"></label>
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px"><span style="font-size:12px;color:#7a6250">フォルダを作成しています</span><button disabled style="display:flex;align-items:center;gap:8px;padding:10px 20px;border:none;border-radius:999px;background:oklch(0.65 0.18 45 / .55);color:#fff;font-size:13px;font-weight:700"><span style="width:12px;height:12px;border-radius:50%;border:2px solid #fff;border-top-color:transparent;animation:spin .9s linear infinite"></span>作成中</button></div>
+      </div>
+      <div style="width:400px;background:#fffaf0;border-radius:18px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px;display:flex;flex-direction:column;gap:14px">
+        <div style="font-size:18px;font-weight:900">新しい回</div>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:oklch(0.5 0.2 25)">回の番号<input value="ep03" style="font:500 14px 'DM Mono',monospace;padding:10px 12px;border:2px solid oklch(0.55 0.2 25);border-radius:10px;color:#3a2418;background:#fff"><span style="font-size:12px">同じ番号の回がすでにあります（ep03）</span></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">コーナー<select style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418"><option>今更聞けない</option></select></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">テーマ<input value="OSI参照モデルの7層" style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff"></label>
+        <div style="display:flex;justify-content:flex-end;gap:8px"><button style="padding:10px 18px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">キャンセル</button><button disabled style="padding:10px 20px;border:none;border-radius:999px;background:#cdbfa5;color:#fff;font-size:13px;font-weight:700">作成</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 部品3 -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font-size:13px;font-weight:700;color:#7a6250">部品3 工程ステッパー（チューニング目盛り）— 完了 / 完了 / 処理中 / 未実行 / エラー / 古い ＋ 実行できる</div>
+    <div style="background:#fffaf0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:16px 24px 22px;max-width:1170px;display:flex;align-items:center;gap:16px">
+      <div style="font:500 12px 'DM Mono',monospace;letter-spacing:.1em;color:#7a6250">TUNING</div>
+      <div style="position:relative;flex:1;display:grid;grid-template-columns:repeat(7,1fr);padding-bottom:14px;border-bottom:2px solid #3a2418">
+        <div style="display:flex;flex-direction:column;gap:3px;padding:6px 10px"><span style="font-size:14px;font-weight:700">音源</span><span style="font:11px 'DM Mono',monospace;color:oklch(0.5 0.13 150)">完了</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding:6px 10px"><span style="font-size:14px;font-weight:700">下見</span><span style="font:11px 'DM Mono',monospace;color:oklch(0.5 0.13 150)">完了</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding:6px 10px;border-radius:8px;background:#fdf1e4"><span style="font-size:14px;font-weight:700;color:oklch(0.55 0.18 45)">整音</span><span style="display:flex;align-items:center;gap:5px;font:11px 'DM Mono',monospace;color:oklch(0.55 0.18 45)"><span style="width:7px;height:7px;border-radius:50%;background:oklch(0.65 0.18 45);box-shadow:0 0 6px oklch(0.75 0.18 45);animation:blink 1.4s infinite"></span>処理中 00:42</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding:6px 10px;color:#a08c78"><span style="font-size:14px;font-weight:700">文字起こし</span><span style="font:11px 'DM Mono',monospace">未実行</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding:6px 10px"><span style="font-size:14px;font-weight:700">メタデータ</span><span style="font:11px 'DM Mono',monospace;color:oklch(0.55 0.2 25)">エラー</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding:6px 10px"><span style="font-size:14px;font-weight:700">動画</span><span style="font:11px 'DM Mono',monospace;color:oklch(0.6 0.13 75)">古い</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding:6px 10px;border-left:1px dashed #cdbfa5"><span style="font-size:14px;font-weight:700">整音</span><span style="font:11px 'DM Mono',monospace;color:oklch(0.55 0.18 45)">実行できる</span></div>
+        <span style="position:absolute;left:0;right:0;bottom:-2px;height:6px;background:repeating-linear-gradient(90deg,#3a2418 0 1px,transparent 1px calc(100%/56))"></span>
+        <span style="position:absolute;left:0;right:0;bottom:-2px;height:10px;background:repeating-linear-gradient(90deg,#3a2418 0 1.5px,transparent 1.5px calc(100%/7))"></span>
+        <span style="position:absolute;left:calc(100%/7*2.5);bottom:-10px;width:2px;height:60px;background:oklch(0.6 0.22 28);box-shadow:0 0 0 1.5px #fffaf0;animation:needle 2.4s ease-in-out infinite"></span>
+      </div>
+    </div>
+    <div style="font-size:12px;color:#a08c78">赤い針は「今いる工程」（最初の未完了）を指す。今の画面に含まれる工程は薄い橙の下地。押すとその工程の画面へ。</div>
+  </div>
+
+  <!-- 部品4 -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font-size:13px;font-weight:700;color:#7a6250">部品4 工程実行ボタン — 未実行 / 実行できる / 処理中 / 完了 / エラー・中止</div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+      <div style="display:flex;flex-direction:column;gap:8px"><button disabled style="display:flex;align-items:center;gap:8px;padding:11px 20px;border:none;border-radius:999px;background:#e3d7bf;color:#a08c78;font-size:14px;font-weight:700;cursor:not-allowed"><svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3 2l9 5-9 5z"/></svg>整音を実行</button><div style="font-size:12px;color:#7a6250">先に音源を追加してください</div></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><button style="display:flex;align-items:center;gap:8px;padding:11px 20px;border:none;border-radius:999px;background:oklch(0.65 0.18 45);color:#fff;font-size:14px;font-weight:700;cursor:pointer;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25),0 2px 4px rgba(58,36,24,.25)" style-hover="background:oklch(0.6 0.18 45)"><svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3 2l9 5-9 5z"/></svg>整音を実行</button><div style="font-size:12px;color:#a08c78">実行できる</div></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><button style="display:flex;align-items:center;gap:10px;padding:11px 20px;border:2px solid oklch(0.65 0.18 45);border-radius:999px;background:#fffaf0;color:#3a2418;font-size:14px;font-weight:700;cursor:pointer"><span style="width:12px;height:12px;border-radius:50%;border:2px solid oklch(0.65 0.18 45);border-top-color:transparent;animation:spin .9s linear infinite"></span>中止<span style="font:13px 'DM Mono',monospace;color:#7a6250;margin-left:2px">00:42</span></button><div style="font-size:12px;color:#a08c78">処理中 → 「中止」に変わる</div></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><button style="display:flex;align-items:center;gap:8px;padding:11px 20px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;color:#3a2418;font-size:14px;font-weight:700;cursor:pointer" style-hover="border-color:#3a2418"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11.5 7A4.5 4.5 0 1 1 9.8 3.5M9 1.5l1.5 2L8.3 4.7" stroke-linecap="round"/></svg>やり直す</button><div style="font-size:12px;color:#a08c78">完了</div></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><button style="display:flex;align-items:center;gap:8px;padding:11px 20px;border:2px solid oklch(0.55 0.2 25);border-radius:999px;background:#fffaf0;color:oklch(0.5 0.2 25);font-size:14px;font-weight:700;cursor:pointer"><svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3 2l9 5-9 5z"/></svg>もう一度実行</button><div style="font-size:12px;color:#a08c78">エラー / 中止</div></div>
+    </div>
+  </div>
+
+  <!-- 部品5 -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font-size:13px;font-weight:700;color:#7a6250">部品5 処理状況バー — 何もしていない / 処理中 / 完了 / エラー（ログ開） / 中止</div>
+    <div style="display:flex;flex-direction:column;gap:10px;max-width:1170px">
+      <div style="background:#fffaf0;border-radius:12px;box-shadow:inset 0 0 0 1px #e3d7bf;display:flex;align-items:center;gap:14px;padding:10px 24px;min-height:52px;color:#a08c78;font-size:13px"><span style="width:12px;height:12px;border-radius:50%;border:1.5px solid #cdbfa5;box-sizing:border-box"></span><span>何もしていません</span><span style="flex:1"></span><span style="font-weight:500">ログ ▾</span></div>
+      <div style="background:#fffaf0;border-radius:12px;box-shadow:inset 0 0 0 1px #e3d7bf;display:flex;align-items:center;gap:14px;padding:10px 24px;min-height:52px"><span style="width:12px;height:12px;border-radius:50%;background:oklch(0.65 0.18 45);box-shadow:0 0 0 3px #fffaf0,0 0 0 4.5px oklch(0.65 0.18 45),0 0 14px oklch(0.75 0.18 45);animation:blink 1.4s infinite"></span><span style="font-size:13px;font-weight:700">文字起こし を処理中</span><span style="font:500 14px 'DM Mono',monospace;color:#7a6250">02:17</span><span style="flex:1"></span><button style="padding:7px 16px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">中止</button><span style="font-size:13px;font-weight:500;color:#7a6250">ログ ▾</span></div>
+      <div style="background:#fffaf0;border-radius:12px;box-shadow:inset 0 0 0 1px #e3d7bf;display:flex;align-items:center;gap:14px;padding:10px 24px;min-height:52px"><span style="width:14px;height:14px;border-radius:50%;background:oklch(0.6 0.13 150);display:flex;align-items:center;justify-content:center"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2.2"><path d="M1.5 5l2.5 2.5 4.5-5"/></svg></span><span style="font-size:13px;font-weight:700">文字起こし が完了しました</span><span style="font:500 14px 'DM Mono',monospace;color:#7a6250">04:51</span><span style="flex:1"></span><span style="font-size:12px;color:#a08c78">数秒で消えます</span><span style="font-size:13px;font-weight:500;color:#7a6250">ログ ▾</span></div>
+      <div style="background:#fffaf0;border-radius:12px;box-shadow:inset 0 0 0 1.5px oklch(0.55 0.2 25 / .5);overflow:hidden"><div style="display:flex;align-items:center;gap:14px;padding:10px 24px;min-height:52px;background:#fbeee8"><span style="width:14px;height:14px;border-radius:50%;background:oklch(0.55 0.2 25);color:#fff;font:700 10px/14px sans-serif;text-align:center">!</span><span style="font-size:13px;font-weight:700;color:oklch(0.45 0.2 25)">メタデータ でエラー</span><span style="font-size:13px">claude コマンドが見つかりません（Claude Code にログインしていますか）</span><span style="flex:1"></span><button style="padding:7px 16px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">もう一度実行</button><span style="font-size:13px;font-weight:500">ログ ▴</span></div><pre style="margin:0 14px 14px;height:110px;overflow:auto;background:#2a1a10;color:#e6d3b3;font:12px/1.7 'DM Mono',monospace;padding:12px 16px;border-radius:10px;box-shadow:inset 0 2px 6px rgba(0,0,0,.5)"><span style="color:#a08c78">[00:00.2]</span> 文字起こし(確定版)を読み込み: 1,842 行
+<span style="color:#a08c78">[00:00.4]</span> claude -p --output-format json …
+<span style="color:#f0a08a">[00:00.5] Error: spawn claude ENOENT</span></pre></div>
+      <div style="background:#fffaf0;border-radius:12px;box-shadow:inset 0 0 0 1px #e3d7bf;display:flex;align-items:center;gap:14px;padding:10px 24px;min-height:52px"><span style="width:14px;height:14px;border-radius:50%;background:#8a6f5c;display:flex;align-items:center;justify-content:center"><span style="width:6px;height:6px;background:#fff;border-radius:1px"></span></span><span style="font-size:13px;font-weight:700">整音 を中止しました</span><span style="font-size:13px;color:#7a6250">結果は前のままです</span><span style="flex:1"></span><button style="padding:7px 16px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">もう一度実行</button><span style="font-size:13px;font-weight:500;color:#7a6250">ログ ▾</span></div>
+    </div>
+  </div>
+
+  <!-- 部品6 -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font-size:13px;font-weight:700;color:#7a6250">部品6 相談チャット — 会話なし / 返事待ち / エラー</div>
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+      <div style="width:300px;height:420px;background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;background:#fffaf0;border-bottom:1px solid #e3d7bf"><div style="font-size:14px;font-weight:900">相談</div><span style="color:#7a6250"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 2l10 10M12 2L2 12"/></svg></span></div>
+        <div style="padding:8px 16px;border-bottom:1px solid #e3d7bf;font-size:12px;color:#7a6250">読んでいるもの: <strong style="color:#a08c78;font-weight:700">文字起こしなし</strong></div>
+        <div style="display:flex;align-items:center;justify-content:center;padding:16px;text-align:center;color:#a08c78;font-size:12px;line-height:1.7">まだ会話はありません<br>文字起こしが終わると、内容を読んだ上で答えます</div>
+        <div style="padding:12px 16px 14px;border-top:1px solid #e3d7bf;display:flex;flex-direction:column;gap:10px;background:#fffaf0"><div style="display:flex;align-items:flex-end;gap:8px;border:1.5px solid #cdbfa5;border-radius:14px;padding:8px 8px 8px 12px;background:#fff"><span style="flex:1;font-size:13px;color:#a08c78;line-height:1.6">この回について聞く</span><span style="width:30px;height:30px;border-radius:50%;background:oklch(0.65 0.18 45);color:#fff;display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 12V2M2.5 6.5L7 2l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div><button disabled style="align-self:flex-start;border:1.5px solid #e3d7bf;border-radius:999px;background:#fffaf0;padding:6px 12px;font-size:12px;font-weight:500;color:#cdbfa5">改善メモに残す</button></div>
+      </div>
+      <div style="width:300px;height:420px;background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;background:#fffaf0;border-bottom:1px solid #e3d7bf"><div style="font-size:14px;font-weight:900">相談</div><span style="color:#7a6250"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 2l10 10M12 2L2 12"/></svg></span></div>
+        <div style="display:flex;justify-content:space-between;padding:8px 16px;border-bottom:1px solid #e3d7bf;font-size:12px;color:#7a6250"><span>読んでいるもの: <strong style="color:#3a2418;font-weight:700">確定版</strong></span><span style="text-decoration:underline;text-underline-offset:3px">会話をリセット</span></div>
+        <div style="overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.7"><div style="align-self:flex-end;max-width:85%;background:#3a2418;color:#fff3dc;border-radius:14px 14px 4px 14px;padding:9px 13px">タイトル案を3つ出して</div><div style="display:flex;gap:5px;padding:6px 4px"><span style="width:7px;height:7px;border-radius:50%;background:#cdbfa5;animation:blink 1.2s infinite"></span><span style="width:7px;height:7px;border-radius:50%;background:#cdbfa5;animation:blink 1.2s .2s infinite"></span><span style="width:7px;height:7px;border-radius:50%;background:#cdbfa5;animation:blink 1.2s .4s infinite"></span></div></div>
+        <div style="padding:12px 16px 14px;border-top:1px solid #e3d7bf;display:flex;flex-direction:column;gap:10px;background:#fffaf0"><div style="display:flex;align-items:flex-end;gap:8px;border:1.5px solid #e3d7bf;border-radius:14px;padding:8px 8px 8px 12px;background:#f6efe0"><span style="flex:1;font-size:13px;color:#a08c78;line-height:1.6">返事を待っています</span><span style="width:30px;height:30px;border-radius:50%;background:#cdbfa5;color:#fff;display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 12V2M2.5 6.5L7 2l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div><button style="align-self:flex-start;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;padding:6px 12px;font-size:12px;font-weight:500;color:#3a2418">改善メモに残す</button></div>
+      </div>
+      <div style="width:300px;height:420px;background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;background:#fffaf0;border-bottom:1px solid #e3d7bf"><div style="font-size:14px;font-weight:900">相談</div><span style="color:#7a6250"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 2l10 10M12 2L2 12"/></svg></span></div>
+        <div style="display:flex;justify-content:space-between;padding:8px 16px;border-bottom:1px solid #e3d7bf;font-size:12px;color:#7a6250"><span>読んでいるもの: <strong style="color:#3a2418;font-weight:700">確定版</strong></span><span style="text-decoration:underline;text-underline-offset:3px">会話をリセット</span></div>
+        <div style="overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.7"><div style="align-self:flex-end;max-width:85%;background:#3a2418;color:#fff3dc;border-radius:14px 14px 4px 14px;padding:9px 13px">タイトル案を3つ出して</div><div style="border:1.5px solid oklch(0.55 0.2 25 / .45);background:#fbeee8;border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px"><div style="color:oklch(0.45 0.2 25);font-size:12px;font-weight:700">返事を受け取れませんでした</div><div style="font-size:12px">接続がタイムアウトしました（30秒）</div><button style="align-self:flex-start;padding:5px 12px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:12px;font-weight:500;color:#3a2418">もう一度送る</button></div></div>
+        <div style="padding:12px 16px 14px;border-top:1px solid #e3d7bf;display:flex;flex-direction:column;gap:10px;background:#fffaf0"><div style="display:flex;align-items:flex-end;gap:8px;border:1.5px solid #cdbfa5;border-radius:14px;padding:8px 8px 8px 12px;background:#fff"><span style="flex:1;font-size:13px;color:#a08c78;line-height:1.6">この回について聞く</span><span style="width:30px;height:30px;border-radius:50%;background:oklch(0.65 0.18 45);color:#fff;display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 12V2M2.5 6.5L7 2l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div><button style="align-self:flex-start;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;padding:6px 12px;font-size:12px;font-weight:500;color:#3a2418">改善メモに残す</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 部品7 -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font-size:13px;font-weight:700;color:#7a6250">部品7 改善メモの下書きダイアログ — 下書きを作成中 / 編集中 / 登録中 / 登録済み / エラー</div>
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+      <div style="width:460px;background:#fffaf0;border-radius:18px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:18px;font-weight:900">改善メモの下書き</div><span style="font-size:11px;font-weight:500;padding:4px 10px;border-radius:999px;background:#f6efe0;border:1px solid #e3d7bf;color:#7a6250">ラベル: 改善メモ</span></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:28px 0;justify-content:center;color:#7a6250;font-size:13px"><span style="width:14px;height:14px;border-radius:50%;border:2px solid oklch(0.65 0.18 45);border-top-color:transparent;animation:spin .9s linear infinite"></span>会話を要約しています</div>
+        <div style="display:flex;justify-content:flex-end;gap:8px"><button style="padding:10px 18px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">キャンセル</button><button disabled style="padding:10px 20px;border:none;border-radius:999px;background:#cdbfa5;color:#fff;font-size:13px;font-weight:700">Issueに登録</button></div>
+      </div>
+      <div style="width:460px;background:#fffaf0;border-radius:18px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:18px;font-weight:900">改善メモの下書き</div><span style="font-size:11px;font-weight:500;padding:4px 10px;border-radius:999px;background:#f6efe0;border:1px solid #e3d7bf;color:#7a6250">ラベル: 改善メモ</span></div>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">タイトル<input value="オープニングを2分以内に収める" style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff"></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">本文<textarea rows="5" style="font-size:13px;line-height:1.7;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff;resize:vertical">ep02 では本題に入るまで 2:14 かかった。挨拶と前回のふりかえりを合わせて 1 分以内を目安にする。
+
+- 収録前にオープニングの台本を1行で決める
+- 「今日のテーマは」を 1:00 までに言う</textarea></label>
+        <div style="display:flex;justify-content:flex-end;gap:8px"><button style="padding:10px 18px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">キャンセル</button><button style="padding:10px 20px;border:none;border-radius:999px;background:#3a2418;color:#fff3dc;font-size:13px;font-weight:700;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">Issueに登録</button></div>
+      </div>
+      <div style="width:460px;background:#fffaf0;border-radius:18px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:18px;font-weight:900">改善メモの下書き</div><span style="font-size:11px;font-weight:500;padding:4px 10px;border-radius:999px;background:#f6efe0;border:1px solid #e3d7bf;color:#7a6250">ラベル: 改善メモ</span></div>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">タイトル<input disabled value="オープニングを2分以内に収める" style="font-size:14px;padding:10px 12px;border:1.5px solid #e3d7bf;border-radius:10px;color:#a08c78;background:#f6efe0"></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">本文<textarea disabled rows="3" style="font-size:13px;line-height:1.7;padding:10px 12px;border:1.5px solid #e3d7bf;border-radius:10px;color:#a08c78;background:#f6efe0;resize:none">ep02 では本題に入るまで 2:14 かかった。…</textarea></label>
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px"><span style="font-size:12px;color:#7a6250">GitHub に送信しています</span><button disabled style="display:flex;align-items:center;gap:8px;padding:10px 20px;border:none;border-radius:999px;background:#8a6f5c;color:#fff;font-size:13px;font-weight:700"><span style="width:12px;height:12px;border-radius:50%;border:2px solid #fff;border-top-color:transparent;animation:spin .9s linear infinite"></span>登録中</button></div>
+      </div>
+      <div style="width:460px;background:#fffaf0;border-radius:18px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:18px;font-weight:900">改善メモの下書き</div><span style="font-size:11px;font-weight:500;padding:4px 10px;border-radius:999px;background:#f6efe0;border:1px solid #e3d7bf;color:#7a6250">ラベル: 改善メモ</span></div>
+        <div style="display:flex;align-items:center;gap:12px;padding:16px;border:1.5px solid oklch(0.6 0.13 150 / .45);background:#eef5ec;border-radius:12px"><span style="width:22px;height:22px;border-radius:50%;background:oklch(0.6 0.13 150);display:flex;align-items:center;justify-content:center;flex:none"><svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2.2"><path d="M1.5 5l2.5 2.5 4.5-5"/></svg></span><div style="display:flex;flex-direction:column;gap:3px;font-size:13px"><div style="font-weight:700">Issue に登録しました</div><a href="#2b" style="font:13px 'DM Mono',monospace">#42 オープニングを2分以内に収める ↗</a></div></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px"><button style="padding:10px 20px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">閉じる</button></div>
+      </div>
+      <div style="width:460px;background:#fffaf0;border-radius:18px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:18px;font-weight:900">改善メモの下書き</div><span style="font-size:11px;font-weight:500;padding:4px 10px;border-radius:999px;background:#f6efe0;border:1px solid #e3d7bf;color:#7a6250">ラベル: 改善メモ</span></div>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">タイトル<input value="オープニングを2分以内に収める" style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff"></label>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">本文<textarea rows="3" style="font-size:13px;line-height:1.7;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff;resize:vertical">ep02 では本題に入るまで 2:14 かかった。…</textarea></label>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid oklch(0.55 0.2 25 / .45);background:#fbeee8;border-radius:12px;font-size:12px"><span style="width:14px;height:14px;border-radius:50%;background:oklch(0.55 0.2 25);color:#fff;font:700 10px/14px sans-serif;text-align:center;flex:none">!</span><span>登録できませんでした: GitHub のトークンが無効です（401）。入力した内容は残っています。</span></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px"><button style="padding:10px 18px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;color:#3a2418">キャンセル</button><button style="padding:10px 20px;border:none;border-radius:999px;background:#3a2418;color:#fff3dc;font-size:13px;font-weight:700;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">もう一度登録</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { tab: 2, chatOpen: true, logOpen: true, newOpen: false, sel: 'ep02', sec: 42 };
+  componentDidMount() { this.t = setInterval(() => this.setState(s => ({ sec: s.sec + 1 })), 1000); }
+  componentWillUnmount() { clearInterval(this.t); }
+  renderVals() {
+    const p = this.props, st = this.state;
+    const chatOpen = st.chatOpen, logOpen = st.logOpen;
+    const mm = String(Math.floor(st.sec / 60)).padStart(2, '0'), ss = String(st.sec % 60).padStart(2, '0');
+    const ACC = 'oklch(0.65 0.18 45)', DONE = 'oklch(0.6 0.13 150)', DONE_L = 'oklch(0.75 0.14 150)';
+    const eps = [
+      { id: 'ep01', theme: '今更聞けない OSI参照モデルの7層', s: ['done','done','done','done','done','done'] },
+      { id: 'ep02', theme: 'ランテック通信 #1', s: ['done','done','run','none','none','none'] },
+      { id: 'ep03', theme: 'ITニュースざっくり', s: ['done','none','none','none','none','none'] },
+    ];
+    const dot = (x, on) => x === 'run'
+      ? { width: 9, height: 9, borderRadius: '50%', background: ACC, boxShadow: '0 0 6px oklch(0.75 0.18 45)', animation: 'blink 1.4s infinite' }
+      : x === 'done' ? { width: 9, height: 9, borderRadius: '50%', background: on ? DONE : DONE_L }
+      : { width: 9, height: 9, borderRadius: '50%', border: '1.5px solid ' + (on ? '#cdbfa5' : '#8a6f5c'), boxSizing: 'border-box' };
+    const episodes = eps.map(e => {
+      const on = e.id === st.sel, done = e.s.filter(x => x === 'done').length;
+      return {
+        id: e.id, theme: e.theme, progress: done + '/6',
+        select: () => this.setState({ sel: e.id }),
+        style: { display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', border: 'none', borderRadius: 10, cursor: 'pointer', background: on ? '#f6efe0' : 'transparent', color: on ? '#3a2418' : '#f0e4cf', boxShadow: on ? '0 2px 6px rgba(0,0,0,.35)' : 'none' },
+        progressStyle: { fontFamily: "'DM Mono', monospace", fontSize: 12, color: on ? '#7a6250' : '#d9c3a0' },
+        dots: e.s.map(x => dot(x, on)),
+      };
+    });
+    const defs = [
+      ['音源','完了','done',2], ['下見','完了','done',2], ['整音','処理中','run',2],
+      ['文字起こし','未実行','none',3], ['メタデータ','未実行','none',3], ['動画','未実行','none',3],
+    ];
+    const needleIdx = Math.max(0, defs.findIndex(d => d[2] !== 'done'));
+    const steps = defs.map(([name, status, k, tab]) => {
+      const inTab = tab === st.tab;
+      const col = k === 'done' ? 'oklch(0.5 0.13 150)' : k === 'run' ? 'oklch(0.55 0.18 45)' : '#a08c78';
+      return {
+        name, status, title: name + 'へ移動', go: () => this.setState({ tab }),
+        style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, padding: '6px 4px', border: 'none', borderRadius: 8, cursor: 'pointer', background: inTab ? '#fdf1e4' : 'transparent', color: k === 'none' ? '#a08c78' : k === 'run' ? 'oklch(0.55 0.18 45)' : '#3a2418', whiteSpace: 'nowrap', textAlign: 'left', minWidth: 0 },
+        labelStyle: { fontFamily: "'DM Mono', monospace", fontSize: 11, color: col },
+      };
+    });
+    const tabStyle = n => ({ padding: '8px 16px', border: st.tab === n ? '1.5px solid #3a2418' : '1.5px solid #e3d7bf', borderRadius: 999, whiteSpace: 'nowrap', background: st.tab === n ? '#3a2418' : 'transparent', fontSize: 13, fontWeight: st.tab === n ? 700 : 500, color: st.tab === n ? '#fff3dc' : '#7a6250', cursor: 'pointer', boxShadow: st.tab === n ? 'inset 0 -2px 0 rgba(0,0,0,.35)' : 'none' });
+    return {
+      episodes, steps, elapsed: mm + ':' + ss, chatOpen, logOpen, newOpen: st.newOpen,
+      needleStyle: { position: 'absolute', left: 'calc(100% / 6 * ' + (needleIdx + 0.5) + ')', bottom: -10, width: 2, height: 62, background: 'oklch(0.6 0.22 28)', boxShadow: '0 0 0 1.5px #fffaf0', animation: 'needle 2.4s ease-in-out infinite', pointerEvents: 'none' },
+      tabName: ['', '1. 回の設定', '2. 収録〜整音', '3. 仕上げ'][st.tab],
+      tab1Style: tabStyle(1), tab2Style: tabStyle(2), tab3Style: tabStyle(3),
+      goTab1: () => this.setState({ tab: 1 }), goTab2: () => this.setState({ tab: 2 }), goTab3: () => this.setState({ tab: 3 }),
+      toggleChat: () => this.setState({ chatOpen: !chatOpen }),
+      toggleLog: () => this.setState({ logOpen: !logOpen }),
+      openNew: () => this.setState({ newOpen: true }), closeNew: () => this.setState({ newOpen: false }),
+      stop: e => e.stopPropagation(),
+      chatBtnStyle: { display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', border: '1.5px solid ' + (chatOpen ? '#3a2418' : '#cdbfa5'), borderRadius: 999, background: chatOpen ? '#3a2418' : '#fffaf0', color: chatOpen ? '#fff3dc' : '#3a2418', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', alignSelf: 'flex-start' },
+      logChevronStyle: { transform: logOpen ? 'rotate(180deg)' : 'none', transition: 'transform .15s' },
+    };
+  }
+}
+</script>
+</body>
+</html>
+

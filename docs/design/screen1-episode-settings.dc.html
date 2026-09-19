@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#d9cfb8;font-family:"Zen Kaku Gothic New","Noto Sans JP",system-ui,sans-serif;color:#3a2418;-webkit-font-smoothing:antialiased}
+a{color:oklch(0.58 0.18 45)} a:hover{color:oklch(0.48 0.18 45)}
+button,input,textarea,select{font-family:inherit}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes needle{0%,100%{transform:translateX(-1px)}50%{transform:translateX(1px)}}
+</style>
+</helmet>
+
+<section id="3a" style="display:flex;flex-direction:column">
+  <div style="display:flex;align-items:baseline;gap:14px;padding:14px 24px;flex-wrap:wrap">
+    <a href="#3a" style="font:500 12px 'DM Mono',monospace;background:#3a2418;color:#fff3dc;padding:3px 8px;border-radius:4px;text-decoration:none">3a</a>
+    <div style="font-size:18px;font-weight:700">画面1「回の設定」— 部品8 コーナー・テーマ編集</div>
+    <div style="font-size:13px;color:#7a6250">行の追加・削除、↑↓で並び替え、入力すると「未保存の変更あり」に変わります。保存で戻ります。</div>
+  </div>
+
+  <!-- 筐体（木目） -->
+  <div style="position:relative;width:100%;min-width:1280px;height:calc(100vh - 56px);min-height:760px;box-sizing:border-box;padding:14px 14px 14px 0;display:grid;grid-template-columns:236px minmax(0,1fr) auto;gap:0 14px;background-color:#54341f;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='300'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.006 0.5' numOctaves='4' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.6'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E&quot;),repeating-linear-gradient(0deg,rgba(0,0,0,.2) 0 1px,transparent 1px 7px),repeating-linear-gradient(0deg,rgba(255,210,160,.08) 0 2px,transparent 2px 19px),linear-gradient(180deg,#5e3a23,#4a2c1b);background-blend-mode:multiply,normal,normal,normal;box-shadow:inset 0 2px 0 rgba(255,230,200,.18),inset 0 -2px 0 rgba(0,0,0,.4)">
+
+    <!-- 部品1 回セレクタ（木目の上に直接） -->
+    <aside style="display:flex;flex-direction:column;min-height:0;color:#f6efe0;padding:6px 0 0 14px">
+      <div style="padding:10px 6px 14px;display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:22px;font-weight:900;letter-spacing:.02em;color:#fff3dc;text-shadow:0 1px 0 rgba(0,0,0,.4)">置くラジ</span>
+        <span style="font:11px 'DM Mono',monospace;letter-spacing:.18em;color:#d9c3a0">OKURADI · 10 MIN</span>
+      </div>
+      <div style="height:34px;margin:0 6px 12px;border-radius:6px;background-color:#3a2418;background-image:radial-gradient(circle,#1d110b 1.4px,transparent 1.6px);background-size:7px 7px;box-shadow:inset 0 2px 4px rgba(0,0,0,.6)"></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:0 8px 8px">
+        <span style="font-size:11px;font-weight:700;letter-spacing:.14em;color:#d9c3a0">回</span>
+        <span style="font:12px 'DM Mono',monospace;color:#b89e7c">3件</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;overflow:auto;flex:1;padding-right:2px">
+        <sc-for list="{{ episodes }}" as="ep" hint-placeholder-count="3">
+          <button onClick="{{ ep.select }}" style="{{ ep.style }}" style-hover="background:rgba(255,240,220,.12)">
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font:500 13px 'DM Mono',monospace">{{ ep.id }}</span>
+              <span style="{{ ep.progressStyle }}">{{ ep.progress }}</span>
+            </div>
+            <div style="font-size:13px;font-weight:500;line-height:1.5;margin-top:3px;text-wrap:pretty">{{ ep.theme }}</div>
+            <div style="display:flex;gap:5px;margin-top:9px">
+              <sc-for list="{{ ep.dots }}" as="d" hint-placeholder-count="6">
+                <span style="{{ d }}"></span>
+              </sc-for>
+            </div>
+          </button>
+        </sc-for>
+      </div>
+      <div style="padding:12px 6px 4px">
+        <button onClick="{{ openNew }}" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:11px;border:none;border-radius:999px;background:oklch(0.65 0.18 45);color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25),0 2px 4px rgba(0,0,0,.3)" style-hover="background:oklch(0.6 0.18 45)">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 1.5v11M1.5 7h11"/></svg>
+          新しい回
+        </button>
+      </div>
+    </aside>
+
+    <!-- 前面板（クリーム） -->
+    <div style="display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-width:0;min-height:0;overflow:hidden;background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5,inset 0 2px 6px rgba(58,36,24,.25)">
+
+      <!-- 部品3 工程ステッパー = チューニング目盛り -->
+      <header style="background:#fffaf0;border-bottom:1px solid #e3d7bf;padding:16px 24px 0;display:flex;flex-direction:column;gap:12px;border-radius:14px 14px 0 0">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div style="position:relative;flex:1;display:grid;grid-template-columns:repeat(6,1fr);padding-bottom:14px;border-bottom:2px solid #3a2418">
+            <sc-for list="{{ steps }}" as="s" hint-placeholder-count="6">
+              <button onClick="{{ s.go }}" title="{{ s.title }}" style="{{ s.style }}" style-hover="background:#f6efe0">
+                <span style="font-size:14px;font-weight:700;line-height:1.3">{{ s.name }}</span>
+                <span style="{{ s.labelStyle }}">{{ s.status }}</span>
+              </button>
+            </sc-for>
+            <span style="position:absolute;left:0;right:0;bottom:-2px;height:6px;background:repeating-linear-gradient(90deg,#3a2418 0 1px,transparent 1px calc(100%/48));"></span>
+            <span style="position:absolute;left:0;right:0;bottom:-2px;height:10px;background:repeating-linear-gradient(90deg,#3a2418 0 1.5px,transparent 1.5px calc(100%/6))"></span>
+            <span style="{{ needleStyle }}"></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;padding-bottom:12px;align-items:center">
+          <span style="font:500 12px 'DM Mono',monospace;letter-spacing:.1em;color:#7a6250;white-space:nowrap;margin-right:8px">ep02</span>
+          <button onClick="{{ goTab1 }}" style="{{ tab1Style }}">1. 回の設定</button>
+          <button onClick="{{ goTab2 }}" style="{{ tab2Style }}">2. 収録〜整音</button>
+          <button onClick="{{ goTab3 }}" style="{{ tab3Style }}">3. 仕上げ</button>
+          <span style="flex:1"></span>
+          <button onClick="{{ toggleChat }}" style="{{ chatBtnStyle }}">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h12v7H7l-3 2.5v-2.5H2z" stroke-linejoin="round"/></svg>
+            相談
+          </button>
+        </div>
+      </header>
+
+      <main style="padding:28px 32px 32px;overflow:auto;min-height:0">
+        <div style="max-width:760px;display:flex;flex-direction:column;gap:22px">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap">
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="font-size:20px;font-weight:900">コーナーの並び</div>
+              <div style="font-size:13px;color:#7a6250">この回で話す順番。config.yml の segments に保存されます。</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="{{ saveBadgeStyle }}"><span style="{{ saveDotStyle }}"></span>{{ saveLabel }}</span>
+              <button onClick="{{ save }}" style="{{ saveBtnStyle }}">{{ saveBtnText }}</button>
+            </div>
+          </div>
+
+          <sc-if value="{{ saveError }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1.5px solid oklch(0.55 0.2 25 / .45);background:#fbeee8;border-radius:12px;font-size:13px"><span style="width:14px;height:14px;border-radius:50%;background:oklch(0.55 0.2 25);color:#fff;font:700 10px/14px sans-serif;text-align:center;flex:none">!</span><span>保存できませんでした: config.yml に書き込めません（他のアプリで開いていませんか）</span><span style="flex:1"></span><button onClick="{{ save }}" style="padding:6px 14px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:12px;font-weight:500;color:#3a2418;cursor:pointer">もう一度保存</button></div>
+          </sc-if>
+
+          <div style="{{ listStyle }}">
+            <div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;align-items:center;padding:0 14px 8px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#a08c78"><span></span><span>順</span><span>コーナー</span><span>テーマ</span><span></span></div>
+            <sc-for list="{{ rows }}" as="row" hint-placeholder-count="2">
+              <div style="{{ row.style }}">
+                <div style="display:flex;flex-direction:column;gap:2px">
+                  <button onClick="{{ row.up }}" disabled="{{ row.first }}" aria-label="上へ" style="{{ row.upStyle }}" style-hover="background:#f6efe0;color:#3a2418"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8l4-4 4 4"/></svg></button>
+                  <button onClick="{{ row.down }}" disabled="{{ row.last }}" aria-label="下へ" style="{{ row.downStyle }}" style-hover="background:#f6efe0;color:#3a2418"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg></button>
+                </div>
+                <div style="width:44px;height:44px;border-radius:50%;background:#3a2418;color:#fff3dc;display:flex;align-items:center;justify-content:center;font:500 16px 'DM Mono',monospace;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">{{ row.no }}</div>
+                <select value="{{ row.series }}" onChange="{{ row.setSeries }}" style="font-size:14px;font-weight:500;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418;min-width:0">
+                  <option value="imasara">今更聞けない</option>
+                  <option value="runteq_news">ランテック通信</option>
+                  <option value="it_news">ITニュースざっくり</option>
+                </select>
+                <input value="{{ row.theme }}" onChange="{{ row.setTheme }}" placeholder="{{ row.hint }}" style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418;min-width:0;outline-color:oklch(0.65 0.18 45)">
+                <button onClick="{{ row.remove }}" disabled="{{ row.only }}" aria-label="この行を削除" style="{{ row.removeStyle }}" style-hover="background:#fbeee8;color:oklch(0.5 0.2 25)"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/></svg></button>
+              </div>
+            </sc-for>
+            <button onClick="{{ addRow }}" style="margin:6px 14px 0;display:flex;align-items:center;gap:8px;align-self:flex-start;padding:9px 16px;border:1.5px dashed #cdbfa5;border-radius:999px;background:transparent;font-size:13px;font-weight:500;color:#7a6250;cursor:pointer" style-hover="border-color:#3a2418;color:#3a2418"><svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1.5v11M1.5 7h11"/></svg>コーナーを追加</button>
+          </div>
+
+          <div style="font-size:12px;color:#a08c78;line-height:1.8">コーナーの種類ごとにタイトルの型が決まっています。タイトルはメタデータの工程で、この並びとテーマから作られます。</div>
+        </div>
+      </main>
+
+      <!-- 部品5 処理状況バー / ログ -->
+      <footer style="background:#fffaf0;border-top:1px solid #e3d7bf;border-radius:0 0 14px 14px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:14px;padding:10px 24px;min-height:52px">
+          <span style="width:12px;height:12px;border-radius:50%;border:1.5px solid #cdbfa5;box-sizing:border-box;flex:none"></span>
+          <span style="font-size:13px;color:#a08c78">何もしていません</span>
+          <span style="flex:1"></span>
+          <button onClick="{{ toggleLog }}" style="display:flex;align-items:center;gap:6px;padding:7px 12px;border:none;border-radius:999px;background:transparent;font-size:13px;font-weight:500;color:#7a6250;cursor:pointer" style-hover="background:#f6efe0;color:#3a2418">
+            ログ
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" style="{{ logChevronStyle }}"><path d="M2 4l4 4 4-4"/></svg>
+          </button>
+        </div>
+        <sc-if value="{{ logOpen }}" hint-placeholder-val="{{ true }}">
+          <pre style="margin:0 14px 14px;height:168px;overflow:auto;background:#2a1a10;color:#e6d3b3;font:12px/1.7 'DM Mono',monospace;padding:12px 16px;border-radius:10px;box-shadow:inset 0 2px 6px rgba(0,0,0,.5)"><span style="color:#a08c78">[00:00.1]</span> ffmpeg -i ep02_raw.wav -af loudnorm=I=-16:TP=-1.5:LRA=11 …
+<span style="color:#a08c78">[00:03.8]</span> 無音を検出: 先頭 2.4s / 末尾 5.1s を削除
+<span style="color:#a08c78">[00:12.2]</span> エコー区間 2/2 を適用 (軽め 03:12–03:20, 響く 07:45–07:52)
+<span style="color:#a08c78">[00:31.0]</span> ラウドネス正規化 pass 1/2 … 完了
+<span style="color:#a08c78">[00:40.6]</span> ラウドネス正規化 pass 2/2 … <span style="animation:blink 1s infinite">▌</span></pre>
+        </sc-if>
+      </footer>
+    </div>
+
+    <!-- 部品6 相談チャット -->
+    <sc-if value="{{ chatOpen }}" hint-placeholder-val="{{ true }}">
+      <aside style="width:300px;background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5,inset 0 2px 6px rgba(58,36,24,.25);display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;min-height:0;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;background:#fffaf0;border-bottom:1px solid #e3d7bf">
+          <div style="font-size:14px;font-weight:900">相談</div>
+          <button onClick="{{ toggleChat }}" aria-label="閉じる" style="width:28px;height:28px;border:none;border-radius:50%;background:transparent;cursor:pointer;color:#7a6250;display:flex;align-items:center;justify-content:center" style-hover="background:#f6efe0;color:#3a2418">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 2l10 10M12 2L2 12"/></svg>
+          </button>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;border-bottom:1px solid #e3d7bf;font-size:12px;color:#7a6250">
+          <span>読んでいるもの: <strong style="color:#3a2418;font-weight:700">下見</strong></span>
+          <button style="border:none;background:none;padding:0;font-size:12px;color:#7a6250;cursor:pointer;text-decoration:underline;text-underline-offset:3px" style-hover="color:#3a2418">会話をリセット</button>
+        </div>
+        <div style="overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.7">
+          <div style="align-self:flex-end;max-width:85%;background:#3a2418;color:#fff3dc;border-radius:14px 14px 4px 14px;padding:9px 13px">オープニングが長い気がする。どこで切れそう？</div>
+          <div style="max-width:92%;background:#fffaf0;border:1px solid #e3d7bf;border-radius:14px 14px 14px 4px;padding:9px 13px;text-wrap:pretty">下見を読むと、02:10 あたりまで挨拶と前回のふりかえりが続いています。「今日のテーマは」と言い始める 02:14 の直前で切ると、本題に入るまでが 40 秒ほど短くなります。</div>
+        </div>
+        <div style="padding:12px 16px 14px;border-top:1px solid #e3d7bf;display:flex;flex-direction:column;gap:10px;background:#fffaf0">
+          <div style="display:flex;align-items:flex-end;gap:8px;border:1.5px solid #cdbfa5;border-radius:14px;padding:8px 8px 8px 12px;background:#fff">
+            <textarea rows="2" placeholder="この回について聞く" style="flex:1;border:none;outline:none;resize:none;font-size:13px;line-height:1.6;background:transparent;color:#3a2418"></textarea>
+            <button aria-label="送信" style="width:30px;height:30px;border:none;border-radius:50%;background:oklch(0.65 0.18 45);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 12V2M2.5 6.5L7 2l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <button style="align-self:flex-start;display:flex;align-items:center;gap:6px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;padding:6px 12px;font-size:12px;font-weight:500;color:#3a2418;cursor:pointer" style-hover="border-color:#3a2418">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 1.5h6l3 3v8H3z" stroke-linejoin="round"/><path d="M5 7h4M5 9.5h4"/></svg>
+            改善メモに残す
+          </button>
+        </div>
+      </aside>
+    </sc-if>
+
+    <!-- 部品2 新しい回ダイアログ -->
+    <sc-if value="{{ newOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeNew }}" style="position:absolute;inset:0;background:rgba(40,22,12,.5);display:flex;align-items:center;justify-content:center;border-radius:0">
+        <div onClick="{{ stop }}" style="width:440px;background:#fffaf0;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.4),inset 0 0 0 1px #cdbfa5;padding:24px;display:flex;flex-direction:column;gap:16px">
+          <div style="font-size:18px;font-weight:900">新しい回</div>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">回の番号
+            <input value="ep04" style="font:500 14px 'DM Mono',monospace;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff;outline-color:oklch(0.65 0.18 45)"></label>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">コーナー
+            <select style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418"><option>今更聞けない</option><option>ランテック通信</option><option>ITニュースざっくり</option></select></label>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#7a6250">テーマ
+            <input placeholder="例: OSI参照モデルの7層" style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;color:#3a2418;background:#fff;outline-color:oklch(0.65 0.18 45)"></label>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px">
+            <button onClick="{{ closeNew }}" style="padding:10px 18px;border:1.5px solid #cdbfa5;border-radius:999px;background:#fffaf0;font-size:13px;font-weight:500;cursor:pointer;color:#3a2418">キャンセル</button>
+            <button onClick="{{ closeNew }}" style="padding:10px 20px;border:none;border-radius:999px;background:oklch(0.65 0.18 45);color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)">作成</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+</section>
+
+<!-- ===================== 状態見本 ===================== -->
+<section id="3b" style="padding:40px 24px 64px;display:flex;flex-direction:column;gap:28px;max-width:1536px">
+  <div style="display:flex;align-items:baseline;gap:14px">
+    <a href="#3b" style="font:500 12px 'DM Mono',monospace;background:#3a2418;color:#fff3dc;padding:3px 8px;border-radius:4px;text-decoration:none">3b</a>
+    <div style="font-size:18px;font-weight:700">部品8 の状態見本 — 保存済み / 未保存の変更あり / 保存中 / エラー</div>
+  </div>
+  <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+    <div style="flex:1;min-width:520px;max-width:700px;display:flex;flex-direction:column;gap:14px"><div style="font-size:12px;font-weight:700;color:#7a6250">保存済み</div><div style="background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px 24px;display:flex;flex-direction:column;gap:16px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><div style="font-size:18px;font-weight:900">コーナーの並び</div><div style="display:flex;align-items:center;gap:12px"><span style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:700;color:oklch(0.45 0.13 150);background:#eef5ec;border:1.5px solid oklch(0.6 0.13 150 / .4)"><span style="width:8px;height:8px;border-radius:50%;background:oklch(0.6 0.13 150)"></span>保存済み</span><button disabled style="padding:9px 18px;border:none;border-radius:999px;background:#e3d7bf;color:#a08c78;font-size:13px;font-weight:700">保存</button></div></div><div style="background:#fffaf0;border-radius:14px;padding:14px 0 16px;display:flex;flex-direction:column;gap:6px;box-shadow:inset 0 0 0 1px #e3d7bf"><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;padding:0 14px 8px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#a08c78"><span></span><span>順</span><span>コーナー</span><span>テーマ</span><span></span></div><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;align-items:center;padding:10px 14px;border-radius:12px"><div style="display:flex;flex-direction:column;gap:2px"><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8l4-4 4 4"/></svg></span><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg></span></div><div style="width:44px;height:44px;border-radius:50%;background:#3a2418;color:#fff3dc;display:flex;align-items:center;justify-content:center;font:500 16px 'DM Mono',monospace;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">1</div><span style="font-size:14px;font-weight:500;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff">今更聞けない</span><span style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418">OSI参照モデルの7層</span><span style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/></svg></span></div></div></div></div>
+    <div style="flex:1;min-width:520px;max-width:700px;display:flex;flex-direction:column;gap:14px"><div style="font-size:12px;font-weight:700;color:#7a6250">未保存の変更あり — 琥珀の枠が一覧を囲み、直した行に帯</div><div style="background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px 24px;display:flex;flex-direction:column;gap:16px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><div style="font-size:18px;font-weight:900">コーナーの並び</div><div style="display:flex;align-items:center;gap:12px"><span style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:700;color:oklch(0.5 0.18 45);background:#fdf1e4;border:1.5px solid oklch(0.65 0.18 45 / .5)"><span style="width:8px;height:8px;border-radius:50%;background:oklch(0.65 0.18 45);box-shadow:0 0 6px oklch(0.75 0.18 45);animation:blink 1.4s infinite"></span>未保存の変更あり</span><button style="padding:9px 18px;border:none;border-radius:999px;background:oklch(0.65 0.18 45);color:#fff;font-size:13px;font-weight:700;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)">保存する</button></div></div><div style="background:#fffaf0;border-radius:14px;padding:14px 0 16px;display:flex;flex-direction:column;gap:6px;box-shadow:inset 0 0 0 1px #e3d7bf;box-shadow:inset 0 0 0 2px oklch(0.65 0.18 45)"><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;padding:0 14px 8px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#a08c78"><span></span><span>順</span><span>コーナー</span><span>テーマ</span><span></span></div><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;align-items:center;padding:10px 14px;border-radius:12px"><div style="display:flex;flex-direction:column;gap:2px"><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8l4-4 4 4"/></svg></span><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg></span></div><div style="width:44px;height:44px;border-radius:50%;background:#3a2418;color:#fff3dc;display:flex;align-items:center;justify-content:center;font:500 16px 'DM Mono',monospace;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">1</div><span style="font-size:14px;font-weight:500;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff">今更聞けない</span><span style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418">OSI参照モデルの7層</span><span style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/></svg></span></div><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;align-items:center;padding:10px 14px;border-radius:12px;background:#fdf1e4;box-shadow:inset 3px 0 0 oklch(0.65 0.18 45)"><div style="display:flex;flex-direction:column;gap:2px"><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8l4-4 4 4"/></svg></span><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg></span></div><div style="width:44px;height:44px;border-radius:50%;background:#3a2418;color:#fff3dc;display:flex;align-items:center;justify-content:center;font:500 16px 'DM Mono',monospace;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">2</div><span style="font-size:14px;font-weight:500;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff">ランテック通信</span><span style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#a08c78">例: 「今更聞けない○○」の○○</span><span style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/></svg></span></div></div></div></div>
+    <div style="flex:1;min-width:520px;max-width:700px;display:flex;flex-direction:column;gap:14px"><div style="font-size:12px;font-weight:700;color:#7a6250">保存中</div><div style="background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px 24px;display:flex;flex-direction:column;gap:16px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><div style="font-size:18px;font-weight:900">コーナーの並び</div><div style="display:flex;align-items:center;gap:12px"><span style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:700;color:#7a6250;background:#fffaf0;border:1.5px solid #e3d7bf"><span style="width:10px;height:10px;border-radius:50%;border:2px solid oklch(0.65 0.18 45);border-top-color:transparent;animation:spin .9s linear infinite;box-sizing:border-box"></span>保存中</span><button disabled style="padding:9px 18px;border:none;border-radius:999px;background:oklch(0.65 0.18 45 / .55);color:#fff;font-size:13px;font-weight:700">保存中</button></div></div><div style="background:#fffaf0;border-radius:14px;padding:14px 0 16px;display:flex;flex-direction:column;gap:6px;box-shadow:inset 0 0 0 1px #e3d7bf;opacity:.6"><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;padding:0 14px 8px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#a08c78"><span></span><span>順</span><span>コーナー</span><span>テーマ</span><span></span></div><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;align-items:center;padding:10px 14px;border-radius:12px"><div style="display:flex;flex-direction:column;gap:2px"><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8l4-4 4 4"/></svg></span><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg></span></div><div style="width:44px;height:44px;border-radius:50%;background:#3a2418;color:#fff3dc;display:flex;align-items:center;justify-content:center;font:500 16px 'DM Mono',monospace;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">1</div><span style="font-size:14px;font-weight:500;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff">今更聞けない</span><span style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418">OSI参照モデルの7層</span><span style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/></svg></span></div><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;align-items:center;padding:10px 14px;border-radius:12px"><div style="display:flex;flex-direction:column;gap:2px"><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8l4-4 4 4"/></svg></span><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg></span></div><div style="width:44px;height:44px;border-radius:50%;background:#3a2418;color:#fff3dc;display:flex;align-items:center;justify-content:center;font:500 16px 'DM Mono',monospace;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">2</div><span style="font-size:14px;font-weight:500;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff">ランテック通信</span><span style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418">#1 9月の入学者向け</span><span style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/></svg></span></div></div></div></div>
+    <div style="flex:1;min-width:520px;max-width:700px;display:flex;flex-direction:column;gap:14px"><div style="font-size:12px;font-weight:700;color:#7a6250">エラー</div><div style="background:#f6efe0;border-radius:14px;box-shadow:inset 0 0 0 1px #cdbfa5;padding:22px 24px;display:flex;flex-direction:column;gap:16px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><div style="font-size:18px;font-weight:900">コーナーの並び</div><div style="display:flex;align-items:center;gap:12px"><span style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:700;color:oklch(0.45 0.2 25);background:#fbeee8;border:1.5px solid oklch(0.55 0.2 25 / .45)"><span style="width:8px;height:8px;border-radius:50%;background:oklch(0.55 0.2 25)"></span>保存できませんでした</span><button style="padding:9px 18px;border:2px solid oklch(0.55 0.2 25);border-radius:999px;background:#fffaf0;color:oklch(0.5 0.2 25);font-size:13px;font-weight:700">もう一度保存</button></div></div><div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1.5px solid oklch(0.55 0.2 25 / .45);background:#fbeee8;border-radius:12px;font-size:13px"><span style="width:14px;height:14px;border-radius:50%;background:oklch(0.55 0.2 25);color:#fff;font:700 10px/14px sans-serif;text-align:center;flex:none">!</span><span>config.yml に書き込めません（他のアプリで開いていませんか）。入力した内容は残っています。</span></div><div style="background:#fffaf0;border-radius:14px;padding:14px 0 16px;display:flex;flex-direction:column;gap:6px;box-shadow:inset 0 0 0 1px #e3d7bf;box-shadow:inset 0 0 0 2px oklch(0.65 0.18 45)"><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;padding:0 14px 8px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#a08c78"><span></span><span>順</span><span>コーナー</span><span>テーマ</span><span></span></div><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;align-items:center;padding:10px 14px;border-radius:12px"><div style="display:flex;flex-direction:column;gap:2px"><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8l4-4 4 4"/></svg></span><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg></span></div><div style="width:44px;height:44px;border-radius:50%;background:#3a2418;color:#fff3dc;display:flex;align-items:center;justify-content:center;font:500 16px 'DM Mono',monospace;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">1</div><span style="font-size:14px;font-weight:500;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff">今更聞けない</span><span style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418">OSI参照モデルの7層</span><span style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/></svg></span></div><div style="display:grid;grid-template-columns:36px 44px 200px minmax(0,1fr) 36px;gap:12px;align-items:center;padding:10px 14px;border-radius:12px;background:#fdf1e4;box-shadow:inset 3px 0 0 oklch(0.65 0.18 45)"><div style="display:flex;flex-direction:column;gap:2px"><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8l4-4 4 4"/></svg></span><span style="width:28px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg></span></div><div style="width:44px;height:44px;border-radius:50%;background:#3a2418;color:#fff3dc;display:flex;align-items:center;justify-content:center;font:500 16px 'DM Mono',monospace;box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)">2</div><span style="font-size:14px;font-weight:500;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff">ランテック通信</span><span style="font-size:14px;padding:10px 12px;border:1.5px solid #cdbfa5;border-radius:10px;background:#fff;color:#3a2418">#1 9月の入学者向け</span><span style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#a08c78"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.7 8h5.6l.7-8" stroke-linejoin="round"/></svg></span></div></div></div></div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { tab: 1, chatOpen: false, logOpen: false, newOpen: false, sel: 'ep02', sec: 42,
+    rows: [{ id: 1, series: 'runteq_news', theme: '#1 9月の入学者向け' }], saved: [{ id: 1, series: 'runteq_news', theme: '#1 9月の入学者向け' }], saveState: 'saved', nextId: 2 };
+  HINTS = { imasara: '例: 「今更聞けない○○」の○○', runteq_news: '例: #N サブタイトル', it_news: '例: 扱うニュースの見出し' };
+  mut(fn) { this.setState(s => { const rows = fn(s.rows.map(r => ({ ...r }))); return { rows, saveState: JSON.stringify(rows) === JSON.stringify(s.saved) ? 'saved' : 'dirty' }; }); }
+  componentDidMount() { this.t = setInterval(() => this.setState(s => ({ sec: s.sec + 1 })), 1000); }
+  componentWillUnmount() { clearInterval(this.t); clearTimeout(this.sv); }
+  editorVals() {
+    const st = this.state, ACC = 'oklch(0.65 0.18 45)', dirty = st.saveState === 'dirty', saving = st.saveState === 'saving', err = st.saveState === 'error';
+    const savedIds = new Set(st.saved.map(r => JSON.stringify(r)));
+    const iconBtn = (dis) => ({ width: 28, height: 20, border: 'none', borderRadius: 6, background: 'transparent', color: dis ? '#e3d7bf' : '#a08c78', cursor: dis ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 });
+    const rows = st.rows.map((r, i) => {
+      const changed = !savedIds.has(JSON.stringify(r));
+      return {
+        no: i + 1, series: r.series, theme: r.theme, hint: this.HINTS[r.series], first: i === 0, last: i === st.rows.length - 1, only: st.rows.length === 1,
+        style: { display: 'grid', gridTemplateColumns: '36px 44px 200px minmax(0,1fr) 36px', gap: 12, alignItems: 'center', padding: '10px 14px', borderRadius: 12, background: changed ? '#fdf1e4' : 'transparent', boxShadow: changed ? 'inset 3px 0 0 ' + ACC : 'none', transition: 'background .15s' },
+        upStyle: iconBtn(i === 0), downStyle: iconBtn(i === st.rows.length - 1),
+        removeStyle: { width: 36, height: 36, border: 'none', borderRadius: '50%', background: 'transparent', color: st.rows.length === 1 ? '#e3d7bf' : '#a08c78', cursor: st.rows.length === 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+        up: () => this.mut(rs => { [rs[i - 1], rs[i]] = [rs[i], rs[i - 1]]; return rs; }),
+        down: () => this.mut(rs => { [rs[i + 1], rs[i]] = [rs[i], rs[i + 1]]; return rs; }),
+        remove: () => this.mut(rs => rs.filter((_, j) => j !== i)),
+        setSeries: e => { const v = e.target.value; this.mut(rs => { rs[i].series = v; return rs; }); },
+        setTheme: e => { const v = e.target.value; this.mut(rs => { rs[i].theme = v; return rs; }); },
+      };
+    });
+    const badge = dirty ? ['未保存の変更あり', 'oklch(0.5 0.18 45)', '#fdf1e4', 'oklch(0.65 0.18 45 / .5)']
+      : saving ? ['保存中', '#7a6250', '#fffaf0', '#e3d7bf']
+      : err ? ['保存できませんでした', 'oklch(0.45 0.2 25)', '#fbeee8', 'oklch(0.55 0.2 25 / .45)']
+      : ['保存済み', 'oklch(0.45 0.13 150)', '#eef5ec', 'oklch(0.6 0.13 150 / .4)'];
+    return {
+      rows, saveError: err,
+      addRow: () => this.setState(s => { const rows = [...s.rows, { id: s.nextId, series: 'imasara', theme: '' }]; return { rows, nextId: s.nextId + 1, saveState: 'dirty' }; }),
+      save: () => { if (!dirty && !err) return; this.setState({ saveState: 'saving' }); this.sv = setTimeout(() => this.setState(s => ({ saved: s.rows.map(r => ({ ...r })), saveState: 'saved' })), 900); },
+      saveLabel: badge[0],
+      saveBadgeStyle: { display: 'inline-flex', alignItems: 'center', gap: 7, padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, color: badge[1], background: badge[2], border: '1.5px solid ' + badge[3] },
+      saveDotStyle: saving ? { width: 10, height: 10, borderRadius: '50%', border: '2px solid ' + ACC, borderTopColor: 'transparent', animation: 'spin .9s linear infinite', boxSizing: 'border-box' }
+        : dirty ? { width: 8, height: 8, borderRadius: '50%', background: ACC, boxShadow: '0 0 6px oklch(0.75 0.18 45)', animation: 'blink 1.4s infinite' }
+        : { width: 8, height: 8, borderRadius: '50%', background: err ? 'oklch(0.55 0.2 25)' : 'oklch(0.6 0.13 150)' },
+      saveBtnText: saving ? '保存中' : err ? 'もう一度保存' : dirty ? '保存する' : '保存',
+      saveBtnStyle: dirty ? { padding: '9px 18px', border: 'none', borderRadius: 999, background: ACC, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', boxShadow: 'inset 0 -2px 0 rgba(0,0,0,.25),0 2px 4px rgba(58,36,24,.25)' }
+        : saving ? { padding: '9px 18px', border: 'none', borderRadius: 999, background: 'oklch(0.65 0.18 45 / .55)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'default' }
+        : err ? { padding: '9px 18px', border: '2px solid oklch(0.55 0.2 25)', borderRadius: 999, background: '#fffaf0', color: 'oklch(0.5 0.2 25)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }
+        : { padding: '9px 18px', border: 'none', borderRadius: 999, background: '#e3d7bf', color: '#a08c78', fontSize: 13, fontWeight: 700, cursor: 'default' },
+      listStyle: { background: '#fffaf0', borderRadius: 14, padding: '14px 0 16px', display: 'flex', flexDirection: 'column', gap: 6, boxShadow: dirty || err ? 'inset 0 0 0 2px ' + ACC : 'inset 0 0 0 1px #e3d7bf', opacity: saving ? .6 : 1, pointerEvents: saving ? 'none' : 'auto', transition: 'box-shadow .15s' },
+    };
+  }
+  renderVals() {
+    const p = this.props, st = this.state;
+    const chatOpen = st.chatOpen, logOpen = st.logOpen;
+    const mm = String(Math.floor(st.sec / 60)).padStart(2, '0'), ss = String(st.sec % 60).padStart(2, '0');
+    const ACC = 'oklch(0.65 0.18 45)', DONE = 'oklch(0.6 0.13 150)', DONE_L = 'oklch(0.75 0.14 150)';
+    const eps = [
+      { id: 'ep01', theme: '今更聞けない OSI参照モデルの7層', s: ['done','done','done','done','done','done'] },
+      { id: 'ep02', theme: 'ランテック通信 #1', s: ['done','done','run','none','none','none'] },
+      { id: 'ep03', theme: 'ITニュースざっくり', s: ['done','none','none','none','none','none'] },
+    ];
+    const dot = (x, on) => x === 'run'
+      ? { width: 9, height: 9, borderRadius: '50%', background: ACC, boxShadow: '0 0 6px oklch(0.75 0.18 45)', animation: 'blink 1.4s infinite' }
+      : x === 'done' ? { width: 9, height: 9, borderRadius: '50%', background: on ? DONE : DONE_L }
+      : { width: 9, height: 9, borderRadius: '50%', border: '1.5px solid ' + (on ? '#cdbfa5' : '#8a6f5c'), boxSizing: 'border-box' };
+    const episodes = eps.map(e => {
+      const on = e.id === st.sel, done = e.s.filter(x => x === 'done').length;
+      return {
+        id: e.id, theme: e.theme, progress: done + '/6',
+        select: () => this.setState({ sel: e.id }),
+        style: { display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', border: 'none', borderRadius: 10, cursor: 'pointer', background: on ? '#f6efe0' : 'transparent', color: on ? '#3a2418' : '#f0e4cf', boxShadow: on ? '0 2px 6px rgba(0,0,0,.35)' : 'none' },
+        progressStyle: { fontFamily: "'DM Mono', monospace", fontSize: 12, color: on ? '#7a6250' : '#d9c3a0' },
+        dots: e.s.map(x => dot(x, on)),
+      };
+    });
+    const defs = [
+      ['音源','完了','done',2], ['下見','完了','done',2], ['整音','実行できる','ready',2],
+      ['文字起こし','未実行','none',3], ['メタデータ','未実行','none',3], ['動画','未実行','none',3],
+    ];
+    const needleIdx = Math.max(0, defs.findIndex(d => d[2] !== 'done'));
+    const steps = defs.map(([name, status, k, tab]) => {
+      const inTab = tab === st.tab;
+      const col = k === 'done' ? 'oklch(0.5 0.13 150)' : (k === 'run' || k === 'ready') ? 'oklch(0.55 0.18 45)' : '#a08c78';
+      return {
+        name, status, title: name + 'へ移動', go: () => this.setState({ tab }),
+        style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, padding: '6px 4px', border: 'none', borderRadius: 8, cursor: 'pointer', background: inTab ? '#fdf1e4' : 'transparent', color: k === 'none' ? '#a08c78' : (k === 'run' || k === 'ready') ? 'oklch(0.55 0.18 45)' : '#3a2418', whiteSpace: 'nowrap', textAlign: 'left', minWidth: 0 },
+        labelStyle: { fontFamily: "'DM Mono', monospace", fontSize: 11, color: col },
+      };
+    });
+    const tabStyle = n => ({ padding: '8px 16px', border: st.tab === n ? '1.5px solid #3a2418' : '1.5px solid #e3d7bf', borderRadius: 999, whiteSpace: 'nowrap', background: st.tab === n ? '#3a2418' : 'transparent', fontSize: 13, fontWeight: st.tab === n ? 700 : 500, color: st.tab === n ? '#fff3dc' : '#7a6250', cursor: 'pointer', boxShadow: st.tab === n ? 'inset 0 -2px 0 rgba(0,0,0,.35)' : 'none' });
+    return {
+      ...this.editorVals(),
+      episodes, steps, elapsed: mm + ':' + ss, chatOpen, logOpen, newOpen: st.newOpen,
+      needleStyle: { position: 'absolute', left: 'calc(100% / 6 * ' + (needleIdx + 0.5) + ')', bottom: -10, width: 2, height: 62, background: 'oklch(0.6 0.22 28)', boxShadow: '0 0 0 1.5px #fffaf0', animation: 'needle 2.4s ease-in-out infinite', pointerEvents: 'none' },
+      tabName: ['', '1. 回の設定', '2. 収録〜整音', '3. 仕上げ'][st.tab],
+      tab1Style: tabStyle(1), tab2Style: tabStyle(2), tab3Style: tabStyle(3),
+      goTab1: () => this.setState({ tab: 1 }), goTab2: () => this.setState({ tab: 2 }), goTab3: () => this.setState({ tab: 3 }),
+      toggleChat: () => this.setState({ chatOpen: !chatOpen }),
+      toggleLog: () => this.setState({ logOpen: !logOpen }),
+      openNew: () => this.setState({ newOpen: true }), closeNew: () => this.setState({ newOpen: false }),
+      stop: e => e.stopPropagation(),
+      chatBtnStyle: { display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', border: '1.5px solid ' + (chatOpen ? '#3a2418' : '#cdbfa5'), borderRadius: 999, background: chatOpen ? '#3a2418' : '#fffaf0', color: chatOpen ? '#fff3dc' : '#3a2418', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', alignSelf: 'flex-start' },
+      logChevronStyle: { transform: logOpen ? 'rotate(180deg)' : 'none', transition: 'transform .15s' },
+    };
+  }
+}
+</script>
+</body>
+</html>
+

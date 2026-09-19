@@ -2,6 +2,7 @@
 
 `docs/features.md` で決めた最初の版の「必須」の17機能をもとに、画面を作る部品を洗い出す。
 ここで決めた部品を Claude Design でデザインする（#4）。
+できたデザインの見本は `docs/design/`（雰囲気は案B トランジスタ）。渡した指示文は `docs/design-prompt.md`。
 
 ## 前提
 
