@@ -6,14 +6,10 @@ import subprocess
 import wave
 from pathlib import Path
 
-import numpy as np
 
 import build
 
 from web import episodes
-
-# 波形に出す棒の数。見本は細い棒を並べただけなので、これくらいで足りる
-WAVE_POINTS = 400
 
 # 試聴のとき、区間の前後にこれだけ余白を付ける（響きの尾まで聴けるように）
 PREVIEW_PAD = 0.4
@@ -52,14 +48,21 @@ def read_scan(name):
 def audio_path(name, kind):
     """画面に配る音のパス。
 
-    scan  … 下見をかけた音そのもの（scan.json の source）。行の時刻と合う
-    clean … 整音後
+    scan    … 下見をかけた音そのもの（scan.json の source）。行の時刻と合う
+    trimmed … 前後のトリムまで済ませたもの。波形とエコー区間の時刻の基準
+    clean   … 整音後
     """
     ep_dir = episodes.resolve(name)
     if kind == "clean":
         found = ep_dir / "01_clean" / "clean.wav"
         if not found.exists():
             raise episodes.EpisodeError("整音後の音声がありません")
+        return found
+
+    if kind == "trimmed":
+        found = trimmed_path(name)
+        if not found.exists():
+            raise episodes.EpisodeError("先に整音を1度実行してください")
         return found
 
     if kind != "scan":
@@ -97,31 +100,29 @@ def trimmed_path(name):
     return episodes.resolve(name) / "01_clean" / "trimmed.wav"
 
 
-def waveform(name, points=WAVE_POINTS):
-    """波形の外形。エコー区間の時刻と合うよう、trimmed.wav から作る。"""
+def waveform(name):
+    """波形に使う音の在りか。形（peaks）はブラウザが wav を読んで描く（#36）。
+
+    エコー区間の時刻と合うよう、音は trimmed.wav を使う。
+    """
     path = trimmed_path(name)
     if not path.exists():
         return {"state": "未実行",
                 "reason": "先に整音を1度実行すると、波形が出ます"}
     try:
         with wave.open(str(path)) as opened:
-            rate = opened.getframerate()
-            frames = opened.getnframes()
-            raw = opened.readframes(frames)
-    except (wave.Error, OSError) as exc:
+            duration = opened.getnframes() / opened.getframerate()
+    except (wave.Error, OSError, ZeroDivisionError) as exc:
         raise episodes.EpisodeError(f"trimmed.wav が読めません: {exc}") from exc
 
-    data = np.frombuffer(raw, dtype=np.int16)
-    if not len(data):
+    if not duration:
         return {"state": "未実行", "reason": "音が入っていません"}
-
-    chunk = max(1, len(data) // points)
-    usable = len(data) // chunk * chunk
-    peaks = np.abs(data[:usable].reshape(-1, chunk).astype(np.int32)).max(axis=1) / 32768.0
     return {
         "state": "表示",
-        "duration": frames / rate,
-        "peaks": [round(float(v), 3) for v in peaks],
+        "duration": duration,
+        "url": f"/api/episodes/{name}/audio/trimmed",
+        # 作り直したら読み直させる（ブラウザが古い音を使い回さないように）
+        "at": int(path.stat().st_mtime),
     }
 
 
@@ -188,6 +189,8 @@ def clean_result(name):
         "removed": detail.get("removed"),
         "target_lufs": detail.get("target_lufs"),
         "echoes": len(made) if isinstance(made, list) else 0,
+        # 作り直したら波形を読み直させる（ブラウザが古い音を使い回さないように）
+        "at": int(clean.stat().st_mtime),
     }
 
 
