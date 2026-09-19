@@ -344,8 +344,12 @@ function videoNode(src, poster) {
     };
     videoView.node = node;
   }
-  if (poster && videoView.node.getAttribute("poster") !== poster) {
-    videoView.node.poster = poster;
+  // 絵が無いときは消す。消さないと、前の回の絵が残ったまま
+  // 「作れません」の理由と並んで出る（表示が嘘をつく）
+  if (poster) {
+    if (videoView.node.getAttribute("poster") !== poster) videoView.node.poster = poster;
+  } else if (videoView.node.hasAttribute("poster")) {
+    videoView.node.removeAttribute("poster");
   }
   if (videoView.src !== src) {
     videoView.src = src;

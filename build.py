@@ -339,11 +339,13 @@ def normalize_echoes(echoes, total, report=True):
     return merged
 
 
-def echo_graph(regions, total):
-    """区間だけにエコーをかけるフィルタグラフを組む。
+def echo_parts(regions, total):
+    """音をどこで分けるか。(開始, 終了, プリセット) を順に返す。
 
-    aecho は区間指定（enable）に対応していないので、
-    atrim で分けて、かける所だけ通し、acrossfade で繋ぎ直す。
+    エコーをかける所と、かけない所を交互に並べる。
+    フィルタグラフ（echo_graph）と、整音後の位置（echo_positions）の
+    両方がこれを使う。分け方を1か所にしておかないと、片方だけ直したときに
+    帯の位置が静かにずれる。
     """
     parts, at = [], 0.0
     for start, end, preset in regions:
@@ -353,6 +355,16 @@ def echo_graph(regions, total):
         at = end
     if at < total:
         parts.append((at, total, None))
+    return parts
+
+
+def echo_graph(regions, total):
+    """区間だけにエコーをかけるフィルタグラフを組む。
+
+    aecho は区間指定（enable）に対応していないので、
+    atrim で分けて、かける所だけ通し、acrossfade で繋ぎ直す。
+    """
+    parts = echo_parts(regions, total)
 
     lines, labels = [], []
     for index, (start, end, preset) in enumerate(parts):
@@ -372,19 +384,6 @@ def echo_graph(regions, total):
         lines.append(f"[{current}][{labels[index]}]acrossfade=d={ECHO_CROSSFADE}[{out}]")
         current = out
     return ";".join(lines)
-
-
-def echo_parts(regions, total):
-    """echo_graph と同じ分け方。(開始, 終了, プリセット) を順に返す。"""
-    parts, at = [], 0.0
-    for start, end, preset in regions:
-        if start > at:
-            parts.append((at, start, None))
-        parts.append((start, end, preset))
-        at = end
-    if at < total:
-        parts.append((at, total, None))
-    return parts
 
 
 def echo_tail(preset):

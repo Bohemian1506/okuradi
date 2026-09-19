@@ -156,3 +156,58 @@ def test_区間の位置はエコーをかけた所だけ返す():
     # 部分は5つあるが、エコーをかけたのは2つだけ
     assert len(build.echo_parts([(10.0, 20.0, "light"), (30.0, 35.0, "hall")], 60)) == 5
     assert len(build.echo_positions([(10.0, 20.0, "light"), (30.0, 35.0, "hall")], 60)) == 2
+
+
+# ---------------------------------------------------------------- 分け方は1か所
+
+def test_フィルタグラフも整音後の位置も同じ分け方を使う():
+    """echo_graph と echo_positions が echo_parts を共有していることを守る。
+
+    分け方が2か所に写し取られていると、片方だけ直したときに
+    帯の位置が静かにずれる（#63 のレビューで見つかった）。
+    """
+    calls = []
+    original = build.echo_parts
+    try:
+        build.echo_parts = lambda regions, total: calls.append("使った") or original(
+            regions, total)
+        build.echo_graph([(10.0, 20.0, "light")], 60)
+        build.echo_positions([(10.0, 20.0, "light")], 60)
+    finally:
+        build.echo_parts = original
+    assert calls == ["使った", "使った"]
+
+
+# ---------------------------------------------------------------- 境目
+
+def test_先頭から始まる区間():
+    # 頭の無音が無いので、部分は 区間(0-10) / 尻(10-60) の2つ。手前に継ぎ目は無い
+    assert len(build.echo_parts([(0.0, 10.0, "hall")], 60)) == 2
+    got = build.echo_positions([(0.0, 10.0, "hall")], 60)
+    assert got[0]["start"] == 0.0                      # 詰まる相手がいない
+    assert got[0]["end"] == round(10.0 + 0.21, 3)      # 尾のぶんだけ伸びる
+
+
+def test_末尾まで続く区間():
+    # 部分は 頭(0-50) / 区間(50-60) の2つ。区間の手前に継ぎ目が1つ
+    assert len(build.echo_parts([(50.0, 60.0, "light")], 60)) == 2
+    got = build.echo_positions([(50.0, 60.0, "light")], 60)
+    assert got[0]["start"] == round(50.0 - build.ECHO_CROSSFADE, 3)
+
+
+def test_全体を覆う区間は継ぎ目がない():
+    # 部分は1つだけ。acrossfade を使わないので、前へ詰まらない
+    assert len(build.echo_parts([(0.0, 60.0, "light")], 60)) == 1
+    assert "acrossfade" not in build.echo_graph([(0.0, 60.0, "light")], 60)
+    got = build.echo_positions([(0.0, 60.0, "light")], 60)
+    assert got[0]["start"] == 0.0
+    assert got[0]["end"] == round(60.0 + 0.07, 3)
+
+
+def test_隣り合う区間の間に無音の部分は入らない():
+    # 10-20 と 20-30 がくっついているので、部分は 頭/区間/区間/尻 の4つ
+    parts = build.echo_parts([(10.0, 20.0, "light"), (20.0, 30.0, "hall")], 60)
+    assert [p[2] for p in parts] == [None, "light", "hall", None]
+    got = build.echo_positions([(10.0, 20.0, "light"), (20.0, 30.0, "hall")], 60)
+    # 2つ目は、1つ目の尾(0.07)ぶん後ろへ、継ぎ目2つ(0.04)ぶん前へ
+    assert got[1]["start"] == round(20.0 + 0.07 - build.ECHO_CROSSFADE * 2, 3)

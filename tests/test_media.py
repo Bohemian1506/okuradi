@@ -344,6 +344,37 @@ def test_ffmpegが何も出さなければ理由を返す(ep, monkeypatch):
     assert why
 
 
+def test_ffmpegが失敗しても理由を返す(ep, monkeypatch):
+    """build.run は終了コードが0でないと RuntimeError を投げる。
+
+    ここで拾わないと、絵が作れないだけで動画パネルごと消える（#63 のレビュー）。
+    """
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "04_video" / "ep01.mp4").write_bytes("こわれた動画".encode())
+
+    def fails(cmd):
+        raise RuntimeError("コマンドが失敗しました: ffmpeg")
+    monkeypatch.setattr(media.build, "run", fails)
+    path, why = media.make_poster(ep)
+    assert path is None
+    assert "ffmpeg" in why
+
+
+def test_ポスターが作れなくても動画の様子は出す(ep, monkeypatch):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"x" * 2048)
+    monkeypatch.setattr(media, "duration_of", lambda path: 60.0)
+    monkeypatch.setattr(media, "video_size", lambda path: "1920x1080")
+
+    def fails(cmd):
+        raise RuntimeError("コマンドが失敗しました: ffmpeg")
+    monkeypatch.setattr(media.build, "run", fails)
+    got = media.video_view("ep01")
+    assert got["state"] in ("完了", "古い")      # パネルは消えない
+    assert got["poster"] is None
+    assert got["poster_error"]                   # 黙って隠さない
+
+
 def test_動画より新しいポスターは作り直さない(ep, monkeypatch):
     (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
     (ep / "04_video" / "ep01.mp4").write_bytes(b"a")
