@@ -72,6 +72,9 @@ const state = {
   draftMeta: null,   // 画面で直しているメタデータ
   metaSaved: "",
   newTag: "",
+  video: null,       // 動画の様子
+  copyText: null,    // コピー用のひとそろい
+  copied: "",        // いまコピーしたもの（数秒だけ出す）
 };
 
 const TITLE_LIMIT = 60;   // YouTube は60文字を超えると途中で切れる
@@ -284,12 +287,146 @@ function screenFinishing() {
 
   box.appendChild(section(3, "動画を確かめる",
     "背景画像と整音後の音声で mp4 を作る。これを YouTube に上げます。",
-    placeholder("動画プレビュー", "この節は #7 の続きで入れます"), stepOf("video")));
+    videoCard(), stepOf("video")));
 
   box.appendChild(section(4, "コピーして YouTube に貼る",
     "動画をアップロードしたら、順に貼るだけ。章は概要欄の末尾に付きます。",
-    placeholder("コピー", "この節は #7 の続きで入れます")));
+    copyCard(), null, studioLink()));
   return box;
+}
+
+// ---------------------------------------------------------------- 部品19 動画プレビュー
+
+function videoCard() {
+  const data = state.video || { state: "未実行" };
+  const running = state.job && state.job.state === "処理中"
+    && state.job.episode === state.selected.name && state.job.step === "video";
+
+  if (running) {
+    const box = el("div", "video-panel");
+    box.appendChild(el("div", "lines-empty", "動画を作っています…"));
+    return box;
+  }
+  if (data.state !== "完了") {
+    const box = el("div", "video-panel");
+    box.appendChild(el("div", "lines-empty",
+      "まだ動画がありません。右上の「動画化を実行」を押すと作られます。"));
+    return box;
+  }
+
+  const box = el("div", "video-panel");
+  const top = el("div", "video-top");
+  const badge = el("span", "badge-done");
+  badge.append(el("span", "mark"), document.createTextNode("完了"));
+  const about = [data.name, data.duration, data.resolution, data.size]
+    .filter(Boolean).join(" · ");
+
+  const open = el("button", "btn-tiny is-quiet");
+  open.innerHTML = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none"
+    stroke="currentColor" stroke-width="1.7"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5
+    1.5h4.5A1.5 1.5 0 0 1 14 6v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12z"/></svg>`
+    + "フォルダを開く";
+  open.onclick = () => openVideoFolder();
+
+  top.append(badge, el("span", "video-about", about), el("span", "spacer"), open);
+  box.appendChild(top);
+
+  const body = el("div", "video-body");
+  const player = el("video");
+  player.controls = true;
+  player.preload = "metadata";
+  player.src = `/api/episodes/${state.selected.name}/video/file`;
+  body.appendChild(player);
+
+  const marks = el("div", "video-marks");
+  marks.appendChild(el("div", "lead", "章マーカー"));
+  const chapters = (state.draftMeta && state.draftMeta.chapters) || [];
+  if (!chapters.length) {
+    marks.appendChild(el("div", "lead", "章がありません（②で足せます）"));
+  }
+  for (const chapter of chapters) {
+    const row = el("button", "video-mark");
+    row.append(el("span", "at", clock(chapter.seconds)),
+               el("span", "what", chapter.label || "（見出しなし）"));
+    row.title = "この位置から見る";
+    row.onclick = () => { player.currentTime = chapter.seconds; player.play(); };
+    marks.appendChild(row);
+  }
+  body.appendChild(marks);
+  box.appendChild(body);
+  return box;
+}
+
+async function openVideoFolder() {
+  try {
+    await api(`/api/episodes/${state.selected.name}/video/folder`, { method: "POST" });
+  } catch (err) {
+    state.sourceError = err.message;
+    renderMain();
+  }
+}
+
+// ---------------------------------------------------------------- 部品18 コピーボタン
+
+function studioLink() {
+  const link = el("a", "meta-note", "YouTube Studio を開く ↗");
+  link.href = "https://studio.youtube.com/";
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.style.whiteSpace = "nowrap";
+  return link;
+}
+
+function copyCard() {
+  const box = el("div", "copy-panel");
+  const data = state.copyText;
+  if (!data) {
+    box.appendChild(el("div", "lines-empty",
+      "まだメタデータがありません。②で作ると、ここからコピーできます。"));
+    return box;
+  }
+
+  // 保存前の直しも見たいので、画面の下書きで数え直す
+  const issues = state.draftMeta ? pendingIssues(state.draftMeta) : data.issues;
+  if (issues.length) {
+    const warn = el("div", "copy-warn");
+    warn.append(el("span", "mark", "!"), document.createTextNode(
+      "保留チェックに問題があるので、まだコピーできません（②を直してください）"));
+    box.appendChild(warn);
+  }
+
+  const rows = el("div", "copies");
+  const items = [
+    ["title", "タイトル", data.title],
+    ["description", "概要欄（章つき）", data.description.split("\n")[0]],
+    ["tags", "タグ", data.tags],
+  ];
+  for (const [key, label, peek] of items) {
+    const button = el("button", "btn-copy");
+    if (state.copied === key) button.classList.add("is-copied");
+    button.disabled = issues.length > 0;
+    const what = el("span", "what");
+    what.append(document.createTextNode(state.copied === key ? "コピーしました" : label));
+    button.append(what, el("span", "peek", peek || "（空）"));
+    button.onclick = () => copyOne(key, data[key]);
+    rows.appendChild(button);
+  }
+  box.appendChild(rows);
+  return box;
+}
+
+async function copyOne(key, text) {
+  try {
+    await navigator.clipboard.writeText(text || "");
+    state.copied = key;
+    renderMain();
+    setTimeout(() => {
+      if (state.copied === key) { state.copied = ""; renderMain(); }
+    }, 2000);
+  } catch (err) {
+    state.sourceError = `コピーできませんでした: ${err.message}`;
+    renderMain();
+  }
 }
 
 // ---------------------------------------------------------------- 部品16・17 メタデータと保留チェック
@@ -483,6 +620,8 @@ async function saveMeta() {
       method: "PUT", body: JSON.stringify(state.draftMeta),
     });
     setDraftMeta(state.meta);
+    state.copyText = await api(`/api/episodes/${state.selected.name}/copy`)
+      .catch(() => null);
     await reload({ keep: state.selected.name, keepSelected: true });
   } catch (err) {
     state.sourceError = `メタデータを保存できませんでした: ${err.message}`;
@@ -502,6 +641,11 @@ function setDraftMeta(meta) {
 async function loadMeta(name) {
   state.meta = await api(`/api/episodes/${name}/meta`).catch(() => null);
   setDraftMeta(state.meta);
+  state.copyText = await api(`/api/episodes/${name}/copy`).catch(() => null);
+}
+
+async function loadVideo(name) {
+  state.video = await api(`/api/episodes/${name}/video`).catch(() => null);
 }
 
 // ---------------------------------------------------------------- 部品12 文字起こし（確定版）
@@ -1697,6 +1841,9 @@ async function finishJob() {
     if (state.job.step === "meta") {
       await loadMeta(name);
     }
+    if (state.job.step === "video") {
+      await loadVideo(name);
+    }
   }
   await reload({ keep: state.selected && state.selected.name, keepSelected: true });
   renderStatus();
@@ -1816,6 +1963,7 @@ async function selectEpisode(name) {
   state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
   await loadTranscript(name);
   await loadMeta(name);
+  await loadVideo(name);
   [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),

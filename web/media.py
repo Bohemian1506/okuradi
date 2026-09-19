@@ -1,6 +1,8 @@
 """文字起こしを読むことと、音声を画面に配ること。"""
 
 import json
+import shutil
+import subprocess
 import wave
 from pathlib import Path
 
@@ -425,3 +427,79 @@ def copy_texts(name):
         "description": build.youtube_description(meta),
         "tags": ", ".join(meta["tags"]),
     }
+
+
+# ---------------------------------------------------------------- 動画
+
+def video_path(ep_dir):
+    cfg = episodes.read_config(ep_dir)
+    return ep_dir / "04_video" / f"ep{episodes.episode_number(cfg, ep_dir):02d}.mp4"
+
+
+def duration_of(path):
+    """長さ（秒）。読めなければ None。"""
+    try:
+        return build.audio_duration(path)
+    except (ValueError, OSError):
+        return None
+
+
+def video_size(path):
+    """幅と高さ。読めなければ空。"""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=p=0:s=x", str(path)],
+            capture_output=True, text=True, timeout=20,
+        )
+        return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def human_size(count):
+    for unit in ["B", "KB", "MB", "GB"]:
+        if count < 1024 or unit == "GB":
+            return f"{count:.0f} {unit}" if unit == "B" else f"{count:.1f} {unit}"
+        count /= 1024
+    return f"{count:.1f} GB"
+
+
+def video_view(name):
+    ep_dir = episodes.resolve(name)
+    path = video_path(ep_dir)
+    if not path.exists():
+        return {"state": "未実行"}
+    seconds = duration_of(path)
+    return {
+        "state": "完了",
+        "name": f"{ep_dir.name}/04_video/{path.name}",
+        "duration": build.hhmmss(seconds) if seconds else "",
+        "size": human_size(path.stat().st_size),
+        "resolution": video_size(path),
+    }
+
+
+def open_folder(name):
+    """動画のあるフォルダを Windows のエクスプローラーで開く。
+
+    WSL から Windows 側を開くので、explorer.exe と wslpath に頼る。
+    どちらかが無ければ、そう言って断る（静かに失敗させない）。
+    """
+    ep_dir = episodes.resolve(name)
+    folder = ep_dir / "04_video"
+    if not folder.is_dir():
+        raise episodes.EpisodeError("動画の置き場がまだありません")
+    if not shutil.which("explorer.exe") or not shutil.which("wslpath"):
+        raise episodes.EpisodeError(
+            f"この環境では開けません。場所: {folder}"
+        )
+    try:
+        win = subprocess.run(["wslpath", "-w", str(folder)],
+                             capture_output=True, text=True, timeout=10)
+        # explorer.exe は成功しても 1 を返すことがあるので、返り値は見ない
+        subprocess.Popen(["explorer.exe", win.stdout.strip()])
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise episodes.EpisodeError(f"フォルダを開けませんでした: {exc}") from exc
+    return {"opened": str(folder)}

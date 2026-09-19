@@ -198,6 +198,24 @@ def get_copy(name: str):
     return _guard(media.copy_texts, name)
 
 
+@app.get("/api/episodes/{name}/video")
+def get_video(name: str):
+    return _guard(media.video_view, name)
+
+
+@app.get("/api/episodes/{name}/video/file")
+def get_video_file(name: str):
+    path = _guard(media.video_path, _guard(episodes.resolve, name))
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="まだ動画がありません")
+    return FileResponse(path, headers={"Accept-Ranges": "bytes"})
+
+
+@app.post("/api/episodes/{name}/video/folder")
+def post_video_folder(name: str):
+    return _guard(media.open_folder, name)
+
+
 @app.get("/api/episodes/{name}/clean")
 def get_clean(name: str):
     return _guard(media.clean_result, name)

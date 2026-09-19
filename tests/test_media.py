@@ -418,3 +418,37 @@ def test_コピーは概要欄の末尾に目次を付ける(ep):
 def test_コピーにも保留チェックの結果を付ける(ep):
     write_meta(ep, title="（保留中）", chapters=[])
     assert len(media.copy_texts("ep01")["issues"]) >= 2
+
+
+# ---------------------------------------------------------------- 動画
+
+def test_動画が無ければ未実行(ep):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    assert media.video_view("ep01")["state"] == "未実行"
+
+
+def test_動画があれば置き場と大きさを返す(ep, monkeypatch):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"x" * 2048)
+    monkeypatch.setattr(media, "duration_of", lambda path: 676.0)
+    monkeypatch.setattr(media, "video_size", lambda path: "1920x1080")
+    got = media.video_view("ep01")
+    assert got["state"] == "完了"
+    assert got["name"] == "ep01/04_video/ep01.mp4"
+    assert got["duration"] == "11:16"
+    assert got["resolution"] == "1920x1080"
+    assert got["size"] == "2.0 KB"
+
+
+def test_大きさの書き方():
+    assert media.human_size(900) == "900 B"
+    assert media.human_size(1536) == "1.5 KB"
+    assert media.human_size(224561234) == "214.2 MB"
+
+
+def test_動画の置き場が無ければフォルダを開けない(ep):
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    import shutil as sh
+    (ep / "04_video").rmdir()
+    with pytest.raises(episodes.EpisodeError, match="置き場"):
+        media.open_folder("ep01")
