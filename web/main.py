@@ -98,6 +98,10 @@ class Echoes(BaseModel):
     echoes: list[Echo]
 
 
+class Transcript(BaseModel):
+    texts: list[str]
+
+
 @app.get("/api/settings")
 def get_settings():
     return {"obs_dir": _guard(sources.read_settings).get("obs_dir", "")}
@@ -154,6 +158,16 @@ def put_echoes(name: str, body: Echoes):
 def get_echo_preview(name: str, start: float, end: float, preset: str = "none"):
     path = _guard(media.echo_preview, name, start, end, preset)
     return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/episodes/{name}/transcript")
+def get_transcript(name: str):
+    return _guard(media.read_transcript, name)
+
+
+@app.put("/api/episodes/{name}/transcript")
+def put_transcript(name: str, body: Transcript):
+    return _guard(media.save_transcript, name, body.texts)
 
 
 @app.get("/api/episodes/{name}/clean")
