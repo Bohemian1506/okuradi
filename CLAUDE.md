@@ -35,7 +35,8 @@ clone し直したら `git config core.hooksPath .githooks` を実行する（`.
 | 項目 | 内容 |
 |---|---|
 | 処理 | `build.py`（Python / FFmpeg / faster-whisper / `claude -p`） |
-| 今の GUI | `app.py`（Streamlit）。作り直すかどうかも含めて、技術構成は Issue #3 で決める |
+| これから作る GUI | FastAPI + 素の HTML/CSS/JS（波形は wavesurfer.js）。長い処理は別スレッドで動かし、SSE で進み具合とログを流す（#3 で決定） |
+| 今の GUI | `app.py`（Streamlit）。新しい GUI で 1回分を通せるまで残し、通せたら消す |
 | 回のデータ | `ep01/` など。`config.yml` だけ git で管理し、音声と途中のファイルは管理外 |
 | 動かす場所 | WSL。仮想環境は `.venv/` |
 
