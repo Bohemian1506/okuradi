@@ -18,12 +18,16 @@
 ### 開いている Issue
 | Issue | 内容 | いま |
 |---|---|---|
-| #53 | 新しい GUI だけで1回分を通し、`app.py` を消す | **ユーザーが実物の音声でやる**（Claude にはできない）。**これが唯一の残り** |
+| #77 | Windows 側から GUI を開く住所を、毎回同じにする | **明日ここから。** 原因と回避は分かっている（下記） |
+| #53 | 新しい GUI だけで1回分を通し、`app.py` を消す | **ユーザーが実物の音声でやる**（Claude にはできない）。**v1 の最後の関門** |
 
 ### 次にやること
-1. **#53 通しリハーサル**（ユーザー）— 実際の収録で最初から最後まで通して、詰まった所を Issue にする
+1. **#77 から始める。** 画面が開けないと通しリハーサルができない
+   - **まず `http://localhost:8000` を試す**（ゼロ手間）。詰まっていたときは `127.0.0.1` だけで待っていたが、いま `--host 0.0.0.0` を付けているので、WSL の localhost 転送が効くようになっている可能性がある。通ればそれで終わり
+   - 通らなければ、`./start.sh` の隣に短いコマンドを作る案（#77 の案B）
+2. **#53 通しリハーサル**（ユーザー）— 実際の収録で最初から最後まで通して、詰まった所を Issue にする
    - 通せたら消すもの: `app.py` / `requirements.txt` の streamlit・altair・pandas・**numpy** / `CLAUDE.md` の「古い GUI」の行 / `README.md` の Streamlit の節と「まだ1回分を通していない」の断り
-2. 通して詰まった所が出たら、Issue にしてから直す。**Claude ができるのはここから**
+3. 通して詰まった所が出たら、Issue にしてから直す。**Claude ができるのはここから**
 
 ### 作業の始め方
 - GUI: `.venv/bin/python -m uvicorn web.main:app --reload`（`http://127.0.0.1:8000`）
@@ -36,8 +40,18 @@
 - 前の会話の続きから始めるときは、端末で `~/workspace/okuradi/start.sh -c`
 - 作業のルールは `CLAUDE.md`（Issue から始める / 勝手に決めない / レビュー担当は必要なときに呼ぶ / マージしたらすぐ議事録の PR）
 
+### GUI の起動（#77 が片付くまでの形）
+```
+.venv/bin/python -m uvicorn web.main:app --host 0.0.0.0 --reload
+```
+- **`--host 0.0.0.0` が要る。** 付けないと WSL の中だけで待ち、Windows 側のブラウザから入れない
+- 開く住所は `http://localhost:8000`。通らなければ `hostname -I` で出た IP の `:8000`
+- **この IP は WSL を再起動すると変わる。** 数字を文書に書かないこと
+- `--host 0.0.0.0` は同じ LAN の他の機械からも見える。外のネットワークでは避ける
+
 ### まだ確かめていないこと
 - **1回分を通しで作れるか（#53）。** 工程ごとには `ep01` で動かして確かめたが、収録から公開用のコピーまで一続きに通してはいない
+- **`http://localhost:8000` が Windows 側から通るか（#77）。** `--host 0.0.0.0` を付けた状態では試していない
 - PC を再起動した後、「herdr: okuradi + フリーライフ」で、止まった状態から両方が起動するか
 - Herdr で Issue を並行で進める流れ（`herdr worktree create` → 実装担当の起動 → 片付け）
 
@@ -45,6 +59,7 @@
 
 | 設定 | 場所 | 作り直し方 |
 |---|---|---|
+| `.wslconfig`（Windows 側） | `C:\Users\hiros\.wslconfig` に `networkingMode=mirrored` と書いてあるが、**Windows 10 では効かない**（mirrored は Windows 11 22H2 以降）。消すか注記するかは #77 で決める |
 | F12 のメニュー（3つ） | `C:\Users\hiros\.wezterm.lua` の `launch_menu` | 書き方は `docs/dev-log/day-2.md` の #13 と `docs/herdr.md` |
 | Herdr の Claude 連携 | `~/.claude/hooks/herdr-agent-state.sh` など | `herdr integration install claude` |
 | Claude が Herdr を操作するスキル | `~/.claude/skills/herdr/SKILL.md` | `herdr --skill > ~/.claude/skills/herdr/SKILL.md`（Herdr を更新したときも） |
