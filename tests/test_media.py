@@ -10,7 +10,7 @@ from web import episodes, media
 @pytest.fixture
 def ep(tmp_path, monkeypatch):
     ep_dir = tmp_path / "ep01"
-    for sub in ["00_raw", "01_clean", "02_text"]:
+    for sub in ["00_raw", "01_clean", "02_text", "03_meta", "04_video"]:
         (ep_dir / sub).mkdir(parents=True)
     monkeypatch.setattr(episodes, "resolve", lambda name, root=None: ep_dir)
     return ep_dir
@@ -334,3 +334,87 @@ def test_壊れた文字起こしは理由を言って断る(ep):
     (ep / "02_text" / "transcript.json").write_text("{壊れた", encoding="utf-8")
     with pytest.raises(episodes.EpisodeError, match="transcript.json が読めません"):
         media.read_transcript("ep01")
+
+
+# ---------------------------------------------------------------- メタデータ
+
+def write_meta(ep_dir, **data):
+    base = {"title": "タイトル", "description": "本文", "chapters": [], "tags": []}
+    base.update(data)
+    (ep_dir / "03_meta" / "meta.json").write_text(
+        json.dumps(base, ensure_ascii=False), encoding="utf-8")
+
+
+def test_メタデータが無ければ未実行(ep):
+    assert media.read_meta("ep01")["state"] == "未実行"
+
+
+def test_章は時刻の順に並べて返す(ep):
+    write_meta(ep, chapters=[{"seconds": 60, "label": "後"}, {"seconds": 0, "label": "先"}])
+    got = media.read_meta("ep01")
+    assert [c["label"] for c in got["chapters"]] == ["先", "後"]
+
+
+# ---- 保留チェック
+
+def test_保留中が残っていたら止める(ep):
+    write_meta(ep, title="（保留中）", description="（保留中）")
+    issues = media.read_meta("ep01")["issues"]
+    assert "タイトルが（保留中）のままです" in issues
+    assert "概要欄が（保留中）のままです" in issues
+
+
+def test_章が無ければ止める(ep):
+    write_meta(ep, chapters=[])
+    assert "章がありません。1つ以上必要です" in media.read_meta("ep01")["issues"]
+
+
+def test_見出しの無い章があれば止める(ep):
+    write_meta(ep, chapters=[{"seconds": 0, "label": "あいさつ"},
+                             {"seconds": 60, "label": "  "}])
+    assert any("見出しがありません" in i for i in media.read_meta("ep01")["issues"])
+
+
+def test_そろっていれば問題なし(ep):
+    write_meta(ep, title="今更聞けない○○", description="本文\n訂正歓迎です。",
+               chapters=[{"seconds": 0, "label": "あいさつ"}], tags=["RUNTEQ"])
+    assert media.read_meta("ep01")["issues"] == []
+
+
+def test_タイトルが空でも止める(ep):
+    write_meta(ep, title="   ")
+    assert "タイトルが空です" in media.read_meta("ep01")["issues"]
+
+
+# ---- 保存
+
+def test_保存すると章は並び直しタグの重なりは1つになる(ep):
+    write_meta(ep)
+    got = media.save_meta("ep01", "題", "本文",
+                          [{"seconds": 60, "label": "後"}, {"seconds": 0, "label": "先"}],
+                          ["RUNTEQ", "RUNTEQ", " OSI ", ""])
+    assert [c["label"] for c in got["chapters"]] == ["先", "後"]
+    assert got["tags"] == ["RUNTEQ", "OSI"]
+
+
+def test_メタデータを作っていなければ保存できない(ep):
+    with pytest.raises(episodes.EpisodeError, match="まだメタデータ"):
+        media.save_meta("ep01", "題", "本文", [], [])
+
+
+# ---- コピー
+
+def test_コピーは概要欄の末尾に目次を付ける(ep):
+    write_meta(ep, title="題", description="本文",
+               chapters=[{"seconds": 0, "label": "あいさつ"},
+                         {"seconds": 125, "label": "本題"}],
+               tags=["RUNTEQ", "OSI"])
+    got = media.copy_texts("ep01")
+    assert got["issues"] == []
+    assert got["description"] == "本文\n\n--- 目次 ---\n0:00 あいさつ\n2:05 本題"
+    assert got["tags"] == "RUNTEQ, OSI"
+
+
+def test_コピーにも保留チェックの結果を付ける(ep):
+    write_meta(ep, title="（保留中）", chapters=[])
+    assert len(media.copy_texts("ep01")["issues"]) >= 2

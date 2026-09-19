@@ -102,6 +102,18 @@ class Transcript(BaseModel):
     texts: list[str]
 
 
+class Chapter(BaseModel):
+    seconds: float
+    label: str = ""
+
+
+class Meta(BaseModel):
+    title: str = ""
+    description: str = ""
+    chapters: list[Chapter] = []
+    tags: list[str] = []
+
+
 @app.get("/api/settings")
 def get_settings():
     return {"obs_dir": _guard(sources.read_settings).get("obs_dir", "")}
@@ -168,6 +180,22 @@ def get_transcript(name: str):
 @app.put("/api/episodes/{name}/transcript")
 def put_transcript(name: str, body: Transcript):
     return _guard(media.save_transcript, name, body.texts)
+
+
+@app.get("/api/episodes/{name}/meta")
+def get_meta(name: str):
+    return _guard(media.read_meta, name)
+
+
+@app.put("/api/episodes/{name}/meta")
+def put_meta(name: str, body: Meta):
+    return _guard(media.save_meta, name, body.title, body.description,
+                  [c.model_dump() for c in body.chapters], body.tags)
+
+
+@app.get("/api/episodes/{name}/copy")
+def get_copy(name: str):
+    return _guard(media.copy_texts, name)
 
 
 @app.get("/api/episodes/{name}/clean")
