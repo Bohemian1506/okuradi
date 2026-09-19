@@ -14,9 +14,14 @@ scan  -> cut -> clean -> transcribe -> meta -> video -> upload
 GUIを使う場合:
 
 ```
-.venv/bin/python -m uvicorn web.main:app --reload
-# → http://127.0.0.1:8000 をブラウザで開く（WSL なら Windows 側のブラウザでよい）
+.venv/bin/python -m uvicorn web.main:app --host 0.0.0.0 --reload
 ```
+
+WSL で動かして **Windows 側のブラウザから開く**なら `--host 0.0.0.0` が要る。
+付けないと WSL の中だけで待つので、Windows 側からは入れない。
+
+開く住所は `http://localhost:8000`。通らなければ `hostname -I` で出た IP の `:8000`
+（**この IP は WSL を再起動すると変わる**）。住所を固定する話は Issue #77。
 
 回を作る → 音源を入れる → 下見 → エコー区間 → 整音 → 文字起こしを直す →
 タイトルと章 → 動画 → YouTube に貼る文章のコピー、まで一通りできる。

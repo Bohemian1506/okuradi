@@ -49,3 +49,7 @@ youtube:
   extra_tags:
   - RUNTEQ
   - プログラミング学習
+echoes:
+- start: 10.69
+  end: 14.01
+  preset: light
