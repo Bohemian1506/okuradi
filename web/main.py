@@ -226,6 +226,15 @@ def get_video_file(name: str):
     return FileResponse(path, headers={"Accept-Ranges": "bytes"})
 
 
+@app.get("/api/episodes/{name}/video/poster")
+def get_video_poster(name: str):
+    ep_dir = _guard(episodes.resolve, name)
+    path, why = _guard(media.make_poster, ep_dir)
+    if path is None:
+        raise HTTPException(status_code=404, detail=why or "まだ動画がありません")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/episodes/{name}/video/folder")
 def post_video_folder(name: str):
     return _guard(media.open_folder, name)

@@ -103,3 +103,56 @@ def test_なしは黙っていてよい(capsys):
 def test_比べるときはお知らせを出さない(capsys):
     build.normalize_echoes(echoes((5, 9, "light"), (9.1, 12, "hall")), 60, report=False)
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------- 整音後の位置
+
+def test_エコーの尾の長さはプリセットの文字列から読む():
+    # 軽めは 40|70 ミリ秒、響くは 30|…|210 ミリ秒。いちばん遅いものを使う
+    assert build.echo_tail("light") == 0.07
+    assert build.echo_tail("hall") == 0.21
+    assert build.echo_tail("none") == 0.0
+    assert build.echo_tail("しらない") == 0.0
+
+
+def test_エコーが無ければ位置も無い():
+    assert build.echo_positions([], 60) == []
+
+
+def test_最初の区間は継ぎ目のぶんだけ前へ詰まる():
+    # 頭(0-10) / 区間(10-20) / 尻(20-60) の3つ。区間の手前に継ぎ目が1つ
+    got = build.echo_positions([(10.0, 20.0, "light")], 60)
+    assert len(got) == 1
+    assert got[0]["start"] == round(10.0 - build.ECHO_CROSSFADE, 3)
+    # 終わりは、エコーの尾のぶんだけ伸びる
+    assert got[0]["end"] == round(10.0 - build.ECHO_CROSSFADE + 10.0 + 0.07, 3)
+
+
+def test_後ろの区間ほど前の区間のぶんがずれる():
+    got = build.echo_positions([(10.0, 20.0, "light"), (30.0, 35.0, "hall")], 57.1149)
+    assert [r["preset"] for r in got] == ["light", "hall"]
+    # 1つ目: 継ぎ目1つぶん前へ
+    assert got[0]["start"] == 9.98
+    # 2つ目: 前の区間が 0.07秒 伸ばし、継ぎ目3つで 0.06秒 詰まる
+    assert got[1]["start"] == 30.01
+    assert got[1]["end"] == 35.22
+
+
+def test_計算した長さが実際の長さと合う():
+    """clean.wav の長さは、部分の合計から継ぎ目の重なりを引いたもの。
+
+    ep01（trimmed 57.1149秒・軽め10-20・響く30-35）を ffmpeg で作ったとき、
+    clean.wav は 57.3149秒だった。その数字と合うことを確かめる。
+    """
+    regions = [(10.0, 20.0, "light"), (30.0, 35.0, "hall")]
+    total = 57.1149
+    parts = build.echo_parts(regions, total)
+    length = (sum((e - s) + build.echo_tail(p) for s, e, p in parts)
+              - build.ECHO_CROSSFADE * (len(parts) - 1))
+    assert round(length, 4) == 57.3149
+
+
+def test_区間の位置はエコーをかけた所だけ返す():
+    # 部分は5つあるが、エコーをかけたのは2つだけ
+    assert len(build.echo_parts([(10.0, 20.0, "light"), (30.0, 35.0, "hall")], 60)) == 5
+    assert len(build.echo_positions([(10.0, 20.0, "light"), (30.0, 35.0, "hall")], 60)) == 2

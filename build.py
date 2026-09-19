@@ -374,6 +374,57 @@ def echo_graph(regions, total):
     return ";".join(lines)
 
 
+def echo_parts(regions, total):
+    """echo_graph と同じ分け方。(開始, 終了, プリセット) を順に返す。"""
+    parts, at = [], 0.0
+    for start, end, preset in regions:
+        if start > at:
+            parts.append((at, start, None))
+        parts.append((start, end, preset))
+        at = end
+    if at < total:
+        parts.append((at, total, None))
+    return parts
+
+
+def echo_tail(preset):
+    """aecho が足す長さ（秒）。いちばん遅いエコーの遅れぶん、音が伸びる。
+
+    プリセットの文字列から読むので、プリセットを変えても数字がずれない。
+    """
+    spec = ECHO_PRESETS.get(preset)
+    if not spec:
+        return 0.0
+    # "aecho=入力:出力:遅れ:減衰"。遅れはミリ秒で、"|" 区切り
+    try:
+        delays = spec.split("=", 1)[1].split(":")[2]
+        return max(float(d) for d in delays.split("|")) / 1000.0
+    except (IndexError, ValueError):
+        return 0.0
+
+
+def echo_positions(regions, total):
+    """trimmed.wav の時刻で決めた区間が、clean.wav ではどこに来るか。
+
+    2つの理由でずれる。
+      - aecho は、いちばん遅いエコーの遅れぶん、その部分を伸ばす
+      - acrossfade は、継ぎ目ごとに ECHO_CROSSFADE 秒だけ重ねて縮める
+    後ろの区間ほど、前の区間のぶんが積み上がってずれる。
+    """
+    parts = echo_parts(regions, total)
+    out, at = [], 0.0
+    for index, (start, end, preset) in enumerate(parts):
+        length = (end - start) + echo_tail(preset)
+        # 継ぎ目の重なりぶんだけ前へ詰まる
+        begin = at - ECHO_CROSSFADE * index
+        if preset:
+            out.append({"start": round(max(0.0, begin), 3),
+                        "end": round(begin + length, 3),
+                        "preset": preset})
+        at += length
+    return out
+
+
 def step_clean(ep, cfg):
     src = ep["01_cut"] / "cut.wav"
     if not src.exists():

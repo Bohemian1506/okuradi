@@ -182,6 +182,7 @@ def clean_result(name):
     stale = _why_stale(ep_dir, clean, detail)
     made = detail.get("echoes")
     return {
+        "bands": _clean_bands(detail),
         "state": "古い" if stale else "完了",
         "stale_reason": stale,
         "confirmed": confirmed and not stale,
@@ -192,6 +193,24 @@ def clean_result(name):
         # 作り直したら波形を読み直させる（ブラウザが古い音を使い回さないように）
         "at": int(clean.stat().st_mtime),
     }
+
+
+def _clean_bands(detail):
+    """エコーをかけた区間が、clean.wav のどこに来るか（部品15 の波形の帯）。
+
+    clean.json に残っているのは trimmed.wav の時刻。clean.wav は
+    エコーの尾で伸び、継ぎ目で縮むので、そのまま重ねると後ろほどずれる。
+    """
+    made = detail.get("echoes")
+    total = detail.get("trimmed_duration")
+    if not isinstance(made, list) or not made or not total:
+        return []
+    try:
+        regions = [(float(r["start"]), float(r["end"]), r.get("preset"))
+                   for r in made]
+        return build.echo_positions(regions, float(total))
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return []          # 記録が壊れていたら、帯を出さないだけにする
 
 
 def _same_echoes(made, now):
@@ -476,6 +495,36 @@ def human_size(count):
     return f"{count:.1f} GB"
 
 
+def poster_path(ep_dir):
+    """動画の1コマ目。再生前に出す絵（部品19）。"""
+    return ep_dir / "04_video" / "poster.jpg"
+
+
+def make_poster(ep_dir):
+    """動画の1コマ目を切り出す。作り直しが要るときだけ動かす。
+
+    返すのは (パス, 作れなかった理由)。作れなくても動画は見られるので、
+    工程は止めない。ただし黙って隠さず、理由を画面に返す。
+    """
+    video = video_path(ep_dir)
+    if not video.exists():
+        return None, None
+    dst = poster_path(ep_dir)
+    if dst.exists() and dst.stat().st_mtime >= video.stat().st_mtime:
+        return dst, None
+    try:
+        build.run(["ffmpeg", "-y", "-ss", "0", "-i", str(video),
+                   "-frames:v", "1", "-q:v", "3", str(dst)])
+    except FileNotFoundError:
+        return None, "ffmpeg が見つからないので、再生前の絵を作れません"
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        # ここで投げると、絵が作れないだけで動画パネルごと消えてしまう
+        return None, f"再生前の絵を作れません: {exc}"
+    if not dst.exists():
+        return None, "再生前の絵を作れませんでした（ffmpeg が何も出しませんでした）"
+    return dst, None
+
+
 def video_view(name):
     ep_dir = episodes.resolve(name)
     path = video_path(ep_dir)
@@ -487,9 +536,14 @@ def video_view(name):
     stale = None
     if clean.exists() and clean.stat().st_mtime > path.stat().st_mtime:
         stale = "整音をやり直しました"
+    poster, poster_error = make_poster(ep_dir)
     return {
         "state": "古い" if stale else "完了",
         "stale_reason": stale,
+        "poster": (f"/api/episodes/{name}/video/poster?t={int(poster.stat().st_mtime)}"
+                   if poster else None),
+        "poster_error": poster_error,
+        "seconds": seconds,
         "name": f"{ep_dir.name}/04_video/{path.name}",
         "duration": build.hhmmss(seconds) if seconds is not None else "",
         "size": human_size(path.stat().st_size),
