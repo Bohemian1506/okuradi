@@ -114,7 +114,8 @@ python build.py ep01 --to scan           # 下見の文字起こし
 # config.yml の cuts に区間を書く（GUIなら波形上で指定）
 
 python build.py ep01 --from cut --to clean   # カットして整音
-#   → 01_clean/clean.wav を聴く（ゲート1）
+#   → 01_clean/trimmed.wav  前後のトリムまで（エコー区間の時刻はこの音が基準）
+#   → 01_clean/clean.wav    エコーと音量そろえまで。これを聴く（ゲート1）
 
 python build.py ep01 --from transcribe   # 残り全部
 #   → 限定公開のURLが出る（ゲート2）
@@ -134,6 +135,22 @@ python build.py ep01 --from video --to video   # 画像を変えて動画だけ�
 録画ファイル（mkv / mp4 / mov / flv）を `00_raw/` にそのまま置けばよい。
 最初に使うときに音声だけが `録画名.track0.wav`（48kHz・モノラル・16bit）として
 取り出され、以降の工程はそれを使う。録り直して録画が新しくなれば取り出し直す。
+
+## 一部にだけエコーをかける
+
+タイトルコールなど、短い区間にだけ響きを足せる。config.yml に書く（GUIなら波形上で指定）。
+
+```yaml
+echoes:
+  - start: 12.0      # 秒。01_clean/trimmed.wav の時刻で書く
+    end: 18.5
+    preset: light    # light（軽め） / hall（響く）。書かなければかからない
+```
+
+時刻の基準が `trimmed.wav` なのは、エコーの有無で長さが変わらないから。
+`clean.wav` を基準にすると、エコーを足すたびに区間を付け直すことになる。
+
+0.3秒より短い区間と、0.3秒より近い区間どうしは無視する（繋ぎ目が作れないため）。
 
 マイクとデスクトップ音声を別トラックで録っている場合は、config.yml の
 `audio.source_track` で使うトラックを選ぶ（0 始まり。既定は 0）。
