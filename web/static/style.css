@@ -304,6 +304,12 @@ button, input, select, textarea { font-family: inherit; }
   animation: blink 1.4s infinite;
 }
 
+.save-badge.is-error {
+  color: oklch(0.45 0.2 25); background: #fbeee8;
+  border: 1.5px solid oklch(0.55 0.2 25 / .45);
+}
+.save-badge.is-error .mark { background: oklch(0.55 0.2 25); }
+
 .save-badge.is-saving {
   color: var(--muted); background: var(--cream); border: 1.5px solid var(--rule);
 }
@@ -319,10 +325,15 @@ button, input, select, textarea { font-family: inherit; }
   cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .25);
 }
 .btn-save:hover:not(:disabled) { background: var(--accent-deep); }
-.btn-save:disabled {
-  background: var(--rule); color: var(--disabled);
-  cursor: default; box-shadow: none;
+.btn-save:disabled { cursor: default; box-shadow: none; }
+.btn-save.is-saved:disabled { background: var(--rule); color: var(--disabled); }
+/* 保存中は、押せないが「いま動いている」ことが分かるよう半透明の橙にする */
+.btn-save.is-saving:disabled { background: oklch(0.65 0.18 45 / .55); color: #fff; }
+.btn-save.is-error {
+  background: var(--cream); color: oklch(0.5 0.2 25);
+  border: 2px solid oklch(0.55 0.2 25); box-shadow: none;
 }
+.btn-save.is-error:hover { background: #fbeee8; }
 
 /* エラーの帯 */
 .save-error {
@@ -336,12 +347,7 @@ button, input, select, textarea { font-family: inherit; }
   background: var(--error-text); color: #fff;
   font: 700 10px/14px sans-serif; text-align: center;
 }
-.save-error .spacer { flex: 1; }
-.btn-retry {
-  padding: 6px 14px; border: 1.5px solid var(--rule-strong); border-radius: 999px;
-  background: var(--cream); font-size: 12px; font-weight: 500;
-  color: var(--ink); cursor: pointer;
-}
+
 
 /* 一覧（外側のカードの中に、明るい面で浮かせる） */
 .segment-list {
@@ -350,6 +356,7 @@ button, input, select, textarea { font-family: inherit; }
   box-shadow: inset 0 0 0 1px var(--rule);
 }
 .segment-list.is-dirty { box-shadow: inset 0 0 0 2px var(--accent); }
+.segment-list.is-saving { opacity: .6; }
 
 .segment-head, .segment {
   display: grid; grid-template-columns: 44px 200px minmax(0, 1fr) 36px;

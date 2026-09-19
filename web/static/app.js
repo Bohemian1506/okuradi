@@ -26,7 +26,9 @@ const state = {
   series: {},        // { キー: {label, hint} }
   nextNumber: 1,
   selected: null,    // 選んでいる回の detail
-  saved: [],         // 保存されている segments（直した行を見分けるため）
+  rowIds: [],        // 行ごとの見分け札（segments と同じ並び）
+  savedRows: null,   // 札 -> 保存されている中身（直した行を見分けるため）
+  nextRowId: 0,
   tab: "1",
   save: "saved",     // saved / dirty / saving / error
   saveError: "",
@@ -205,10 +207,19 @@ function themeHint(series) {
   return (rule && rule.hint) || "例: OSI参照モデルの7層";
 }
 
+// 行の並びは変わる（消せる・足せる）ので、位置ではなく札で突き合わせる。
+// 位置で比べると、1行目を消しただけで残りの行が「直した」ことになってしまう。
+function resetRows(segments) {
+  state.rowIds = segments.map((_, index) => index);
+  state.savedRows = new Map(segments.map((segment, index) =>
+    [index, { series: segment.series, theme: segment.theme }]));
+  state.nextRowId = segments.length;
+}
+
 function isChanged(index) {
+  const before = state.savedRows.get(state.rowIds[index]);
+  if (!before) return true;   // 足したばかりの行
   const now = state.selected.segments[index];
-  const before = state.saved[index];
-  if (!before) return true;
   return before.series !== now.series || before.theme !== now.theme;
 }
 
@@ -217,7 +228,7 @@ function saveBadge() {
     saved: ["is-saved", "保存済み"],
     dirty: ["is-dirty", "未保存の変更あり"],
     saving: ["is-saving", "保存中"],
-    error: ["is-dirty", "未保存の変更あり"],
+    error: ["is-error", "保存できませんでした"],
   };
   const [cls, label] = kinds[state.save];
   const badge = el("span", `save-badge ${cls}`);
@@ -234,8 +245,8 @@ function segmentsCard() {
   titles.append(el("div", "segments-title", "コーナーの並び"));
   const actions = el("div", "segments-actions");
 
-  const saveButton = el("button", "btn-save",
-    state.save === "saving" ? "保存中" : state.save === "saved" ? "保存" : "保存する");
+  const labels = { saved: "保存", dirty: "保存する", saving: "保存中", error: "もう一度保存" };
+  const saveButton = el("button", `btn-save is-${state.save}`, labels[state.save]);
   saveButton.disabled = state.save === "saved" || state.save === "saving";
   saveButton.onclick = () => saveSegments();
 
@@ -245,15 +256,14 @@ function segmentsCard() {
 
   if (state.save === "error") {
     const banner = el("div", "save-error");
-    const retry = el("button", "btn-retry", "もう一度保存");
-    retry.onclick = () => saveSegments();
-    banner.append(el("span", "mark", "!"), el("span", null, state.saveError),
-                  el("span", "spacer"), retry);
+    banner.append(el("span", "mark", "!"),
+                  el("span", null, `${state.saveError}。入力した内容は残っています。`));
     card.appendChild(banner);
   }
 
   const list = el("div", "segment-list");
   if (state.save === "dirty" || state.save === "error") list.classList.add("is-dirty");
+  if (state.save === "saving") list.classList.add("is-saving");
 
   const head = el("div", "segment-head");
   head.append(el("span", null, "順"), el("span", null, "コーナー"),
@@ -287,6 +297,7 @@ function segmentsCard() {
     remove.disabled = busy || segments.length <= 1;
     remove.onclick = () => {
       segments.splice(index, 1);
+      state.rowIds.splice(index, 1);
       markDirty();
       renderMain();
     };
@@ -300,6 +311,7 @@ function segmentsCard() {
   add.disabled = busy;
   add.onclick = () => {
     segments.push({ series: Object.keys(state.series)[0] || "", theme: "" });
+    state.rowIds.push(state.nextRowId++);
     markDirty();
     renderMain();
   };
@@ -328,13 +340,14 @@ async function saveSegments() {
       body: JSON.stringify({ segments: state.selected.segments }),
     });
     state.selected = saved;
-    state.saved = JSON.parse(JSON.stringify(saved.segments));
+    resetRows(saved.segments);
     state.save = "saved";
     state.saveError = "";
     await reload({ keep: saved.name, keepSelected: true });
   } catch (err) {
     state.save = "error";
-    state.saveError = `保存できませんでした: ${err.message}`;
+    // 「保存できませんでした」はバッジが出すので、帯には理由だけ書く
+    state.saveError = err.message;
     renderMain();
   }
 }
@@ -426,11 +439,12 @@ function field(label, input) {
 // ---------------------------------------------------------------- 読み込み
 
 async function selectEpisode(name) {
-  if (state.save === "dirty" && state.selected && state.selected.name !== name) {
+  const unsaved = state.save === "dirty" || state.save === "error";
+  if (unsaved && state.selected && state.selected.name !== name) {
     if (!confirm("保存していない変更があります。破棄して別の回に移りますか？")) return;
   }
   state.selected = await api(`/api/episodes/${name}`);
-  state.saved = JSON.parse(JSON.stringify(state.selected.segments));
+  resetRows(state.selected.segments);
   state.save = "saved";
   state.saveError = "";
   renderEpisodes();
