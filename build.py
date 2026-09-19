@@ -241,26 +241,124 @@ def step_cut(ep, cfg):
 
 # ---------------------------------------------------------------- 03. 整音
 
+# エコーのプリセット。多重タップにして、単発エコーの「ポンポン」感を抑える。
+# aecho 以外の選択肢（areverb など）はこの ffmpeg には無く、afir は
+# インパルス応答のファイルが要るので採らなかった（2026-09-19 の調査）。
+ECHO_PRESETS = {
+    "light": "aecho=0.85:0.6:40|70:0.25|0.15",
+    "hall": "aecho=0.9:0.85:30|55|85|120|160|210:0.35|0.28|0.22|0.16|0.10|0.06",
+}
+
+# 区間の繋ぎ目は、そのままだと音量が急に変わってプツッと鳴る。
+# 20ms 重ねて繋ぐ（繋ぎ目1か所につき、その分だけ全体が短くなる）。
+ECHO_CROSSFADE = 0.02
+
+ECHO_PRESET_LABELS = {"light": "軽め", "hall": "響く"}
+
+# これより短い区間・すき間は扱わない（繋ぎに 20ms 要るため）
+ECHO_MIN = 0.3
+
+
+def normalize_echoes(echoes, total):
+    """エコー区間を整える。時刻は trimmed.wav（前後のトリムまで済ませた音）が基準。"""
+    rows = []
+    for echo in echoes or []:
+        preset = (echo.get("preset") or "").strip()
+        if preset not in ECHO_PRESETS:
+            continue                      # 「なし」や知らない名前は、かけない
+        start = max(0.0, float(echo.get("start", 0)))
+        end = min(float(echo.get("end", 0)), total)
+        if end - start < ECHO_MIN:
+            continue
+        rows.append((start, end, preset))
+
+    rows.sort()
+    merged = []
+    for start, end, preset in rows:
+        if merged and start - merged[-1][1] < ECHO_MIN:
+            continue                      # 近すぎる区間は、繋ぎ目が作れないので飛ばす
+        if start < ECHO_MIN:
+            start = 0.0                   # 先頭すぐなら頭から
+        if total - end < ECHO_MIN:
+            end = total                   # 末尾すぐなら最後まで
+        merged.append((start, end, preset))
+    return merged
+
+
+def echo_graph(regions, total):
+    """区間だけにエコーをかけるフィルタグラフを組む。
+
+    aecho は区間指定（enable）に対応していないので、
+    atrim で分けて、かける所だけ通し、acrossfade で繋ぎ直す。
+    """
+    parts, at = [], 0.0
+    for start, end, preset in regions:
+        if start > at:
+            parts.append((at, start, None))
+        parts.append((start, end, preset))
+        at = end
+    if at < total:
+        parts.append((at, total, None))
+
+    lines, labels = [], []
+    for index, (start, end, preset) in enumerate(parts):
+        chain = f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS"
+        if preset:
+            chain += "," + ECHO_PRESETS[preset]
+        lines.append(f"{chain}[p{index}]")
+        labels.append(f"p{index}")
+
+    if len(labels) == 1:
+        lines[-1] = lines[-1].replace(f"[{labels[0]}]", "[echoed]")
+        return ";".join(lines)
+
+    current = labels[0]
+    for index in range(1, len(labels)):
+        out = "echoed" if index == len(labels) - 1 else f"x{index}"
+        lines.append(f"[{current}][{labels[index]}]acrossfade=d={ECHO_CROSSFADE}[{out}]")
+        current = out
+    return ";".join(lines)
+
+
 def step_clean(ep, cfg):
     src = ep["01_cut"] / "cut.wav"
     if not src.exists():
         src = find_raw(ep, cfg)
         print("(カット未実行のため 00_raw をそのまま使います)")
+    trimmed = ep["01_clean"] / "trimmed.wav"
     dst = ep["01_clean"] / "clean.wav"
 
     a = cfg.get("audio", {})
+
+    # 1回目: ノイズ低減と前後のトリムまで。
+    # エコー区間の時刻はこの音が基準なので、途中のファイルとして必ず残す。
     filters = []
     if a.get("denoise", True):
         filters.append("afftdn=nf=-25")
     if a.get("trim_silence", True):
         trim = "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB"
         filters += [trim, "areverse", trim, "areverse"]
-    # 正規化は必ず最後。カットの接続点で生じた音量段差もここで均される。
-    filters.append(f"loudnorm=I={a.get('target_lufs', -14)}:TP=-1.5:LRA=11")
+    run(["ffmpeg", "-y", "-i", str(src), "-af", ",".join(filters) or "anull",
+         "-ar", "48000", "-ac", "1", str(trimmed)])
+    total = audio_duration(trimmed)
+    print(f"-> {trimmed}  ({hhmmss(total)})  前後のトリムまで")
 
-    run(["ffmpeg", "-y", "-i", str(src), "-af", ",".join(filters),
-         "-ar", "48000", "-ac", "1", str(dst)])
-    print(f"-> {dst}  ({hhmmss(audio_duration(dst))})")
+    # 2回目: エコーをかけてから正規化。
+    # 正規化は必ず最後。エコーで足した分も、ここで天井に収まる。
+    loudnorm = f"loudnorm=I={a.get('target_lufs', -14)}:TP=-1.5:LRA=11"
+    regions = normalize_echoes(cfg.get("echoes"), total)
+
+    if regions:
+        graph = echo_graph(regions, total) + f";[echoed]{loudnorm}[out]"
+        run(["ffmpeg", "-y", "-i", str(trimmed), "-filter_complex", graph,
+             "-map", "[out]", "-ar", "48000", "-ac", "1", str(dst)])
+        where = ", ".join(f"{ECHO_PRESET_LABELS[p]} {hhmmss(s)}–{hhmmss(e)}"
+                          for s, e, p in regions)
+        print(f"-> {dst}  ({hhmmss(audio_duration(dst))})  エコー{len(regions)}区間: {where}")
+    else:
+        run(["ffmpeg", "-y", "-i", str(trimmed), "-af", loudnorm,
+             "-ar", "48000", "-ac", "1", str(dst)])
+        print(f"-> {dst}  ({hhmmss(audio_duration(dst))})")
 
 
 # ---------------------------------------------------------------- 04. 文字起こし（確定）
