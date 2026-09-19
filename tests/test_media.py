@@ -303,16 +303,30 @@ def test_記録が壊れていても帯で落ちない(ep):
     (ep / "01_clean" / "clean.json").write_text(json.dumps({
         "trimmed_duration": 57.11, "echoes": [{"start": "あ", "end": 9}],
     }), encoding="utf-8")
-    assert media.clean_result("ep01")["bands"] == []
+    got = media.clean_result("ep01")
+    assert got["bands"] == []
+    assert got["bands_error"]              # 黙って「エコー無し」に見せない
 
 
-def test_記録に長さが無ければ帯は出さない(ep):
-    # trimmed_duration が無いと、どこに来るか計算できない
+def test_記録に長さが無ければ理由を返す(ep):
+    # trimmed_duration が無いと、どこに来るか計算できない（古い clean.json）
     (ep / "01_clean" / "clean.wav").write_bytes(b"a")
     (ep / "01_clean" / "clean.json").write_text(json.dumps({
         "echoes": [{"start": 10.0, "end": 20.0, "preset": "light"}],
     }), encoding="utf-8")
-    assert media.clean_result("ep01")["bands"] == []
+    got = media.clean_result("ep01")
+    assert got["bands"] == []
+    assert "整音をやり直す" in got["bands_error"]
+
+
+def test_エコーをかけていなければ理由は要らない(ep):
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(json.dumps({
+        "trimmed_duration": 57.11, "echoes": [],
+    }), encoding="utf-8")
+    got = media.clean_result("ep01")
+    assert got["bands"] == []
+    assert got["bands_error"] is None      # かけていないので、帯が無いのが正しい
 
 
 # ---------------------------------------------------------------- 動画のポスター
