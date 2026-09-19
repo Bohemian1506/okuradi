@@ -60,8 +60,11 @@ def draft(name):
 
 def has_label():
     """ラベルがあるか。無いまま登録すると gh が失敗する。"""
-    out = subprocess.run(["gh", "label", "list", "--json", "name"],
-                         capture_output=True, text=True, timeout=30)
+    # --limit の既定は30件。ラベルが増えたときに取りこぼさないようにする。
+    # cwd も create() とそろえる（別のリポジトリを見てしまわないように）
+    out = subprocess.run(
+        ["gh", "label", "list", "--json", "name", "--limit", "200"],
+        capture_output=True, text=True, timeout=30, cwd=str(episodes.ROOT))
     if out.returncode != 0:
         return False
     try:

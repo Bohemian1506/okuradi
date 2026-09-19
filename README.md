@@ -11,11 +11,18 @@ scan  -> cut -> clean -> transcribe -> meta -> video -> upload
 下見     カット  整音     文字起こし   メタ    動画化   限定公開
 ```
 
-GUIを使う場合（作っている途中。いまは回の管理だけ）:
+GUIを使う場合:
 
 ```
 uvicorn web.main:app --reload     # http://127.0.0.1:8000
 ```
+
+回を作る → 音源を入れる → 下見 → エコー区間 → 整音 → 文字起こしを直す →
+タイトルと章 → 動画 → YouTube に貼る文章のコピー、まで一通りできる。
+この回について Claude に相談したり、会話から改善メモを Issue に残したりもできる。
+
+**ただし、新しい GUI だけで1回分を通したことはまだない**（工程ごとには確かめてある）。
+次の収録で通してみて、問題がなければ下の Streamlit 版を消す。
 
 今までの GUI（Streamlit）も、新しい GUI で1回分を通せるまで残してある:
 
@@ -83,7 +90,17 @@ build.py が自動で読み込むので、LD_LIBRARY_PATH の設定は要らな�
 pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
 ```
 
-### 3. Claude Code
+### 3. GitHub CLI
+
+改善メモを Issue に登録するのに使う。
+
+```
+gh auth status   # ログインしてあること
+```
+
+ラベル `改善メモ` が要る。無ければ `gh label create 改善メモ` で作る。
+
+### 4. Claude Code
 
 Claude の呼び出しは `claude -p`（Claude Code の headless モード）経由。
 APIキーは使わず、サブスクの枠で動く。Claude Code にログインしてあればよい。
@@ -94,7 +111,7 @@ claude auth status   # authMethod が claude.ai になっていること
 
 環境変数 `ANTHROPIC_API_KEY` は呼び出し時に外すので、設定されていても従量課金にはならない。
 
-### 4. YouTube API
+### 5. YouTube API
 
 1. Google Cloud Console でプロジェクトを作る
 2. 「YouTube Data API v3」を有効化
@@ -117,6 +134,7 @@ python build.py ep01 --to scan           # 下見の文字起こし
 # config.yml の cuts に区間を書く（GUIなら波形上で指定）
 
 python build.py ep01 --from cut --to clean   # カットして整音
+#   進み具合は tail -f ep01/00_logs/clean.log（ffmpegの出力はここに残る）
 #   → 01_clean/trimmed.wav  前後のトリムまで（エコー区間の時刻はこの音が基準）
 #   → 01_clean/clean.wav    エコーと音量そろえまで。これを聴く（ゲート1）
 
