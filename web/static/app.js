@@ -47,6 +47,8 @@ const state = {
   saveError: "",
   job: null,         // 実行中（か直前に終わった）工程
   showLog: false,
+  logKind: "かんたん",   // かんたん / くわしい
+  detailLog: null,
   stream: null,
   source: null,      // いま入っている収録ファイル
   obs: null,         // OBS のフォルダの様子
@@ -1720,7 +1722,11 @@ function renderStatus() {
   const line = el("div", "status-line");
   const logButton = el("button", "btn-log", state.showLog ? "ログ ▴" : "ログ ▾");
   logButton.disabled = !job || !job.lines || !job.lines.length;
-  logButton.onclick = () => { state.showLog = !state.showLog; renderStatus(); };
+  logButton.onclick = () => {
+    state.showLog = !state.showLog;
+    if (state.showLog && state.logKind === "くわしい") loadDetailLog();
+    renderStatus();
+  };
 
   if (!job || !STATUS_LOOK[job.state]) {
     line.append(el("span", "status-mark is-idle"),
@@ -1763,10 +1769,50 @@ function renderStatus() {
   box.appendChild(line);
 
   if (state.showLog && job.lines && job.lines.length) {
-    const log = el("pre", "log", job.lines.join("\n"));
+    box.appendChild(logSwitch());
+    const detail = state.detailLog;
+    let text;
+    if (state.logKind === "くわしい") {
+      if (!detail) text = "読み込んでいます…";
+      else if (detail.state !== "表示") text = "この工程のくわしいログはまだありません。";
+      else text = (detail.dropped ? `（古い ${detail.dropped}行は省きました）\n` : "")
+        + detail.lines.join("\n");
+    } else {
+      text = job.lines.join("\n");
+    }
+    const log = el("pre", "log", text);
     box.appendChild(log);
     log.scrollTop = log.scrollHeight;
   }
+}
+
+function logSwitch() {
+  const box = el("div", "log-switch");
+  for (const kind of ["かんたん", "くわしい"]) {
+    const button = el("button", `log-tab ${state.logKind === kind ? "is-active" : ""}`, kind);
+    button.onclick = () => {
+      state.logKind = kind;
+      if (kind === "くわしい") loadDetailLog();
+      renderStatus();
+    };
+    box.appendChild(button);
+  }
+  box.appendChild(el("span", "log-note",
+    state.logKind === "かんたん" ? "工程が出したことだけ"
+                                 : "ffmpeg などの出力もぜんぶ（00_logs/ に残ります）"));
+  return box;
+}
+
+async function loadDetailLog() {
+  const job = state.job;
+  if (!job) return;
+  state.detailLog = null;
+  try {
+    state.detailLog = await api(`/api/episodes/${job.episode}/log/${job.step}`);
+  } catch (err) {
+    state.detailLog = { state: "なし", lines: [] };
+  }
+  renderStatus();
 }
 
 // ---------------------------------------------------------------- 工程を動かす
@@ -1807,6 +1853,7 @@ async function runStep(step) {
     return;
   }
   state.showLog = false;
+  state.detailLog = null;
   renderStatus();
   renderMain();
   openStream();
@@ -1878,6 +1925,7 @@ async function finishJob() {
     }
   }
   await reload({ keep: state.selected && state.selected.name, keepSelected: true });
+  if (state.showLog && state.logKind === "くわしい") await loadDetailLog();
   renderStatus();
   if (state.job && state.job.state === "完了") {
     const done = state.job;

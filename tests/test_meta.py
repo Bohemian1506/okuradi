@@ -66,3 +66,28 @@ def test_古い概要欄には目次を足さない():
     got = build.youtube_description(old)
     assert got.count("--- 目次 ---") == 1
     assert got == old["description"]
+
+
+# ---------------------------------------------------------------- くわしいログの書き出し
+
+def test_外部コマンドの出力はくわしいログに残る(tmp_path, capsys):
+    """画面には「$ ふしぎ ...」だけ、ファイルには出力がぜんぶ残る。"""
+    log = tmp_path / "clean.log"
+    build.open_detail_log(log)
+    try:
+        build.run(["echo", "こんにちは"])
+    finally:
+        build.close_detail_log()
+
+    shown = capsys.readouterr().out
+    assert shown.strip() == "$ echo ..."          # 画面はこれだけ
+    saved = log.read_text(encoding="utf-8")
+    assert "$ echo こんにちは" in saved           # ファイルには命令も
+    assert "こんにちは" in saved                  # 出力も
+
+
+def test_ログが書けなくても工程は止まらない(tmp_path, capsys):
+    build.open_detail_log(tmp_path / "ありません" / "x" / "clean.log" / "だめ" / "log")
+    out = capsys.readouterr().out
+    build.close_detail_log()
+    assert "くわしいログを残せません" in out or out == ""

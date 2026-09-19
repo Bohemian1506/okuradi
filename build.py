@@ -44,9 +44,45 @@ STEP_LABELS = {
 
 # ---------------------------------------------------------------- ユーティリティ
 
+# 外部コマンド（ffmpeg など）の出力をぜんぶ書き出す先。
+# 画面に流すのは工程自身の print だけにして、細かい出力はこちらに残す。
+_detail_log = None
+
+
+def open_detail_log(path):
+    """くわしいログの書き出し先を開く。工程ごとに作り直す。"""
+    global _detail_log
+    close_detail_log()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _detail_log = path.open("w", encoding="utf-8")
+    except OSError as exc:
+        # ログが書けないだけで工程を止めない。ただし黙らない
+        print(f"(くわしいログを残せません: {exc})", flush=True)
+        _detail_log = None
+
+
+def close_detail_log():
+    global _detail_log
+    if _detail_log:
+        _detail_log.close()
+        _detail_log = None
+
+
+def log_detail(text):
+    if _detail_log:
+        _detail_log.write(text if text.endswith("\n") else text + "\n")
+        _detail_log.flush()
+
+
 def run(cmd):
-    """外部コマンドを実行。出力を逐次読むのでGUIでも固まらない。"""
+    """外部コマンドを実行。出力を逐次読むのでGUIでも固まらない。
+
+    画面に出すのは「$ ffmpeg ...」の1行だけ。出力そのものは、
+    くわしいログ（00_logs/<工程>.log）に残す。
+    """
     print(f"$ {cmd[0]} ...", flush=True)
+    log_detail(f"$ {' '.join(cmd)}")
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
     )
@@ -55,6 +91,7 @@ def run(cmd):
         tail.append(line)
         if len(tail) > 40:
             tail.pop(0)
+        log_detail(line.rstrip("\n"))
     proc.wait()
     if proc.returncode != 0:
         print("".join(tail), file=sys.stderr)
@@ -648,7 +685,11 @@ def main():
     ep, cfg = load_episode(root, args.episode)
     for name in STEPS[STEPS.index(args.start): STEPS.index(args.end) + 1]:
         print(f"\n[{name}] {STEP_LABELS[name]}")
-        HANDLERS[name](ep, cfg)
+        open_detail_log(ep["dir"] / "00_logs" / f"{name}.log")
+        try:
+            HANDLERS[name](ep, cfg)
+        finally:
+            close_detail_log()
     print("\n完了")
 
 
