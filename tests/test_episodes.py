@@ -272,3 +272,28 @@ def test_テーマ欄のヒントは型を示す最初の文だけ使う(tmp_pat
     }
     make_episode(tmp_path, config=config)
     assert episodes.series_rules(tmp_path)["imasara"]["hint"] == "「今更聞けない○○」の形"
+
+
+# ---------------------------------------------------------------- エコー区間
+
+def test_エコー区間は並べ直して保存する(tmp_path):
+    make_episode(tmp_path)
+    episodes.save_echoes("ep01", [
+        {"start": 20.004, "end": 24.0, "preset": "hall"},
+        {"start": 5.0, "end": 9.0, "preset": "light"},
+    ], root=tmp_path)
+    saved = episodes.read_config(tmp_path / "ep01")["echoes"]
+    assert [r["start"] for r in saved] == [5.0, 20.0]      # 並び替えと丸め
+    assert saved[1]["preset"] == "hall"
+
+
+def test_終わりが始まりより前なら断る(tmp_path):
+    make_episode(tmp_path)
+    with pytest.raises(episodes.EpisodeError, match="終わり"):
+        episodes.save_echoes("ep01", [{"start": 9.0, "end": 5.0}], root=tmp_path)
+
+
+def test_プリセットを書かなければなしになる(tmp_path):
+    make_episode(tmp_path)
+    episodes.save_echoes("ep01", [{"start": 1.0, "end": 2.0}], root=tmp_path)
+    assert episodes.read_echoes("ep01", root=tmp_path)[0]["preset"] == "none"

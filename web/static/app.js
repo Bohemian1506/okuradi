@@ -55,7 +55,14 @@ const state = {
   scan: null,        // 下見の文字起こし
   at: 0,             // 再生位置（秒）
   playing: false,
+  wave: null,        // 波形（trimmed.wav から）
+  echoes: [],        // エコー区間
+  echoesSaved: "",   // 保存されている中身（未保存かを見分ける）
+  picked: -1,        // 選んでいる区間
+  previewing: -1,    // 試聴中の区間
 };
+
+const PRESETS = { none: "なし", light: "軽め", hall: "響く" };
 
 // 音は1つだけ鳴らす
 const audio = new Audio();
@@ -210,12 +217,13 @@ function renderMain() {
 
 // ---------------------------------------------------------------- 部品9・10 音源
 
-function section(no, title, note, body, step) {
+function section(no, title, note, body, step, right) {
   const box = el("div", "section");
   const head = el("div", "section-head");
   const titles = el("div", "section-titles");
   titles.append(el("div", "section-title", title), el("div", "section-note", note));
   head.append(el("div", "section-no", String(no)), titles);
+  if (right) head.appendChild(right);
   if (step) head.appendChild(runRow(step));
   box.append(head, body);
   return box;
@@ -239,13 +247,208 @@ function screenRecording() {
 
   box.appendChild(section(3, "エコー区間を決める",
     "波形をドラッグして区間を選び、プリセットを付ける。タイトルコールなど一部だけに。",
-    placeholder("波形とエコー区間", "この節は #6 の続きで入れます")));
+    echoCard(), null, echoSave()));
 
   box.appendChild(section(4, "整音して聴く",
     "前後の無音を切り、音量をそろえる。聴いて確かめる1つ目の確認ポイント。",
     placeholder("整音結果", "聴いて確かめるところは #6 の続きで入れます"),
     stepOf("clean")));
   return box;
+}
+
+// ---------------------------------------------------------------- 部品13・14 波形とエコー区間
+
+function echoDirty() {
+  return JSON.stringify(state.echoes) !== state.echoesSaved;
+}
+
+function echoSave() {
+  const box = el("div", "segments-actions");
+  const dirty = echoDirty();
+
+  const badge = el("span", `save-badge ${dirty ? "is-dirty" : "is-saved"}`);
+  badge.append(el("span", "mark"),
+               document.createTextNode(dirty ? "未保存の変更あり" : "保存済み"));
+
+  const save = el("button", `btn-save ${dirty ? "is-dirty" : "is-saved"}`,
+                  dirty ? "保存する" : "保存");
+  save.disabled = !dirty;
+  save.onclick = () => saveEchoes();
+
+  box.append(badge, save);
+  return box;
+}
+
+function echoCard() {
+  const card = el("div", "panel-card");
+  const wave = state.wave || { state: "未実行" };
+
+  if (wave.state !== "表示") {
+    card.appendChild(el("div", "wave-empty",
+      wave.reason || "先に整音を1度実行すると、波形が出ます"));
+    card.appendChild(regionList(0));
+    return card;
+  }
+
+  card.appendChild(waveBox(wave));
+
+  const ruler = el("div", "wave-ruler");
+  for (let i = 0; i < 5; i += 1) {
+    ruler.appendChild(el("span", null, clock(wave.duration * i / 4)));
+  }
+  card.append(ruler, regionList(wave.duration));
+  return card;
+}
+
+function waveBox(wave) {
+  const box = el("div", "wave");
+  for (const peak of wave.peaks) {
+    const bar = el("span", "wave-bar");
+    bar.style.height = `${Math.max(2, peak * 100)}%`;
+    box.appendChild(bar);
+  }
+
+  state.echoes.forEach((echo, index) => {
+    const band = el("div", `wave-band is-${echo.preset}`);
+    if (index === state.picked) band.classList.add("is-picked");
+    band.style.left = `${(echo.start / wave.duration) * 100}%`;
+    band.style.width = `${((echo.end - echo.start) / wave.duration) * 100}%`;
+    band.appendChild(el("span", "tag", PRESETS[echo.preset] || echo.preset));
+    band.onmousedown = (event) => { event.stopPropagation(); };
+    band.onclick = (event) => { event.stopPropagation(); state.picked = index; renderMain(); };
+    box.appendChild(band);
+  });
+
+  const cursor = el("div", "wave-cursor");
+  cursor.style.left = `${Math.min(state.at / wave.duration, 1) * 100}%`;
+  box.appendChild(cursor);
+
+  // ドラッグで区間を選ぶ
+  const timeAt = (event) => {
+    const rect = box.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / rect.width;
+    return Math.max(0, Math.min(ratio, 1)) * wave.duration;
+  };
+  box.onmousedown = (down) => {
+    const from = timeAt(down);
+    const preview = el("div", "wave-band is-light");
+    box.appendChild(preview);
+    const draw = (move) => {
+      const to = timeAt(move);
+      preview.style.left = `${(Math.min(from, to) / wave.duration) * 100}%`;
+      preview.style.width = `${(Math.abs(to - from) / wave.duration) * 100}%`;
+    };
+    const finish = (up) => {
+      document.removeEventListener("mousemove", draw);
+      document.removeEventListener("mouseup", finish);
+      preview.remove();
+      const to = timeAt(up);
+      const start = Math.min(from, to);
+      const end = Math.max(from, to);
+      if (end - start < 0.3) {
+        seekTo(start);          // ほとんど動かなければ、そこへ飛ぶだけ
+        return;
+      }
+      state.echoes.push({ start: round2(start), end: round2(end), preset: "light" });
+      state.echoes.sort((a, b) => a.start - b.start);
+      state.picked = state.echoes.findIndex((e) => e.start === round2(start));
+      renderMain();
+    };
+    document.addEventListener("mousemove", draw);
+    document.addEventListener("mouseup", finish);
+  };
+  return box;
+}
+
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function regionList(duration) {
+  const box = el("div", "regions");
+
+  const head = el("div", "region-head");
+  head.append(el("span"), el("span", null, "開始 – 終了"), el("span", null, "プリセット"),
+              el("span"), el("span"));
+  box.appendChild(head);
+
+  if (!state.echoes.length) {
+    box.appendChild(el("div", "region-empty",
+      duration ? "区間はまだありません。波形の上でドラッグして選んでください。"
+               : "区間はまだありません。"));
+    return box;
+  }
+
+  state.echoes.forEach((echo, index) => {
+    const row = el("div", "region");
+    if (index === state.picked) row.classList.add("is-picked");
+    row.onclick = () => { state.picked = index; seekTo(echo.start); };
+
+    row.appendChild(el("span", `region-swatch is-${echo.preset}`));
+    row.appendChild(el("span", "region-range",
+      `${clock(echo.start)} – ${clock(echo.end)}`));
+
+    const preset = el("select", "field");
+    for (const [key, label] of Object.entries(PRESETS)) {
+      const option = el("option", null, label);
+      option.value = key;
+      if (key === echo.preset) option.selected = true;
+      preset.appendChild(option);
+    }
+    preset.onclick = (event) => event.stopPropagation();
+    preset.onchange = () => { echo.preset = preset.value; renderMain(); };
+    row.appendChild(preset);
+
+    const listen = el("button", "btn-preview");
+    listen.innerHTML = icon(SVG.play, 12, 0) + (state.previewing === index ? "作成中" : "この区間を試聴");
+    listen.querySelector("svg").setAttribute("fill", "currentColor");
+    listen.disabled = state.previewing !== -1;
+    listen.onclick = (event) => { event.stopPropagation(); previewEcho(index); };
+    row.appendChild(listen);
+
+    const remove = el("button", "btn-icon");
+    remove.innerHTML = icon(SVG.trash);
+    remove.title = "この区間を削除";
+    remove.setAttribute("aria-label", "この区間を削除");
+    remove.onclick = (event) => {
+      event.stopPropagation();
+      state.echoes.splice(index, 1);
+      state.picked = -1;
+      renderMain();
+    };
+    row.appendChild(remove);
+    box.appendChild(row);
+  });
+  return box;
+}
+
+async function previewEcho(index) {
+  const echo = state.echoes[index];
+  state.previewing = index;
+  renderMain();
+  try {
+    audio.pause();
+    audio.src = `/api/episodes/${state.selected.name}/echo-preview`
+      + `?start=${echo.start}&end=${echo.end}&preset=${echo.preset}&t=${Date.now()}`;
+    await audio.play();
+  } catch (err) {
+    state.sourceError = `試聴できませんでした: ${err.message}`;
+  }
+  state.previewing = -1;
+  renderMain();
+}
+
+async function saveEchoes() {
+  try {
+    const got = await api(`/api/episodes/${state.selected.name}/echoes`, {
+      method: "PUT", body: JSON.stringify({ echoes: state.echoes }),
+    });
+    state.echoes = got.echoes;
+    state.echoesSaved = JSON.stringify(got.echoes);
+  } catch (err) {
+    state.sourceError = `区間を保存できませんでした: ${err.message}`;
+  }
+  renderMain();
 }
 
 // ---------------------------------------------------------------- 部品11・12 下見
@@ -932,8 +1135,14 @@ function closeStream() {
 
 async function finishJob() {
   // 工程が終わると成果物が増えるので、状態を読み直す
-  if (state.job && state.job.step === "scan" && state.selected) {
-    state.scan = await api(`/api/episodes/${state.selected.name}/scan`).catch(() => null);
+  if (state.job && state.selected) {
+    const name = state.selected.name;
+    if (state.job.step === "scan") {
+      state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
+    }
+    if (state.job.step === "clean") {
+      state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
+    }
   }
   await reload({ keep: state.selected && state.selected.name, keepSelected: true });
   renderStatus();
@@ -1044,6 +1253,11 @@ async function selectEpisode(name) {
   state.at = 0;
   state.playing = false;
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
+  state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
+  const echoes = await api(`/api/episodes/${name}/echoes`).catch(() => ({ echoes: [] }));
+  state.echoes = echoes.echoes;
+  state.echoesSaved = JSON.stringify(echoes.echoes);
+  state.picked = -1;
   [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),

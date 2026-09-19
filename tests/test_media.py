@@ -91,3 +91,53 @@ def test_整音していなければ断る(ep):
 def test_知らない種類は断る(ep):
     with pytest.raises(episodes.EpisodeError, match="知らない種類"):
         media.audio_path("ep01", "なにか")
+
+
+# ---------------------------------------------------------------- 波形
+
+def make_wav(path, seconds=1.0, rate=48000):
+    import math
+    import struct
+    import wave as wavemod
+    with wavemod.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        frames = int(rate * seconds)
+        out.writeframes(b"".join(
+            struct.pack("<h", int(20000 * math.sin(i / 50))) for i in range(frames)
+        ))
+
+
+def test_整音していなければ波形は未実行(ep):
+    got = media.waveform("ep01")
+    assert got["state"] == "未実行"
+    assert "整音" in got["reason"]
+
+
+def test_波形はtrimmedから作る(ep):
+    make_wav(ep / "01_clean" / "trimmed.wav", seconds=1.0)
+    got = media.waveform("ep01", points=20)
+    assert got["state"] == "表示"
+    assert round(got["duration"], 2) == 1.0
+    assert len(got["peaks"]) == 20
+    assert all(0.0 <= p <= 1.0 for p in got["peaks"])
+    assert max(got["peaks"]) > 0.5      # 音が入っている
+
+
+def test_波形はcleanではなくtrimmedを見る(ep):
+    make_wav(ep / "01_clean" / "clean.wav")
+    assert media.waveform("ep01")["state"] == "未実行"
+
+
+# ---------------------------------------------------------------- 試聴
+
+def test_整音前は試聴できない(ep):
+    with pytest.raises(episodes.EpisodeError, match="先に整音"):
+        media.echo_preview("ep01", 1.0, 2.0, "light")
+
+
+def test_短すぎる区間は試聴できない(ep):
+    make_wav(ep / "01_clean" / "trimmed.wav", seconds=3.0)
+    with pytest.raises(episodes.EpisodeError, match="短すぎます"):
+        media.echo_preview("ep01", 1.0, 1.01, "light")
