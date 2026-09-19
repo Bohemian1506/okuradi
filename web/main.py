@@ -222,6 +222,11 @@ def post_video_folder(name: str):
     return _guard(media.open_folder, name)
 
 
+@app.get("/api/episodes/{name}/log/{step}")
+def get_detail_log(name: str, step: str):
+    return _guard(media.detail_log, name, step)
+
+
 @app.get("/api/episodes/{name}/clean")
 def get_clean(name: str):
     return _guard(media.clean_result, name)

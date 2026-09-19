@@ -515,3 +515,33 @@ def open_folder(name):
     except (OSError, subprocess.SubprocessError) as exc:
         raise episodes.EpisodeError(f"フォルダを開けませんでした: {exc}") from exc
     return {"opened": str(folder)}
+
+
+# ---------------------------------------------------------------- くわしいログ
+
+# 画面に出す分だけ。これより古い行は落とす（ffmpeg は長い行を大量に出す）
+LOG_TAIL = 400
+
+
+def detail_log(name, step):
+    """工程ごとの、外部コマンドの出力をぜんぶ残したログ。"""
+    if step not in runnable_steps():
+        raise episodes.EpisodeError(f"知らない工程です: {step}")
+    path = episodes.resolve(name) / "00_logs" / f"{step}.log"
+    if not path.exists():
+        return {"state": "なし", "lines": []}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        raise episodes.EpisodeError(f"ログが読めません: {exc}") from exc
+    return {
+        "state": "表示",
+        "lines": lines[-LOG_TAIL:],
+        "dropped": max(0, len(lines) - LOG_TAIL),
+    }
+
+
+def runnable_steps():
+    # 読み込みの輪を避けるため、ここで取り込む
+    from web import runner
+    return runner.RUNNABLE

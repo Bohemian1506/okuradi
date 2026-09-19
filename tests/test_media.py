@@ -487,3 +487,33 @@ def test_開く手立てが無ければ場所を伝えて断る(ep, monkeypatch)
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     with pytest.raises(episodes.EpisodeError, match="この環境では開けません"):
         media.open_folder("ep01")
+
+
+# ---------------------------------------------------------------- くわしいログ
+
+def test_ログが無ければなしと返す(ep):
+    assert media.detail_log("ep01", "clean") == {"state": "なし", "lines": []}
+
+
+def test_ログを読む(ep):
+    (ep / "00_logs").mkdir()
+    (ep / "00_logs" / "clean.log").write_text("$ ffmpeg ...\nsize= 1kB\n", encoding="utf-8")
+    got = media.detail_log("ep01", "clean")
+    assert got["state"] == "表示"
+    assert got["lines"] == ["$ ffmpeg ...", "size= 1kB"]
+    assert got["dropped"] == 0
+
+
+def test_長いログは末尾だけ返す(ep):
+    (ep / "00_logs").mkdir()
+    (ep / "00_logs" / "clean.log").write_text(
+        "\n".join(str(i) for i in range(500)), encoding="utf-8")
+    got = media.detail_log("ep01", "clean")
+    assert len(got["lines"]) == media.LOG_TAIL
+    assert got["lines"][-1] == "499"
+    assert got["dropped"] == 500 - media.LOG_TAIL
+
+
+def test_GUI_で使わない工程のログは断る(ep):
+    with pytest.raises(episodes.EpisodeError, match="知らない工程"):
+        media.detail_log("ep01", "cut")

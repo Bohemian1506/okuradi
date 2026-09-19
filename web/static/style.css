@@ -1032,6 +1032,20 @@ select.field { font-weight: 500; }
 .btn-log:hover { background: var(--cream-dim); color: var(--ink); }
 .btn-log:disabled { color: var(--rule); cursor: not-allowed; }
 
+.log-switch {
+  display: flex; align-items: center; gap: 6px; padding: 0 14px 8px;
+}
+.log-tab {
+  padding: 4px 12px; border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--cream); color: var(--muted);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.log-tab.is-active {
+  background: var(--ink); border-color: var(--ink);
+  color: var(--cream-on-wood); font-weight: 700;
+}
+.log-note { font-size: 11px; color: var(--disabled); margin-left: 4px; }
+
 .log {
   margin: 0 14px 14px; height: 160px; overflow: auto;
   background: var(--ink-deep); color: #e6d3b3;
