@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet data-dc-atomics>
+        <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+        <style>
+          *{box-sizing:border-box}
+          :root{
+            --ink:#3a2418; --ink-deep:#2a1a10; --cream:#fffaf0; --cream-dim:#f6efe0;
+            --cream-on-wood:#fff3dc; --muted:#7a6250; --disabled:#a08c78;
+            --rule:#e3d7bf; --rule-strong:#cdbfa5; --wood-text:#d9c3a0;
+            --accent:oklch(0.65 0.18 45); --accent-glow:oklch(0.75 0.18 45);
+            --accent-text:oklch(0.55 0.18 45);
+            --mono:"DM Mono",ui-monospace,monospace;
+            --sans:"Zen Kaku Gothic New",sans-serif;
+          }
+          body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--cream-dim)}
+          a{color:var(--accent-text)} a:hover{color:var(--ink)}
+          .page{max-width:900px;margin:0 auto;padding:28px 24px 40px}
+          h1{font:800 20px var(--sans);margin:0 0 6px}
+          .lead{font-size:13px;color:var(--muted);line-height:1.9;margin:0 0 22px}
+          .card{background:var(--cream);border-radius:16px;
+                box-shadow:0 2px 0 var(--rule-strong);padding:18px 20px 20px;margin-bottom:16px}
+          .cap{font:500 11px var(--mono);color:var(--disabled);margin-bottom:10px;
+               display:flex;align-items:center;gap:8px}
+          .pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;
+                font:700 10px var(--sans);white-space:nowrap}
+          .pill.now{background:var(--accent);color:#fff}
+          .pill.old{background:var(--cream-dim);color:var(--muted)}
+          .wave{position:relative;height:120px;border-radius:10px;background:var(--ink-deep);
+                box-shadow:inset 0 2px 6px rgba(0,0,0,.5);overflow:hidden}
+          .bars{position:absolute;inset:0;
+                background:repeating-linear-gradient(90deg,#8a6f5c 0 2px, transparent 2px 5px);
+                -webkit-mask-image:
+                  radial-gradient(22% 64% at 7% 50%,#000 42%,transparent 100%),
+                  radial-gradient(16% 88% at 19% 50%,#000 42%,transparent 100%),
+                  radial-gradient(20% 50% at 31% 50%,#000 42%,transparent 100%),
+                  radial-gradient(14% 80% at 43% 50%,#000 42%,transparent 100%),
+                  radial-gradient(22% 62% at 57% 50%,#000 42%,transparent 100%),
+                  radial-gradient(15% 92% at 70% 50%,#000 42%,transparent 100%),
+                  radial-gradient(20% 54% at 82% 50%,#000 42%,transparent 100%),
+                  radial-gradient(16% 74% at 94% 50%,#000 42%,transparent 100%);
+                mask-image:
+                  radial-gradient(22% 64% at 7% 50%,#000 42%,transparent 100%),
+                  radial-gradient(16% 88% at 19% 50%,#000 42%,transparent 100%),
+                  radial-gradient(20% 50% at 31% 50%,#000 42%,transparent 100%),
+                  radial-gradient(14% 80% at 43% 50%,#000 42%,transparent 100%),
+                  radial-gradient(22% 62% at 57% 50%,#000 42%,transparent 100%),
+                  radial-gradient(15% 92% at 70% 50%,#000 42%,transparent 100%),
+                  radial-gradient(20% 54% at 82% 50%,#000 42%,transparent 100%),
+                  radial-gradient(16% 74% at 94% 50%,#000 42%,transparent 100%)}
+          .cover{position:absolute;inset:0;z-index:2;
+                 display:flex;flex-direction:column;align-items:center;justify-content:center;
+                 gap:10px;background:rgba(42,26,16,.72);
+                 color:var(--wood-text);font:12px var(--mono)}
+          .track{width:120px;height:5px;border-radius:3px;
+                 background:rgba(217,195,160,.25);overflow:hidden}
+          .track i{display:block;width:35%;height:100%;border-radius:3px;
+                   background:var(--accent-glow);
+                   animation:slide 1.4s ease-in-out infinite}
+          @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
+          .spin{width:14px;height:14px;border-radius:50%;
+                border:2px solid var(--wood-text);border-top-color:transparent}
+          .note{font-size:12.5px;color:var(--muted);line-height:1.9;margin-top:12px}
+          .why{margin-top:16px;padding:12px 15px;border-radius:10px;
+               background:var(--cream-dim);font-size:12.5px;line-height:1.9}
+          .why b{color:var(--ink)}
+        </style>
+      </helmet>
+
+      <div class="page">
+        <h1>部品13 波形ビュー — 読み込み中</h1>
+        <p class="lead">
+          <b>このファイルが、部品13「読み込み中」の見本です。</b>
+          <code style="font:500 12px var(--mono)">screen2-recording-cleanup.dc.html</code> の同じ状態は、こちらで置き換えました（Issue #70）。
+        </p>
+
+        <div class="card">
+          <div class="cap"><span class="pill now">これが正</span>流れる帯（実装されている形）</div>
+          <div class="wave">
+            <div class="bars"></div>
+            <div class="cover">
+              <span class="track"><i></i></span>
+              <span>音を読み込んでいます… 38%</span>
+            </div>
+          </div>
+          <div class="note">
+            半透明の覆いを箱の中に重ね、<b>処理状況バー（部品5）と同じ「流れる帯」</b>で動いていることを見せる。<br>
+            色は <code style="font:500 12px var(--mono)">--accent-glow</code>、覆いは <code style="font:500 12px var(--mono)">rgba(42,26,16,.72)</code>。
+            箱の地色と同系なので、「読み込み中で暗くなっている」として自然に見える。<br>
+            ％は 5刻みでしか届かないので、出た直後は「音を読み込んでいます…」だけになる。
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cap"><span class="pill old">古い見本</span>中央にくるくる（使わない）</div>
+          <div class="wave">
+            <div class="bars"></div>
+            <div class="cover" style="background:transparent">
+              <span class="spin"></span>
+              <span>波形を読み込んでいます</span>
+            </div>
+          </div>
+          <div class="note">
+            <code style="font:500 12px var(--mono)">screen2-recording-cleanup.dc.html</code> の部品13「読み込み中」に描いてある形。
+            <b>こちらは採用しない。</b>
+          </div>
+        </div>
+
+        <div class="why">
+          <b>なぜ帯にしたか</b><br>
+          処理中を「動いていること」で伝えるのは、部品5の処理状況バーと同じ考え方。
+          終わりが読めないものに嘘の数字を出さない代わりに、動いていることだけ見せる（#55 で決めた）。<br>
+          画面の中で「待っている」の見せ方が2種類に分かれるより、そろえているほうが読みやすい。<br>
+          <span style="color:var(--muted)">
+            （当初は「<code style="font:500 12px var(--mono)">spin</code> のキーフレームが無いから」を理由にしていたが、
+            それは #69 で直る一時的な話なので、理由にしないことにした）
+          </span>
+        </div>
+      </div>
+    </x-dc>
+    <script
+      type="text/x-dc"
+      data-dc-script
+      data-props='{}'
+    >
+      class Component extends DCLogic {
+        renderVals() { return {}; }
+      }
+    </script>
+  </body>
+</html>
