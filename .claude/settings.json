@@ -14,7 +14,14 @@
       "Bash(herdr workspace list:*)",
       "Bash(herdr worktree list:*)",
       "Bash(herdr status:*)",
-      "Bash(herdr agent explain:*)"
+      "Bash(herdr agent explain:*)",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(ffprobe -v error *)",
+      "Bash(curl -s -o /dev/null http://127.0.0.1:*)",
+      "Bash(curl -s http://127.0.0.1:*)",
+      "mcp__claude_design__read_file",
+      "mcp__claude_design__render_preview",
+      "mcp__claude_design__list_files"
     ]
   },
   "hooks": {
