@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-10分ラジオ 制作GUI
+30分ラジオ 制作GUI
 
     streamlit run app.py
 
