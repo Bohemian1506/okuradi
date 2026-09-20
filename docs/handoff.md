@@ -40,18 +40,19 @@
 - 前の会話の続きから始めるときは、端末で `~/workspace/okuradi/start.sh -c`
 - 作業のルールは `CLAUDE.md`（Issue から始める / 勝手に決めない / レビュー担当は必要なときに呼ぶ / マージしたらすぐ議事録の PR）
 
-### GUI の起動（#77 が片付くまでの形）
+### GUI の起動
 ```
-.venv/bin/python -m uvicorn web.main:app --host 0.0.0.0 --reload
+.venv/bin/python -m uvicorn web.main:app --host 0.0.0.0 --reload   # 起動
+./open-gui.sh                                                       # ブラウザで開く
 ```
 - **`--host 0.0.0.0` が要る。** 付けないと WSL の中だけで待ち、Windows 側のブラウザから入れない
-- 開く住所は `http://localhost:8000`。通らなければ `hostname -I` で出た IP の `:8000`
-- **この IP は WSL を再起動すると変わる。** 数字を文書に書かないこと
+- **`http://localhost:8000` は通らない**（Windows 10 では WSL の localhost 転送が効かない。#77 で確かめた）
+- `./open-gui.sh` が、そのときの WSL の IP を調べてブラウザを開く。**IP は再起動すると変わる**ので、数字を文書に書かないこと
+- サーバーが動いていない / `127.0.0.1` だけで待っているときは、`open-gui.sh` が開かずに理由を出して止まる
 - `--host 0.0.0.0` は同じ LAN の他の機械からも見える。外のネットワークでは避ける
 
 ### まだ確かめていないこと
 - **1回分を通しで作れるか（#53）。** 工程ごとには `ep01` で動かして確かめたが、収録から公開用のコピーまで一続きに通してはいない
-- **`http://localhost:8000` が Windows 側から通るか（#77）。** `--host 0.0.0.0` を付けた状態では試していない
 - PC を再起動した後、「herdr: okuradi + フリーライフ」で、止まった状態から両方が起動するか
 - Herdr で Issue を並行で進める流れ（`herdr worktree create` → 実装担当の起動 → 片付け）
 
