@@ -25,6 +25,38 @@ MSG
   exit 2
 }
 
+# ヒアドキュメント（<<'EOF' … EOF）の中身は、コマンドではなく文字列なので読み飛ばす。
+# これが無いと、コミットメッセージや Issue の本文に文字列として書いただけで止まってしまう（#108）。
+strip_heredocs() {
+  local line probe delim="" in_body=0
+  local -a held=()
+  while IFS= read -r line; do
+    if (( in_body )); then
+      # 区切り語の行に来たら本文の終わり（<<- はタブの字下げを許す）
+      if [[ "${line//$'\t'/}" == "$delim" ]]; then
+        in_body=0
+        held=()
+        continue
+      fi
+      held+=("$line")
+      continue
+    fi
+    # <<< はヒアストリングで、その行で終わる。ヒアドキュメントと見分けるため先に消す。
+    # これが無いと「cat <<<foo」を本文の始まりと読み違え、後ろの本物が隠れる。
+    probe=${line//<<</  }
+    if [[ "$probe" =~ \<\<-?[[:space:]]*[\'\"]?([A-Za-z_][A-Za-z0-9_]*)[\'\"]? ]]; then
+      delim="${BASH_REMATCH[1]}"
+      in_body=1
+      held=()
+    fi
+    printf '%s\n' "$line"
+  done
+  # 区切り語が最後まで来なかった（書きかけ・読み違え）。隠した行を戻して、安全側に倒す
+  if (( in_body )) && (( ${#held[@]} )); then
+    printf '%s\n' "${held[@]}"
+  fi
+}
+
 # ; & | 改行 で区切り、先頭が git で始まる部分だけを見る。
 # （引用符の中の「git push main」などの文字列には反応させないため）
 while IFS= read -r segment; do
@@ -66,6 +98,6 @@ while IFS= read -r segment; do
     dst=${ref##*:}
     [[ "$dst" == "main" || "$dst" == "refs/heads/main" ]] && block
   done
-done < <(printf '%s\n' "$command" | tr ';&|' '\n\n\n')
+done < <(printf '%s\n' "$command" | strip_heredocs | tr ';&|' '\n\n\n')
 
 exit 0
