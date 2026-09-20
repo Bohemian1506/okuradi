@@ -9,6 +9,7 @@ day-4 に、ヒアストリング（`<<<foo`）をヒアドキュメントの始
 """
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -171,3 +172,46 @@ def test_CRLFのヒアドキュメントでも中身は通し後ろは止める(
     subprocess.run(["git", "-C", str(main_repo), "switch", "-q", "-c", "feature/x"], check=True)
     assert not run("block-main-push.sh",
                    f"git commit -F - <<'MSG'\r\n{PUSH} origin {MAIN} の話。\r\nMSG\r\n", main_repo)
+
+
+# ------------------------------------------- 始まるときの状態出し（SessionStart）
+
+def run_status(cwd, with_gh=True):
+    """SessionStart の hook を走らせ、(終了コード, 出たもの) を返す。"""
+    path = "/usr/bin:/bin" if with_gh else str(cwd / "nogh")
+    if not with_gh:
+        (cwd / "nogh").mkdir(exist_ok=True)
+        for name in ("git", "python3"):
+            src = shutil.which(name)
+            if src:
+                (cwd / "nogh" / name).symlink_to(src)
+    proc = subprocess.run([str(HOOKS / "session-start-status.py")],
+                          capture_output=True, text=True, cwd=str(cwd),
+                          env={"PATH": path, "HOME": str(cwd)})
+    return proc.returncode, proc.stdout
+
+
+def test_始まるときの状態出しはgitの外でも止まらない(tmp_path):
+    """セッションの開始を妨げてはいけない。"""
+    code, out = run_status(tmp_path)
+    assert code == 0
+    if out.strip():
+        json.loads(out)          # 出すなら、壊れていない JSON
+
+
+def test_始まるときの状態出しはghが無くても止まらない(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    code, out = run_status(tmp_path, with_gh=False)
+    assert code == 0
+    assert out.strip(), "gh が無くても、手元の状態は出す"
+    d = json.loads(out)
+    assert d["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "ブランチ" in d["hookSpecificOutput"]["additionalContext"]
+
+
+def test_始まるときの状態出しは未コミットの変更を知らせる(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    code, out = run_status(tmp_path, with_gh=False)
+    assert code == 0
+    assert "コミットしていない変更がある" in json.loads(out)["hookSpecificOutput"]["additionalContext"]
