@@ -151,3 +151,23 @@ def test_2つのフックの読み飛ばしは同じ中身(main_repo):
         return lines[start:end + 1]
 
     assert strip_fn("block-main-push.sh") == strip_fn("block-hard-reset.sh")
+
+
+# ------------------------------------------------------ 行末の CRLF（#112）
+
+@pytest.mark.parametrize("tail", ["\r\n", "\r"])
+def test_行末がCRLFでも本物は止める(tail, main_repo):
+    """Windows 側から貼り付けた文字列が混ざると、行末に \r が付くことがある。
+
+    `\r` は空白ではないので語にくっついたままになり、比較が外れて素通りしていた。
+    """
+    assert run("block-main-push.sh", f"{PUSH} origin {MAIN}{tail}", main_repo)
+    assert run("block-hard-reset.sh", f"{HARD}{tail}")
+
+
+def test_CRLFのヒアドキュメントでも中身は通し後ろは止める(main_repo):
+    assert run("block-main-push.sh",
+               f"cat <<EOF > a.txt\r\n本文\r\nEOF\r\n{PUSH} origin {MAIN}\r\n", main_repo)
+    subprocess.run(["git", "-C", str(main_repo), "switch", "-q", "-c", "feature/x"], check=True)
+    assert not run("block-main-push.sh",
+                   f"git commit -F - <<'MSG'\r\n{PUSH} origin {MAIN} の話。\r\nMSG\r\n", main_repo)
