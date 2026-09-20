@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-10分ラジオ 自動制作パイプライン
+30分ラジオ 自動制作パイプライン
 
 工程:
     scan       00_raw   -> 02_text/scan.json        下見の文字起こし（カット点を探す用）
@@ -730,7 +730,7 @@ HANDLERS = {
 
 
 def main():
-    p = argparse.ArgumentParser(description="10分ラジオ 自動制作パイプライン")
+    p = argparse.ArgumentParser(description="30分ラジオ 自動制作パイプライン")
     p.add_argument("episode")
     p.add_argument("--from", dest="start", choices=STEPS, default=STEPS[0])
     p.add_argument("--to", dest="end", choices=STEPS, default=STEPS[-1])

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""10分ラジオ 制作GUI（FastAPI）
+"""30分ラジオ 制作GUI（FastAPI）
 
     uvicorn web.main:app --reload
 

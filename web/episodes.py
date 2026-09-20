@@ -165,7 +165,7 @@ def _why_not(missing):
 # ---------------------------------------------------------------- 一覧
 
 def segment_label(cfg, segment):
-    """「今更聞けない OSI参照モデルの7層」の形にする。"""
+    """「今さら聞けない OSI参照モデルの7層」の形にする。"""
     rules = cfg.get("series_rules") or {}
     label = (rules.get(segment.get("series")) or {}).get("label") or segment.get("series") or ""
     theme = segment.get("theme") or ""
@@ -212,7 +212,7 @@ def list_episodes(root=ROOT):
 def rule_view(key, rule):
     """コーナー1つ分を、画面に出す形にする。"""
     rule = rule or {}
-    # title_hint は「「今更聞けない○○」の形。○○は…」のように2文で書かれている。
+    # title_hint は「「今さら聞けない○○」の形。○○は…」のように2文で書かれている。
     # テーマ欄のヒントには、型を示す最初の文だけを使う。
     hint = (rule.get("title_hint") or "").split("。")[0]
     return {"label": rule.get("label") or key, "hint": hint}
