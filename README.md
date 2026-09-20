@@ -4,6 +4,10 @@
 
 収録ファイル（wav / m4a / OBSの録画）を1本置いて、コマンドを2回叩くと限定公開までいく。
 
+> **この README は「10分・収録1本」の前提で書いてある。**
+> 番組を複数コーナー入りの30分にする検討が [#79](https://github.com/Bohemian1506/okuradi/issues/79) で始まっていて、
+> 入力が「wav 1本」では足りなくなる。まだ何も決まっていないので、ここは今の形のまま。
+
 ## 工程
 
 ```
@@ -53,6 +57,8 @@ WSL の IP を調べて Windows のブラウザを開く。**IP は WSL を再�
 ```
 okuradi/
 ├── build.py              # パイプライン本体（全回共通。基本いじらない）
+├── start.sh              # 作業環境（Herdr と Claude）を開く。docs/herdr.md
+├── open-gui.sh           # 制作GUI を Windows のブラウザで開く
 ├── app.py                # 今までのGUI（Streamlit）
 ├── web/                  # 新しいGUI（FastAPI + 素のHTML/CSS/JS）
 │   ├── main.py           # APIと画面の配信
