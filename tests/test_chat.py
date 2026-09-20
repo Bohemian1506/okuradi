@@ -18,7 +18,7 @@ def ep(tmp_path, monkeypatch):
     (ep_dir / "config.yml").write_text(
         "episode: 1\nconcept: 番組の芯\n"
         "segments:\n- series: imasara\n  theme: OSI\n"
-        "series_rules:\n  imasara:\n    label: 今更聞けない\n",
+        "series_rules:\n  imasara:\n    label: 今さら聞けない\n",
         encoding="utf-8")
     monkeypatch.setattr(episodes, "resolve", lambda name, root=None: ep_dir)
     return ep_dir
@@ -76,7 +76,7 @@ def test_1回目は材料を渡す(ep, monkeypatch):
 
     assert seen["persist"] is True and seen["resume"] is None
     assert "番組の芯" in seen["prompt"]
-    assert "今更聞けない" in seen["prompt"]
+    assert "今さら聞けない" in seen["prompt"]
     assert "[0:12] こんばんは" in seen["prompt"]      # 時刻つきで渡す
     assert "どこで切れそう？" in seen["prompt"]
 

@@ -16,8 +16,8 @@ CONFIG = {
     "episode": 1,
     "segments": [{"series": "imasara", "theme": "OSI参照モデルの7層"}],
     "series_rules": {
-        "imasara": {"label": "今更聞けない"},
-        "it_news": {"label": "ITニュースざっくり"},
+        "imasara": {"label": "今さら聞けない"},
+        "it_news": {"label": "ざっくりITニュースヘッドライン"},
     },
     "cuts": [],
 }
@@ -112,7 +112,7 @@ def test_動画は回の番号のファイル名で探す(tmp_path):
 def test_一覧はテーマをコーナー名つきで出す(tmp_path):
     make_episode(tmp_path)
     got = episodes.list_episodes(tmp_path)
-    assert got[0]["theme"] == "今更聞けない OSI参照モデルの7層"
+    assert got[0]["theme"] == "今さら聞けない OSI参照モデルの7層"
 
 
 def test_新しい回は直前の回から番組の設定を写す(tmp_path):
@@ -204,7 +204,7 @@ def test_壊れた回があってもコーナーの選択肢と次の番号は�
 
     rules = episodes.series_rules(tmp_path)
     assert sorted(rules) == ["imasara", "it_news"]
-    assert rules["imasara"]["label"] == "今更聞けない"
+    assert rules["imasara"]["label"] == "今さら聞けない"
     assert episodes.next_number(tmp_path) == 3
 
 
@@ -267,11 +267,11 @@ def test_読めない理由は1行におさめる(tmp_path):
 def test_テーマ欄のヒントは型を示す最初の文だけ使う(tmp_path):
     config = dict(CONFIG)
     config["series_rules"] = {
-        "imasara": {"label": "今更聞けない",
-                    "title_hint": "「今更聞けない○○」の形。○○は具体的な用語や概念にする"},
+        "imasara": {"label": "今さら聞けない",
+                    "title_hint": "「今さら聞けない○○」の形。○○は具体的な用語や概念にする"},
     }
     make_episode(tmp_path, config=config)
-    assert episodes.series_rules(tmp_path)["imasara"]["hint"] == "「今更聞けない○○」の形"
+    assert episodes.series_rules(tmp_path)["imasara"]["hint"] == "「今さら聞けない○○」の形"
 
 
 # ---------------------------------------------------------------- エコー区間
