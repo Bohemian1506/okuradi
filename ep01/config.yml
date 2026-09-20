@@ -1,6 +1,6 @@
 episode: 1
 recorded_on: null
-concept: 'RUNTEQ（プログラミングスクール）受講生向けの10分ラジオ。話し手は1人。
+concept: 'RUNTEQ（プログラミングスクール）受講生向けの30分ラジオ。話し手は1人。
 
   専門家として教える立場ではなく「自分もよく分かっていない」側に立って
 
@@ -20,14 +20,17 @@ segments:
   theme: OSI参照モデルの7層
 series_rules:
   imasara:
-    label: 今更聞けない
-    title_hint: 「今更聞けない○○」の形。○○は具体的な用語や概念にする
+    label: 今さら聞けない
+    title_hint: 「今さら聞けない○○」の形。○○は具体的な用語や概念にする
   runteq_news:
     label: ランテック通信
     title_hint: '「ランテック通信 #N」の形。サブタイトルで内容を示す'
+  power_play:
+    label: 今月のパワープレイ
+    title_hint: 「今月のパワープレイ ○○」の形。○○は曲名。サブタイトルでどんな曲か示す
   it_news:
-    label: ITニュースざっくり
-    title_hint: 「ITニュースざっくり」の形。サブタイトルで扱ったニュースを示す
+    label: ざっくりITニュースヘッドライン
+    title_hint: 「ざっくりITニュースヘッドライン」の形。サブタイトルで扱ったニュースを示す
 cuts: []
 audio:
   source_track: 0
