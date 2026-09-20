@@ -91,6 +91,9 @@ while IFS= read -r segment; do
     arg=${arg//\'/}
     [[ "$arg" == "--hard" ]] && block
   done
-done < <(printf '%s\n' "$command" | strip_heredocs | tr ';&|' '\n\n\n')
+# tr -d '\r' は、Windows 側から貼り付けた文字列が混ざったときのため（#112）。
+# \r は空白ではないので語にくっついたままになり、比較が外れて素通りしていた。
+# 読むのは判定のためだけなので、実行されるコマンドには影響しない。
+done < <(printf '%s\n' "$command" | tr -d '\r' | strip_heredocs | tr ';&|' '\n\n\n')
 
 exit 0
