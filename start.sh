@@ -13,6 +13,8 @@
 #                   そのワークスペースの中で、フリーライフの start.sh を実行する（フリーライフ側は変えない）
 #   --open-freelife フリーライフのワークスペースを用意し（起動はしない）、最後にフリーライフの画面を開く。
 #                   okuradi の準備は同じようにする（F12 の「herdr: フリーライフ資料」用）
+#   --with-hoso     アール放送局（~/workspace/r-hoso）のワークスペースも用意する。
+#                   番組の中身を決める場所。okuradi とはルールもリズムも違うので分けてある
 #   --no-attach     画面の切り替えも、Herdr を開くこともしない（用意だけする）
 #   -h, --help      この説明を出す
 #
@@ -29,13 +31,15 @@ CONTINUE="off"
 ATTACH="on"
 WITH_FREELIFE="off"
 OPEN_FREELIFE="off"
+WITH_HOSO="off"
 for arg in "$@"; do
   case "$arg" in
     -c|--continue) CONTINUE="on" ;;
     --no-attach)   ATTACH="off" ;;
     --with-freelife) WITH_FREELIFE="on" ;;
     --open-freelife) OPEN_FREELIFE="on" ;;
-    -h|--help)     sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --with-hoso)     WITH_HOSO="on" ;;
+    -h|--help)     sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "知らないオプションです: $arg（--help で使い方を表示）" >&2; exit 1 ;;
   esac
 done
@@ -162,6 +166,25 @@ if [[ "$WITH_FREELIFE" == "on" || "$OPEN_FREELIFE" == "on" ]]; then
     [[ "$WITH_FREELIFE" == "on" ]] && start_freelife
   else
     OPEN_FREELIFE="off"
+  fi
+fi
+
+# ── 1-c. アール放送局（--with-hoso のとき）────────────────────
+# 番組の中身を決めるリポジトリ。ワークスペースを用意するだけで、Claude は起動しない
+# （番組側は okuradi とルールが違うので、開いてから手で始める）
+HOSO_DIR="${HOSO_DIR:-$HOME/workspace/r-hoso}"
+
+if [[ "$WITH_HOSO" == "on" ]]; then
+  if [[ ! -d "$HOSO_DIR" ]]; then
+    say "（アール放送局が見つからないため、飛ばします: $HOSO_DIR）"
+  elif [[ -n "$(workspace_by_label r-hoso)" ]]; then
+    say "アール放送局のワークスペースはすでにあります"
+  else
+    say "アール放送局のワークスペースを作ります"
+    out=$(herdr workspace create --cwd "$HOSO_DIR" --label r-hoso --no-focus 2>&1)
+    if [[ -z "$(jq -r '.result.workspace.workspace_id // empty' <<<"$out" 2>/dev/null)" ]]; then
+      say "（アール放送局のワークスペースを作れませんでした: $(error_of "$out")）"
+    fi
   fi
 fi
 
