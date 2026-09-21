@@ -19,6 +19,8 @@ segments:
 - series: imasara
   theme: OSI参照モデルの7層
 series_rules:
+  op:
+    label: OP
   imasara:
     label: 今さら聞けない
     title_hint: 「今さら聞けない○○」の形。○○は具体的な用語や概念にする
@@ -31,6 +33,10 @@ series_rules:
   it_news:
     label: ざっくりITニュースヘッドライン
     title_hint: 「ざっくりITニュースヘッドライン」の形。サブタイトルで扱ったニュースを示す
+  announce:
+    label: 告知
+  ed:
+    label: ED
 cuts: []
 audio:
   source_track: 0
