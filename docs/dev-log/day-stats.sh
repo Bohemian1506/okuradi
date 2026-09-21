@@ -49,4 +49,18 @@ else
   echo "  無し"
 fi
 echo
+
+# テストの件数。申し送りに書く数字を、写さずに数え直すため。
+# day-5 の申し送りは 232件、その前は 225件。どちらも「前の版から写して古くなった」形。
+# --collect-only は走らせずに数えるだけなので速い（実測 0.4秒）。
+root=$(git rev-parse --show-toplevel 2>/dev/null)
+if [[ -n "$root" && -x "$root/.venv/bin/python" ]]; then
+  tests=$("$root/.venv/bin/python" -m pytest --collect-only -q 2>/dev/null |
+          grep -oE '[0-9]+ tests? collected' | grep -oE '^[0-9]+')
+  printf 'pytest: %s件\n' "${tests:-数えられませんでした}"
+else
+  echo 'pytest: .venv が見つからないので数えていません'
+fi
+echo
 echo "※ この数字を議事録の冒頭に書く。前の版から写さない。"
+echo "※ pytest の件数は申し送りに書く。ここも写さない。"
