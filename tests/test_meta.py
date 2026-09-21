@@ -3,6 +3,7 @@
 import json
 
 import pytest
+import yaml
 
 import build
 
@@ -118,3 +119,63 @@ def test_claude_が時間切れなら理由を言って断る(monkeypatch):
     monkeypatch.setattr(build.subprocess, "run", slow)
     with pytest.raises(RuntimeError, match="10分を過ぎました"):
         build.call_claude("あ")
+
+
+# ---------------------------------------------------------------- メタデータの指示文
+
+def _prompt_of(tmp_path, monkeypatch, segments, rules):
+    """step_meta を動かし、claude に渡った指示文を返す。"""
+    ep_dir = tmp_path / "ep99"
+    ep_dir.mkdir()
+    (ep_dir / "config.yml").write_text(yaml.safe_dump(
+        {"episode": 99, "concept": "テスト番組", "segments": segments, "series_rules": rules},
+        allow_unicode=True, sort_keys=False), encoding="utf-8")
+    ep, cfg = build.load_episode(tmp_path, "ep99")
+    (ep["02_text"] / "transcript.json").write_text(json.dumps(
+        {"segments": [{"start": 0, "text": "こんばんは"}], "full_text": "こんばんは"},
+        ensure_ascii=False), encoding="utf-8")
+
+    sent = {}
+
+    def fake(prompt, schema=None, **kw):
+        sent["prompt"] = prompt
+        return {"structured_output": {"title": "T", "description": "D",
+                                      "chapters": [], "tags": []}}
+
+    monkeypatch.setattr(build, "call_claude", fake)
+    build.step_meta(ep, cfg)
+    return sent["prompt"]
+
+
+def test_章の数を指示文に書かない(tmp_path, monkeypatch):
+    prompt = _prompt_of(
+        tmp_path, monkeypatch,
+        [{"series": "imasara", "theme": "OSI"}],
+        {"imasara": {"label": "今さら聞けない", "title_hint": "「今さら聞けない○○」の形"}},
+    )
+    assert "3〜6" not in prompt
+    assert "1対1" in prompt
+
+
+def test_コーナーが増えれば指示文のコーナー欄も増える(tmp_path, monkeypatch):
+    rules = {"op": {"label": "OP"},
+             "imasara": {"label": "今さら聞けない", "title_hint": "「今さら聞けない○○」の形"},
+             "ed": {"label": "ED"}}
+    segments = [{"series": "op", "theme": "オープニング"},
+                {"series": "imasara", "theme": "OSI"},
+                {"series": "ed", "theme": "おわり"}]
+    prompt = _prompt_of(tmp_path, monkeypatch, segments, rules)
+    corners = [line for line in prompt.splitlines() if line.startswith("- 枠: ")]
+    assert len(corners) == 3
+    assert corners[0] == "- 枠: OP / テーマ: オープニング"
+
+
+def test_タイトルの規則には規則のあるコーナーだけ出す(tmp_path, monkeypatch):
+    """OP・告知・ED には title_hint が無い。空の行を出さない。"""
+    rules = {"op": {"label": "OP"},
+             "imasara": {"label": "今さら聞けない", "title_hint": "「今さら聞けない○○」の形"}}
+    segments = [{"series": "op", "theme": "オープニング"},
+                {"series": "imasara", "theme": "OSI"}]
+    prompt = _prompt_of(tmp_path, monkeypatch, segments, rules)
+    rules_block = prompt.split("# タイトルの規則\n")[1].split("\n# ")[0]
+    assert rules_block.strip() == "- 今さら聞けない: 「今さら聞けない○○」の形"

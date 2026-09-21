@@ -511,7 +511,7 @@ META_INSTRUCTION = """\
 # 出力の条件
 - title: 60文字以内。タイトル規則に従う。煽らない。内容と一致させる。
 - description: 概要欄。3〜5行。最後に訂正歓迎の一文を必ず入れる。
-- chapters: [{{"seconds": 数値, "label": "見出し"}}] の配列。3〜6個。最初は必ず seconds: 0。
+- chapters: [{{"seconds": 数値, "label": "見出し"}}] の配列。上の「この回のコーナー」と1対1にする（同じ数・同じ順番）。最初は必ず seconds: 0。
 - tags: 文字列の配列。5〜10個。日本語中心。
 """
 
@@ -602,8 +602,12 @@ def step_meta(ep, cfg):
     seg_lines, rule_lines = [], []
     for s in cfg["segments"]:
         r = rules.get(s["series"], {})
-        seg_lines.append(f"- 枠: {r.get('label', s['series'])} / テーマ: {s['theme']}")
-        rule_lines.append(f"- {r.get('label', s['series'])}: {r.get('title_hint', '')}")
+        label = r.get("label", s["series"])
+        seg_lines.append(f"- 枠: {label} / テーマ: {s['theme']}")
+        # title_hint が無いコーナー（OP・告知・ED）は、タイトルの規則に出さない。
+        # 空の行を出すと、規則が無いのか書き忘れたのか分からなくなる。
+        if r.get("title_hint"):
+            rule_lines.append(f"- {label}: {r['title_hint']}")
 
     body = "\n".join(f"[{hhmmss(r['start'])}] {r['text']}" for r in transcript["segments"])
     res = call_claude(META_INSTRUCTION.format(
