@@ -123,7 +123,10 @@ def test_新しい回は直前の回から番組の設定を写す(tmp_path):
     assert cfg["concept"] == "番組の芯"           # 番組の設定は引き継ぐ
     assert cfg["episode"] == 2
     assert cfg["cuts"] == []                      # 回ごとのものは持ち越さない
-    assert cfg["segments"] == [{"series": "it_news", "theme": "新しい話"}]
+    # **コーナーの並びは写す**（#106 の3番）。ひな型に無いコーナーは末尾に足す。
+    # 写した分のテーマは空にする（前の回のテーマを使わせない）
+    assert cfg["segments"] == [{"series": "imasara", "theme": ""},
+                               {"series": "it_news", "theme": "新しい話"}]
     assert (tmp_path / "ep02" / "02_text").is_dir()  # 中間ファイルの置き場もできる
 
 
@@ -297,3 +300,65 @@ def test_プリセットを書かなければなしになる(tmp_path):
     make_episode(tmp_path)
     episodes.save_echoes("ep01", [{"start": 1.0, "end": 2.0}], root=tmp_path)
     assert episodes.read_echoes("ep01", root=tmp_path)[0]["preset"] == "none"
+
+
+# ---------------------------------------------------------------- 前の回の並びを写す（#106 の3番）
+
+def _template(tmp_path, segments):
+    """ひな型にする ep01 を、指定のコーナーの並びで作る。"""
+    ep = tmp_path / "ep01"
+    ep.mkdir()
+    cfg = dict(CONFIG)
+    cfg["segments"] = segments
+    (ep / "config.yml").write_text(
+        yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return ep
+
+
+def test_前の回のコーナーの並びを写す(tmp_path):
+    """毎回ゼロから並べ直すのは手間（7コーナーで操作21回と実測した）。"""
+    _template(tmp_path, [{"series": "op", "theme": "挨拶"},
+                         {"series": "imasara", "theme": "前の回のテーマ"},
+                         {"series": "ed", "theme": "締め"}])
+    episodes.create_episode(2, [{"series": "imasara", "theme": "新しいテーマ"}], root=tmp_path)
+    made = yaml.safe_load((tmp_path / "ep02" / "config.yml").read_text(encoding="utf-8"))
+    assert [s["series"] for s in made["segments"]] == ["op", "imasara", "ed"]
+
+
+def test_写したテーマは空にする(tmp_path):
+    """**前の回のテーマが残ったまま保存できると、中身と合わないメタデータができる。**"""
+    _template(tmp_path, [{"series": "op", "theme": "挨拶"},
+                         {"series": "imasara", "theme": "前の回のテーマ"}])
+    episodes.create_episode(2, [{"series": "imasara", "theme": "新しいテーマ"}], root=tmp_path)
+    made = yaml.safe_load((tmp_path / "ep02" / "config.yml").read_text(encoding="utf-8"))
+    themes = {s["series"]: s["theme"] for s in made["segments"]}
+    assert themes["imasara"] == "新しいテーマ", "選んだコーナーは、入れたテーマになる"
+    assert themes["op"] == "", "選ばなかったコーナーのテーマは空にする"
+
+
+def test_テーマが空のままでは保存できない(tmp_path):
+    """空にした意味がここ。**画面で埋めるまで先へ進めない。**"""
+    _template(tmp_path, [{"series": "it_news", "theme": "前のニュース"},
+                         {"series": "imasara", "theme": "前の回"}])
+    episodes.create_episode(2, [{"series": "imasara", "theme": "新しい"}], root=tmp_path)
+    made = yaml.safe_load((tmp_path / "ep02" / "config.yml").read_text(encoding="utf-8"))
+    with pytest.raises(episodes.EpisodeError, match="テーマを入れてください"):
+        episodes.save_segments("ep02", made["segments"], root=tmp_path)
+    made["segments"][0]["theme"] = "番組の挨拶と今日の流れ"
+    episodes.save_segments("ep02", made["segments"], root=tmp_path)   # 埋めれば通る
+
+
+def test_前の回に無いコーナーは末尾に足す(tmp_path):
+    _template(tmp_path, [{"series": "op", "theme": "挨拶"}])
+    episodes.create_episode(2, [{"series": "imasara", "theme": "新しい"}], root=tmp_path)
+    made = yaml.safe_load((tmp_path / "ep02" / "config.yml").read_text(encoding="utf-8"))
+    assert [s["series"] for s in made["segments"]] == ["op", "imasara"]
+    assert made["segments"][-1]["theme"] == "新しい"
+
+
+def test_前の回のコーナーが1つなら今までどおり(tmp_path):
+    """ep01 は1コーナー。**9/24 に ep02 を作るときは、ここを通る。**"""
+    _template(tmp_path, [{"series": "imasara", "theme": "前の回"}])
+    episodes.create_episode(2, [{"series": "imasara", "theme": "新しい"}], root=tmp_path)
+    made = yaml.safe_load((tmp_path / "ep02" / "config.yml").read_text(encoding="utf-8"))
+    assert made["segments"] == [{"series": "imasara", "theme": "新しい"}]

@@ -294,6 +294,38 @@ def validate_segments(segments, known):
     return cleaned
 
 
+def new_segments(before, asked, known):
+    """新しい回のコーナーの並びを作る（#106 の3番）。
+
+    **前の回の並びを写し、ダイアログで選んだコーナーのテーマだけ差し替える。**
+    毎回ゼロから並べ直すのは手間（7コーナーで操作21回かかると実測した・2026-09-22）。
+
+    **写したテーマは、そのまま使わせない。** 前の回のテーマが残ったまま保存できると、
+    中身と合わないメタデータができる。**差し替えないコーナーのテーマは空にする**ので、
+    画面で埋めるまで保存できない（`validate_segments` が断る）。
+
+    前の回に同じコーナーが無ければ、**聞かれたものを末尾に足す**。
+    """
+    asked = validate_segments(asked, known)
+    rows = [dict(r) for r in (before or []) if isinstance(r, dict)]
+    if not rows:
+        return asked
+
+    out = []
+    left = list(asked)
+    for row in rows:
+        made = dict(row)
+        same = next((a for a in left if a["series"] == row.get("series")), None)
+        if same is not None:
+            left.remove(same)
+            made.update(same)
+        else:
+            made["theme"] = ""          # 写したテーマは使わせない。画面で埋める
+        out.append(made)
+    out.extend(left)                    # 前の回に無かったコーナーは末尾に
+    return out
+
+
 def create_episode(number, segments, root=ROOT):
     if not isinstance(number, int) or number < 1:
         raise EpisodeError("回の番号は1以上の数字にしてください")
@@ -308,7 +340,7 @@ def create_episode(number, segments, root=ROOT):
              for key, rule in (cfg.get("series_rules") or {}).items()}
     cfg["episode"] = number
     cfg["recorded_on"] = None
-    cfg["segments"] = validate_segments(segments, known)
+    cfg["segments"] = new_segments(cfg.get("segments"), segments, known)
     cfg["cuts"] = []
 
     ep_dir.mkdir(parents=True)
