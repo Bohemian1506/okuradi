@@ -221,6 +221,7 @@ def find_raw(ep, cfg=None):
         return join_sources(ep, clips)
 
     raw_dir = ep["00_raw"]
+    _refuse_ambiguous(raw_dir)
     videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
     if videos:
         # OBS はマイクとデスクトップ音声を別トラックにできるので、使うトラックを選べるようにする
@@ -238,6 +239,46 @@ def find_raw(ep, cfg=None):
     if not files:
         raise FileNotFoundError(f"{raw_dir} に音声ファイルがありません")
     return files[0]
+
+
+def source_candidates(raw_dir):
+    """人が置いた音源だけを並べる。アプリが作ったものは数えない。
+
+    数えないもの:
+      - `録画名.trackN.wav`（録画から取り出したもの。`find_raw` が作る）
+      - `joined.wav`（繋いだもの）
+    """
+    if not raw_dir.is_dir():
+        return []
+    videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
+    stems = {v.stem for v in videos}
+    others = []
+    for found in sorted(raw_dir.glob("*.wav")) + sorted(raw_dir.glob("*.m4a")):
+        if found.name == JOINED:
+            continue
+        # 「録画名.track0」のような名前は、その録画から取り出したもの
+        base, _, tail = found.stem.rpartition(".")
+        if base in stems and tail.startswith("track"):
+            continue
+        others.append(found)
+    return videos + others
+
+
+def _refuse_ambiguous(raw_dir):
+    """音源が2本以上あるのに、どれをどの順で使うかが書いていない（#154）。
+
+    **黙って1本目を使わない。** 2本置いた人は2本使うつもりなので、
+    1本で進んだ結果は、ほぼ確実に間違っている。
+    """
+    found = source_candidates(raw_dir)
+    if len(found) < 2:
+        return
+    names = "・".join(f.name for f in found)
+    raise ValueError(
+        f"音源が{len(found)}本あります（{names}）。どれをどの順で使うかが分かりません。\n"
+        f"{raw_dir.parent.name}/timeline.yml に並びを書いてください。書き方は docs/features.md。\n"
+        "1本だけ使うなら、ほかを 00_raw から出してください。"
+    )
 
 
 def load_episode(root, name):
@@ -847,6 +888,12 @@ def main():
         open_detail_log(ep["dir"] / "00_logs" / f"{name}.log")
         try:
             HANDLERS[name](ep, cfg)
+        except BaseException as exc:
+            # **止まった理由をログに残す。** これが無いと 00_logs/<工程>.log には
+            # ffmpeg の出力までしか入らず、なぜ止まったかは端末にしか出ない（#154）
+            log_detail(f"!! {STEP_LABELS[name]}が止まりました: {type(exc).__name__}: {exc}")
+            print(f"!! {STEP_LABELS[name]}が止まりました: {exc}", file=sys.stderr)
+            raise
         finally:
             close_detail_log()
     print("\n完了")
