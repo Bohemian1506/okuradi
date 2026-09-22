@@ -215,3 +215,62 @@ def test_始まるときの状態出しは未コミットの変更を知らせ�
     code, out = run_status(tmp_path, with_gh=False)
     assert code == 0
     assert "コミットしていない変更がある" in json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+
+# ---------------------------------------------------------------- 議事録の知らせ（day-6）
+
+MERGE = "gh pr " + "merge"
+
+
+def remind(command):
+    """議事録の知らせが出たかどうか。**止めないので、終了コードではなく中身で見る。**"""
+    proc = subprocess.run(
+        [str(HOOKS / "remind-devlog.sh")],
+        input=json.dumps({"tool_input": {"command": command}}, ensure_ascii=False),
+        capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(Path.cwd())},
+    )
+    assert proc.returncode == 0, "知らせるだけの hook なので、止めてはいけない"
+    return "議事録" in proc.stderr
+
+
+@pytest.mark.parametrize("command", [
+    f"{MERGE} 150 --merge",
+    f"git switch main && {MERGE} 12 --squash",
+    f"echo ok\n{MERGE} 3",
+])
+def test_マージしたら議事録を知らせる(command):
+    assert remind(command)
+
+
+@pytest.mark.parametrize("command", [
+    "gh pr view 150",
+    'gh pr create --base main --title "x"',
+    "ls -la",
+    "gh issue comment 79 --body x",
+])
+def test_マージでないものには黙る(command):
+    assert not remind(command)
+
+
+def test_ヒアドキュメントの中身は文字列なので黙る():
+    """PR 本文に書いただけで知らせが出ると、うるさくて読まれなくなる。"""
+    assert not remind(f'gh pr create --body "$(cat <<EOF\n{MERGE} のことを説明する文章\nEOF\n)"')
+
+
+def test_コミットメッセージに書いただけでは黙る():
+    assert not remind(f'git commit -m "{MERGE} のルールを直す"')
+
+
+def test_止めない():
+    """CLAUDE.md に「経緯を残すほどでない PR は省いてよい」とある。
+
+    機械が一律に止めると、省いてよい場面まで止まる。**知らせるだけにする。**
+    """
+    proc = subprocess.run(
+        [str(HOOKS / "remind-devlog.sh")],
+        input=json.dumps({"tool_input": {"command": f"{MERGE} 1"}}, ensure_ascii=False),
+        capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(Path.cwd())},
+    )
+    assert proc.returncode == 0
