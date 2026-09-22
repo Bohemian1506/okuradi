@@ -2035,6 +2035,13 @@ function placeholder(title, note) {
 
 function seriesSelect(value) {
   const select = el("select", "field");
+  if (!value) {
+    // 足したばかりの行。**選ばせる**（#106 の2番）
+    const first = el("option", null, "選んでください");
+    first.value = "";
+    first.selected = true;
+    select.appendChild(first);
+  }
   for (const [key, rule] of Object.entries(state.series)) {
     const option = el("option", null, rule.label);
     option.value = key;
@@ -2164,7 +2171,9 @@ function segmentsCard() {
   add.innerHTML = icon(SVG.plus, 13, 2) + "コーナーを追加";
   add.disabled = busy;
   add.onclick = () => {
-    segments.push({ series: Object.keys(state.series)[0] || "", theme: "" });
+    // **初期値を空にする。** series_rules の先頭（OP）を入れていたので、
+    // 足した行は全部「OP」から始まり、変え忘れると OP が並ぶ（#106 の2番）
+    segments.push({ series: "", theme: "" });
     state.rowIds.push(state.nextRowId++);
     markDirty();
     renderMain();
@@ -2174,6 +2183,13 @@ function segmentsCard() {
   card.append(list, el("div", "segments-note",
     "コーナーの種類ごとにタイトルの型が決まっています。"
     + "タイトルはメタデータの工程で、この並びとテーマから作られます。"));
+
+  // 同じコーナーが2つ以上あることを知らせる（#106 の2番）。**止めない**
+  for (const note of state.selected.segment_notes || []) {
+    const row = el("div", "copy-note");
+    row.append(el("span", "mark", "i"), document.createTextNode(note));
+    card.appendChild(row);
+  }
   return card;
 }
 

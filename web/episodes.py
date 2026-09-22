@@ -234,6 +234,16 @@ def rule_view(key, rule):
     return {"label": rule.get("label") or key, "hint": hint}
 
 
+def segment_notes(segments, known):
+    """コーナーの並びについて、知らせること（止めない）。"""
+    notes = []
+    twice = duplicate_series(segments)
+    if twice:
+        labels = "・".join((known.get(k) or {}).get("label") or k for k in twice)
+        notes.append(f"{labels} が2つ以上あります。分けて置くなら、このままで大丈夫です")
+    return notes
+
+
 def rules_of(ep_dir):
     """その回の config.yml の series_rules を、画面に出す形にして返す。"""
     rules = read_config(ep_dir).get("series_rules") or {}
@@ -259,6 +269,8 @@ def detail(name, root=ROOT):
     # segments は、表情差分や BGM など将来のキーも含めてそのまま渡す。
     # 画面はこれを持ち回り、保存のときに返してくるので、知らないキーが消えない。
     data["segments"] = copy.deepcopy(cfg.get("segments") or [])
+    # コーナーの並びについて知らせること（#106 の2番）。**止めない**
+    data["segment_notes"] = segment_notes(data["segments"], rules_of(ep_dir))
     return data
 
 
@@ -282,6 +294,29 @@ def template_config(number, root=ROOT):
     before = [d for n, _, d in numbered if n < number]
     source = before[-1] if before else numbered[0][2]
     return read_config(source)
+
+
+def duplicate_series(segments):
+    """2回以上出てくるコーナーの名前を返す（#106 の2番）。
+
+    **止めない。知らせるだけ。** 同じコーナーを前半と後半に分ける回はありえる
+    （「ざっくりITニュースヘッドライン」を2回、など）。
+    **断ると、その回が作れなくなる。**
+
+    止めたいのは「足した行の『OP』を変え忘れて、OP が2つ並ぶ」ほう。
+    そちらは**初期値を空にして、選ばせる**ことで防ぐ（画面側）。
+    """
+    seen, twice = set(), []
+    for row in segments or []:
+        if not isinstance(row, dict):
+            continue
+        key = (row.get("series") or "").strip()
+        if not key:
+            continue
+        if key in seen and key not in twice:
+            twice.append(key)
+        seen.add(key)
+    return twice
 
 
 def validate_segments(segments, known):

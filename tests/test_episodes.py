@@ -408,3 +408,51 @@ def test_ep01の全コーナーにヒントがある():
     無し = [v["label"] for v in rules.values() if not v["hint"]]
     assert not 無し, f"ヒントが無いコーナー: {無し}"
     assert "OSI参照モデル" not in rules["op"]["hint"], "OP に今さら聞けない用の例文が出ている"
+
+
+# ---------------------------------------------------------------- コーナーの重なり（#106 の2番）
+
+def test_同じコーナーが2つ以上あれば見つける():
+    assert episodes.duplicate_series(
+        [{"series": "op"}, {"series": "imasara"}, {"series": "op"}]) == ["op"]
+
+
+def test_重なっていなければ空():
+    assert episodes.duplicate_series([{"series": "op"}, {"series": "ed"}]) == []
+
+
+def test_3つ同じでも1回だけ挙げる():
+    assert episodes.duplicate_series([{"series": "op"}] * 3) == ["op"]
+
+
+def test_空のコーナーは数えない():
+    """足したばかりの行（選んでください）は、重なりに数えない。"""
+    assert episodes.duplicate_series([{"series": ""}, {"series": ""}]) == []
+
+
+def test_重なりは止めずに知らせる():
+    """**同じコーナーを前半と後半に分ける回はありえる。** 断ると、その回が作れない。"""
+    known = {"it_news": {"label": "ざっくりITニュースヘッドライン"}}
+    notes = episodes.segment_notes(
+        [{"series": "it_news"}, {"series": "it_news"}], known)
+    assert len(notes) == 1
+    assert "ざっくりITニュースヘッドライン が2つ以上あります" in notes[0]
+    assert "このままで大丈夫です" in notes[0], "不具合だと思わせない"
+    # **保存は通る**（止めない）
+    got = episodes.validate_segments(
+        [{"series": "it_news", "theme": "前半"}, {"series": "it_news", "theme": "後半"}], known)
+    assert len(got) == 2
+
+
+def test_足した行の初期値は空にする():
+    """`series_rules` の先頭（OP）を入れていたので、変え忘れると OP が並んだ。"""
+    from pathlib import Path
+    app = (Path(__file__).resolve().parents[1] / "web" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'segments.push({ series: "", theme: "" })' in app
+    assert '"選んでください"' in app
+
+
+def test_コーナーを選ばなければ保存できない():
+    known = {"imasara": {"label": "今さら聞けない"}}
+    with pytest.raises(episodes.EpisodeError, match="コーナーを選んでください"):
+        episodes.validate_segments([{"series": "", "theme": "x"}], known)
