@@ -96,18 +96,41 @@ def test_versionが違えば断る():
         timeline.validate({"version": 2, "lanes": {}})
 
 
-def test_区間の終了が開始より前なら断る():
+def test_編集点の終了が開始より前なら断る():
     data = tl(main=[{"id": "op", "source": "a.wav",
-                     "cuts": [{"start": 10, "end": 5}]}])
+                     "edits": [{"kind": "cut", "start": 10, "end": 5}]}])
     with pytest.raises(episodes.EpisodeError, match="終了が開始より後"):
         timeline.validate(data)
 
 
-def test_区間は開始で並べ直される():
-    data = tl(main=[{"id": "op", "source": "a.wav", "echoes": [
-        {"start": 30, "end": 40}, {"start": 10, "end": 20}]}])
-    got = timeline.validate(data)["lanes"]["main"][0]["echoes"]
+def test_編集点は開始で並べ直される():
+    data = tl(main=[{"id": "op", "source": "a.wav", "edits": [
+        {"kind": "echo", "start": 30, "end": 40}, {"kind": "cut", "start": 10, "end": 20}]}])
+    got = timeline.validate(data)["lanes"]["main"][0]["edits"]
     assert [r["start"] for r in got] == [10, 30]
+
+
+def test_カットとエコーが同じ並びに入る():
+    """1つの並びに種類を付けて持つ（#79 の論点1）。原点が違うまま別々に持たない。"""
+    data = tl(main=[{"id": "op", "source": "a.wav", "edits": [
+        {"kind": "cut", "start": 180, "end": 360},
+        {"kind": "echo", "start": 12.5, "end": 20, "preset": "light"}]}])
+    got = timeline.validate(data)["lanes"]["main"][0]["edits"]
+    assert [r["kind"] for r in got] == ["echo", "cut"]
+    assert got[0]["preset"] == "light"
+
+
+def test_知らない種類は断る():
+    data = tl(main=[{"id": "op", "source": "a.wav",
+                     "edits": [{"kind": "ぼかす", "start": 1, "end": 2}]}])
+    with pytest.raises(episodes.EpisodeError, match="種類"):
+        timeline.validate(data)
+
+
+def test_種類を書き忘れたら断る():
+    data = tl(main=[{"id": "op", "source": "a.wav", "edits": [{"start": 1, "end": 2}]}])
+    with pytest.raises(episodes.EpisodeError, match="種類"):
+        timeline.validate(data)
 
 
 def test_知らないキーはそのまま残す():
@@ -176,21 +199,33 @@ def test_本編が空なら全体の長さは0():
     assert timeline.total_seconds(tl(main=[]), {}) == 0.0
 
 
-def test_区間が音の長さをはみ出していたら断る():
-    data = tl(main=[{"id": "op", "source": "a.wav", "cuts": [{"start": 100, "end": 9999}]}])
+def test_編集点が生音の長さをはみ出していたら断る():
+    data = tl(main=[{"id": "op", "source": "a.wav",
+                     "edits": [{"kind": "cut", "start": 100, "end": 9999}]}])
     with pytest.raises(episodes.EpisodeError, match="はみ出して"):
-        timeline.positions(data, {"op": 50.0})
+        timeline.check_edits(data, {"op": 50.0, "imasara": 10.0})
 
 
-def test_区間が音の長さに収まっていれば通る():
-    data = tl(main=[{"id": "op", "source": "a.wav", "echoes": [{"start": 10, "end": 20}]}])
-    assert timeline.positions(data, {"op": 50.0})["op"] == 0
+def test_編集点が生音の長さに収まっていれば通る():
+    data = tl(main=[{"id": "op", "source": "a.wav",
+                     "edits": [{"kind": "echo", "start": 10, "end": 20}]}])
+    assert timeline.check_edits(data, {"op": 50.0, "imasara": 10.0})
 
 
-@pytest.mark.parametrize("key", ["cuts", "echoes"])
-def test_本編以外に区間は書けない(key):
+def test_はみ出しの検証に渡すのは生音の長さ():
+    """`check_edits` は生音の長さ、`positions` は出来上がりの長さ。混ぜないことを形で示す。"""
+    data = tl(main=[{"id": "op", "source": "a.wav", "gap": 0,
+                     "edits": [{"kind": "cut", "start": 100, "end": 200}]}])
+    # 生音は 600秒。100秒カットしたので、出来上がりは 500秒
+    assert timeline.check_edits(data, {"op": 600.0})
+    assert timeline.total_seconds(data, {"op": 500.0}) == 500.0
+    # 生音の長さを positions に渡すと、番組が100秒長いことになってしまう
+    assert timeline.total_seconds(data, {"op": 600.0}) == 600.0
+
+
+def test_本編以外に編集点は書けない():
     """黙って残すと、値の形すら確かめないまま通っていた（レビューで見つかった）。"""
     data = tl(bgm=[{"id": "b1", "source": "b.wav", "anchor": "op", "at": 0,
-                    key: "完全に壊れた文字列"}])
+                    "edits": "完全に壊れた文字列"}])
     with pytest.raises(episodes.EpisodeError, match="書けません"):
         timeline.validate(data)

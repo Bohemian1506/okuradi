@@ -5,8 +5,10 @@
 - **保存するのは「どのクリップの、先頭から何秒か」だけ。**
   番組の先頭から何秒かは、そのつど計算して出す（`positions`）。
   絶対秒で持つと、コーナーを録り直して長さが変わるたびに、後ろ全部の数字を書き直すことになる。
-- **クリップの中の秒数は、そのクリップの `trimmed`（前後を切った後）の先頭から数える。**
-  `README.md` の「時刻の基準は、その編集で長さが変わらない音に置く」に従う。
+- **時刻は2つある。混ぜない**（Premiere などと同じ分け方。#79 の論点1・2026-09-22）。
+  - **素材に対する指示**（カット・エコー）= `edits`。**生音（`00_raw`）の時刻**。
+    トリムのしかたを変えても、ここの数字は動かない
+  - **出来上がりに対する位置**（クリップの配置・SE・文字起こし・章）= **出来上がった音の時刻**
 - **`timeline.yml` が無い回は、今までどおり音源1本で動く。** `read` が None を返す。
 
 このファイルは**まだ工程に繋がっていない**（#144 のスコープ外）。繋ぐのは次の PR。
@@ -21,6 +23,9 @@ VERSION = 1
 
 # レーンは3つ（#86 の案E'）。本編 / BGM / SE・合いの手
 LANES = ["main", "bgm", "se"]
+
+# 編集点の種類。1つの並びに種類を付けて持つ（#79 の論点1）
+KINDS = ["cut", "echo"]
 
 # 人が手で書く値は config.yml にある。ここに現れたら混ざっている（#79 の論点1）
 CONFIG_ONLY = {"episode", "recorded_on", "concept", "segments", "series_rules",
@@ -66,7 +71,10 @@ def _number(value, where):
 
 
 def _ranges(rows, where):
-    """区間の並び（エコー・カット）を整える。開始で並べ直す。
+    """編集点の並びを整える。開始で並べ直す。
+
+    **1つの並びに、種類を付けて持つ**（#79 の論点1・2026-09-22）。
+    カットとエコーを別々の並びで持つと、原点の違いが見えなくなる。
 
     知らないキーはそのまま残す（README の設計メモ。あとから足せるように）。
     """
@@ -74,12 +82,17 @@ def _ranges(rows, where):
     for row in rows or []:
         if not isinstance(row, dict):
             raise episodes.EpisodeError(f"{where} の形が違います")
+        kind = str(row.get("kind") or "").strip()
+        if kind not in KINDS:
+            raise episodes.EpisodeError(
+                f"{where} の種類が {kind or '空'} になっています（使えるのは {'・'.join(KINDS)}）")
         start = _number(row.get("start", 0), f"{where} の開始")
         end = _number(row.get("end", 0), f"{where} の終了")
         if end <= start:
             raise episodes.EpisodeError(
                 f"{where} の終了が開始より後になっていません（{start} → {end}）")
         made = dict(row)
+        made["kind"] = kind
         made["start"] = start
         made["end"] = end
         out.append(made)
@@ -103,14 +116,12 @@ def _clip(row, lane, index):
     made["source"] = source
     if lane == "main":
         made["gap"] = _number(row.get("gap", 0), f"{where}（{clip_id}）の間")
-        made["cuts"] = _ranges(row.get("cuts"), f"{clip_id} のカット")
-        made["echoes"] = _ranges(row.get("echoes"), f"{clip_id} のエコー区間")
+        made["edits"] = _ranges(row.get("edits"), f"{clip_id} の編集点")
     else:
-        # 本編以外に区間は書けない。黙って残すと、値の形すら確かめないまま通ってしまう
-        for key in ("cuts", "echoes"):
-            if key in row:
-                raise episodes.EpisodeError(
-                    f"{where}（{clip_id}）に {key} は書けません。区間は本編のクリップに書いてください")
+        # 本編以外に編集点は書けない。黙って残すと、値の形すら確かめないまま通ってしまう
+        if "edits" in row:
+            raise episodes.EpisodeError(
+                f"{where}（{clip_id}）に edits は書けません。編集点は本編のクリップに書いてください")
         anchor = str(row.get("anchor") or "").strip()
         if not anchor:
             raise episodes.EpisodeError(
@@ -171,23 +182,31 @@ def validate(data):
 
 # ---------------------------------------------------------------- 番組の時刻
 
-def _inside(clip, length):
-    """区間が、そのクリップの長さの中に収まっているか。
+def check_edits(data, raw_durations):
+    """編集点が、生音の長さの中に収まっているか（#144 の受け入れ条件）。
 
-    長さは音を読まないと分からないので、検証ではなくここで見る（#144 の受け入れ条件）。
+    **渡すのは生音（`00_raw`）の長さ。** 編集点は生音の時刻で書くため。
+    長さは音を読まないと分からないので、`validate` ではなくここで見る。
     """
-    for key, label in (("cuts", "カット"), ("echoes", "エコー区間")):
-        for row in clip.get(key) or []:
+    data = validate(data)
+    known = raw_durations or {}
+    for clip in data["lanes"]["main"]:
+        if clip["id"] not in known:
+            raise episodes.EpisodeError(f"{clip['id']} の生音の長さが分かりません")
+        length = float(known[clip["id"]])
+        for row in clip["edits"]:
             if row["end"] > length:
                 raise episodes.EpisodeError(
-                    f"{clip['id']} の{label}が音の長さをはみ出しています"
-                    f"（{row['start']}〜{row['end']} 秒 / 音は {round(length, 3)} 秒）")
+                    f"{clip['id']} の編集点が生音の長さをはみ出しています"
+                    f"（{row['start']}〜{row['end']} 秒 / 生音は {round(length, 3)} 秒）")
+    return True
 
 
 def positions(data, durations):
     """錨から、番組の先頭からの秒数を出す。
 
-    durations は {クリップの id: 秒}。本編のクリップの長さ（前後を切った後）を渡す。
+    durations は {クリップの id: 秒}。**出来上がった音の長さ**（カットとトリムの後）を渡す。
+    生音の長さではない。生音の長さを使うのは `check_edits` だけ。
     **ここで出した値は保存しない。** 長さが変われば、そのつど出し直す。
     """
     data = validate(data)
@@ -199,7 +218,6 @@ def positions(data, durations):
         if clip["id"] not in known:
             raise episodes.EpisodeError(f"{clip['id']} の長さが分かりません")
         length = float(known[clip["id"]])
-        _inside(clip, length)
         at = round(at + clip["gap"], 3)
         out[clip["id"]] = at
         at = round(at + length, 3)
