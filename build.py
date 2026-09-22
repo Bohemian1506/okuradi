@@ -161,23 +161,45 @@ def join_sources(ep, clips):
             raise FileNotFoundError(f"{clip['id']} の音源がありません: {found}")
         parts.append(found)
 
-    newest = max(f.stat().st_mtime for f in parts)
-    if dst.exists() and dst.stat().st_mtime >= newest:
+    # **timeline.yml 自身の更新日時も見る。** 音源のファイルだけ見ていると、
+    # 並びを入れ替えたときと、行を1つ消したときに繋ぎ直されない
+    # （どちらも元のファイルは変わらないため。2026-09-22 にテストで見つかった）
+    from web import timeline          # noqa: PLC0415（輪を避けるためここで読む）
+    stamps = [f.stat().st_mtime for f in parts]
+    written = timeline.path(ep["dir"])
+    if written.exists():
+        stamps.append(written.stat().st_mtime)
+    if dst.exists() and dst.stat().st_mtime >= max(stamps):
         return dst
 
-    graph = ";".join(
-        f"[{i}:a]aformat=sample_rates=48000:channel_layouts=mono[a{i}]"
-        for i in range(len(parts)))
-    graph += ";" + "".join(f"[a{i}]" for i in range(len(parts)))
-    graph += f"concat=n={len(parts)}:v=0:a=1[out]"
-
+    # 入力を並べる。gap があれば、その長さの無音を手前に挟む。
+    # **挟まないと、positions が出す時刻と実際の音が食い違う**
+    # （計算は gap を足しているのに、音には入っていない。2026-09-22 に実測）
     cmd = ["ffmpeg", "-y"]
-    for found in parts:
+    labels, gaps = [], 0
+    for clip, found in zip(clips, parts):
+        if clip["gap"] > 0:
+            cmd += ["-f", "lavfi", "-i",
+                    f"anullsrc=r=48000:cl=mono:d={clip['gap']}"]
+            labels.append(None)
+            gaps += 1
         cmd += ["-i", str(found)]
+        labels.append(found)
+
+    steps, names = [], []
+    for i, found in enumerate(labels):
+        steps.append(f"[{i}:a]aformat=sample_rates=48000:channel_layouts=mono[a{i}]")
+        names.append(f"[a{i}]")
+    graph = ";".join(steps) + ";" + "".join(names)
+    graph += f"concat=n={len(labels)}:v=0:a=1[out]"
+
     cmd += ["-filter_complex", graph, "-map", "[out]",
             "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)]
     run(cmd)
-    print(f"-> {dst}  ({len(parts)}本を繋ぎました / {hhmmss(audio_duration(dst))})")
+    made = f"{len(parts)}本を繋ぎました"
+    if gaps:
+        made += f"（間を{gaps}か所はさみました）"
+    print(f"-> {dst}  ({made} / {hhmmss(audio_duration(dst))})")
     return dst
 
 

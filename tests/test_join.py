@@ -5,8 +5,12 @@
 「合っていたらそのまま」に分岐しない。
 """
 
+import os
 import subprocess
+import time
+import wave
 
+import numpy as np
 import pytest
 
 import build
@@ -18,6 +22,22 @@ def sine(path, seconds, rate=48000, freq=440):
          "-i", f"sine=frequency={freq}:duration={seconds}:sample_rate={rate}",
          "-ac", "1", "-c:a", "pcm_s16le", str(path)], check=True)
     return path
+
+
+def silence(path, seconds, rate=48000):
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+         "-i", f"anullsrc=r={rate}:cl=mono",
+         "-t", str(seconds), "-ac", "1", "-c:a", "pcm_s16le", str(path)], check=True)
+    return path
+
+
+def mean_abs(path, ms=100, rate=48000):
+    """繋いだ wav の先頭 ms ミリ秒の音量（平均振幅）。無音か音かの見分けに使う。"""
+    with wave.open(str(path), "rb") as w:
+        data = w.readframes(int(rate * ms / 1000))
+    arr = np.frombuffer(data, dtype=np.int16)
+    return float(np.abs(arr).mean()) if len(arr) else 0.0
 
 
 @pytest.fixture
@@ -126,3 +146,166 @@ def test_繋いだ音を音源として拾わない(ep):
     sine(ep["00_raw"] / "a.wav", 2)
     sine(ep["00_raw"] / build.JOINED, 9)
     assert build.find_raw(ep).name == "a.wav"
+
+
+THREE = """version: 1
+lanes:
+  main:
+    - {id: a, source: a.wav, gap: 0}
+    - {id: b, source: b.wav, gap: 0}
+    - {id: c, source: c.wav, gap: 0}
+  bgm: []
+  se: []
+"""
+
+TWO_AC = """version: 1
+lanes:
+  main:
+    - {id: a, source: a.wav, gap: 0}
+    - {id: c, source: c.wav, gap: 0}
+  bgm: []
+  se: []
+"""
+
+TWO_SWAPPED = """version: 1
+lanes:
+  main:
+    - {id: b, source: b.wav, gap: 0}
+    - {id: a, source: a.wav, gap: 0}
+  bgm: []
+  se: []
+"""
+
+
+def test_並びだけ変えたら繋ぎ直す(ep):
+    """入れ替えたのに古い順番の音が流れ続けるのは、使う人から見て明らかにおかしい。
+    音源ファイル自体の更新日時が変わっていなくても、timeline.yml の並びを変えたら
+    繋ぎ直されるべき。
+
+    a は無音、b は音のある sine にして、繋いだ音の「先頭が無音か音か」で
+    実際にどちらが先に来ているかを確かめる（長さだけでは並び替えを検出できない）。
+    """
+    a = silence(ep["00_raw"] / "a.wav", 1)
+    b = sine(ep["00_raw"] / "b.wav", 1)
+    base = time.time() - 1000
+    os.utime(a, (base, base))
+    os.utime(b, (base, base))
+
+    timeline_yml(ep, TWO)
+    os.utime(ep["dir"] / "timeline.yml", (base + 1, base + 1))
+
+    dst = build.find_raw(ep)
+    os.utime(dst, (base + 2, base + 2))
+    assert mean_abs(dst) < 50, "a（無音）が先のはず"
+
+    # 並びだけ入れ替える。a.wav・b.wav の中身・更新日時はさわらない
+    timeline_yml(ep, TWO_SWAPPED)
+    os.utime(ep["dir"] / "timeline.yml", (base + 3, base + 3))
+
+    got = build.find_raw(ep)
+    assert mean_abs(got) > 500, "並びを入れ替えたのだから、b（音）が先になるはず"
+
+
+def test_音源を1本減らしたら繋ぎ直す(ep):
+    """timeline.yml から行を消したのに、消した音源がまだ繋いだファイルに
+    残っているのは使う人から見ておかしい。残った音源の更新日時が変わっていなくても
+    繋ぎ直されるべき。
+    """
+    a = sine(ep["00_raw"] / "a.wav", 2)
+    b = sine(ep["00_raw"] / "b.wav", 2, freq=660)
+    c = sine(ep["00_raw"] / "c.wav", 2, freq=880)
+    base = time.time() - 1000
+    for f in (a, b, c):
+        os.utime(f, (base, base))
+
+    timeline_yml(ep, THREE)
+    os.utime(ep["dir"] / "timeline.yml", (base + 1, base + 1))
+
+    dst = build.find_raw(ep)
+    os.utime(dst, (base + 2, base + 2))
+    assert build.audio_duration(dst) == pytest.approx(6.0, abs=0.01)
+
+    # b を消す。a.wav・c.wav の中身・更新日時はさわらない
+    timeline_yml(ep, TWO_AC)
+    os.utime(ep["dir"] / "timeline.yml", (base + 3, base + 3))
+
+    got = build.find_raw(ep)
+    assert build.audio_duration(got) == pytest.approx(4.0, abs=0.01), \
+        "b を消したのだから、繋いだ音は a + c の長さになるはず"
+
+
+def test_音源を1本足したら繋ぎ直す(ep):
+    """新しく置いた音源ファイルは更新日時が新しいので、繋ぎ直されるはず
+    （3つのうちここだけは、いまの実装でも動くと見込んでいる）。
+    """
+    a = sine(ep["00_raw"] / "a.wav", 2)
+    b = sine(ep["00_raw"] / "b.wav", 2, freq=660)
+    base = time.time() - 1000
+    os.utime(a, (base, base))
+    os.utime(b, (base, base))
+
+    timeline_yml(ep, TWO)
+    os.utime(ep["dir"] / "timeline.yml", (base + 1, base + 1))
+
+    dst = build.find_raw(ep)
+    os.utime(dst, (base + 2, base + 2))
+    assert build.audio_duration(dst) == pytest.approx(4.0, abs=0.01)
+
+    # c を新しく置く（mtime はさわらない = 「いま」のまま、dst より新しい）
+    sine(ep["00_raw"] / "c.wav", 2, freq=880)
+    timeline_yml(ep, THREE)
+    os.utime(ep["dir"] / "timeline.yml", (base + 3, base + 3))
+
+    got = build.find_raw(ep)
+    assert build.audio_duration(got) == pytest.approx(6.0, abs=0.01), \
+        "c を足したのだから、繋いだ音は a + b + c の長さになるはず"
+
+
+def test_gapのぶんの無音がはさまる(ep):
+    """**入れないと、positions が出す時刻と実際の音が食い違う。**
+
+    計算は gap を足しているのに、繋いだ音には入っていない、という形で
+    2026-09-22 に見つかった（計算 6.5秒 / 実際 5.0秒）。
+    """
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "b.wav", 3)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - {id: a, source: a.wav, gap: 0}
+    - {id: b, source: b.wav, gap: 1.5}
+  bgm: []
+  se: []
+""")
+    got = build.find_raw(ep)
+    assert build.audio_duration(got) == pytest.approx(6.5, abs=0.02)
+
+
+def test_繋いだ音の長さがtimelineの計算と合う(ep):
+    """計算（total_seconds）と実際の音が、同じ答えになること。"""
+    from web import timeline
+
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "b.wav", 3)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - {id: a, source: a.wav, gap: 0.25}
+    - {id: b, source: b.wav, gap: 1.5}
+  bgm: []
+  se: []
+""")
+    got = build.find_raw(ep)
+    data = timeline.read(ep["dir"])
+    計算 = timeline.total_seconds(data, {"a": 2.0, "b": 3.0})
+    assert build.audio_duration(got) == pytest.approx(計算, abs=0.02)
+
+
+def test_gapを変えたら繋ぎ直す(ep):
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "b.wav", 2)
+    timeline_yml(ep, TWO)
+    assert build.audio_duration(build.find_raw(ep)) == pytest.approx(4.0, abs=0.02)
+    timeline_yml(ep, TWO.replace("{id: b, source: b.wav, gap: 0}",
+                                 "{id: b, source: b.wav, gap: 2.0}"))
+    assert build.audio_duration(build.find_raw(ep)) == pytest.approx(6.0, abs=0.02)
