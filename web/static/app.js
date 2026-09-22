@@ -692,6 +692,12 @@ function pendingIssues(meta) {
   else if (meta.description.includes("（保留中）")) issues.push("概要欄が（保留中）のままです");
   if (!meta.chapters.length) issues.push("章がありません。1つ以上必要です");
   else {
+    // **コーナーと1対1**（#106 で決めた）。サーバー側の pending_issues と同じ決まり
+    const want = (state.selected && state.selected.segments || []).length;
+    if (want && meta.chapters.length !== want) {
+      issues.push(`章が${meta.chapters.length}件ですが、コーナーは${want}件です。`
+        + "コーナーと1対1になるよう、メタデータを作り直すか章を直してください");
+    }
     const blank = meta.chapters.find((c) => !c.label.trim());
     if (blank) issues.push(`${clock(blank.seconds)} の章に見出しがありません`);
   }
