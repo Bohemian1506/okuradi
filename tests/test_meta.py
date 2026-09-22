@@ -10,12 +10,14 @@ import build
 
 # ---------------------------------------------------------------- 概要欄と章
 
-def test_概要欄のうしろに目次をつなげる():
+def test_概要欄のうしろにクレジットと目次をつなげる():
+    """並びは 本文 → クレジット → 目次。**目次は最後のかたまりのままにする**（#137）。"""
     got = build.youtube_description({
         "description": "本文です。\n訂正歓迎です。",
         "chapters": [{"seconds": 125, "label": "本題"}, {"seconds": 0, "label": "あいさつ"}],
     })
-    assert got == "本文です。\n訂正歓迎です。\n\n--- 目次 ---\n0:00 あいさつ\n2:05 本題"
+    assert got == ("本文です。\n訂正歓迎です。\n\nVOICEVOX:ずんだもん"
+                   "\n\n--- 目次 ---\n0:00 あいさつ\n2:05 本題")
 
 
 def test_章は時刻の順に並べ直す():
@@ -26,21 +28,69 @@ def test_章は時刻の順に並べ直す():
     assert got.index("先") < got.index("後")
 
 
-def test_章が無ければ概要欄だけ():
-    assert build.youtube_description({"description": "本文だけ", "chapters": []}) == "本文だけ"
-    assert build.youtube_description({"description": "本文だけ"}) == "本文だけ"
+def test_章が無くてもクレジットは付く():
+    """**毎回付ける。** 章の有無で判定しない（#137）。"""
+    want = "本文だけ\n\nVOICEVOX:ずんだもん"
+    assert build.youtube_description({"description": "本文だけ", "chapters": []}) == want
+    assert build.youtube_description({"description": "本文だけ"}) == want
 
 
 def test_概要欄が空でも落ちない():
-    assert build.youtube_description({}) == ""
-    assert build.youtube_description({"description": None, "chapters": None}) == ""
+    """空でもクレジットだけは出る。**規約の義務なので、落ちる道を作らない。**"""
+    assert build.youtube_description({}) == "VOICEVOX:ずんだもん"
+    assert build.youtube_description({"description": None, "chapters": None}) == "VOICEVOX:ずんだもん"
 
 
 def test_概要欄の末尾の空白は落とす():
     got = build.youtube_description({
         "description": "本文\n\n\n", "chapters": [{"seconds": 0, "label": "あ"}],
     })
-    assert got.startswith("本文\n\n--- 目次 ---")
+    assert got.startswith("本文\n\nVOICEVOX:ずんだもん\n\n--- 目次 ---")
+
+
+# ---------------------------------------------------------------- クレジット（#137）
+
+def test_クレジットは毎回入る():
+    """規約の義務（VOICEVOX）。**合成音声を使ったかで判定しない。**
+
+    判定が要ると、**判定を間違えた回だけ落ちる**。落ちても気づけない。
+    """
+    for meta in [{}, {"description": "本文"}, {"description": "本文", "chapters": [
+            {"seconds": 0, "label": "あ"}]}]:
+        assert "VOICEVOX:ずんだもん" in build.youtube_description(meta)
+
+
+def test_クレジットは二重にしない():
+    """9/24 は手で貼る運用だったので、手で貼ってある回がありうる。"""
+    got = build.youtube_description({"description": "本文\n\nVOICEVOX:ずんだもん"})
+    assert got.count("VOICEVOX:ずんだもん") == 1
+
+
+def test_目次は最後のかたまりのままにする():
+    """クレジットを目次の後ろに置くと、目次の並びが途切れる。"""
+    got = build.youtube_description({
+        "description": "本文",
+        "chapters": [{"seconds": 0, "label": "あ"}, {"seconds": 60, "label": "い"}],
+    })
+    assert got.index("VOICEVOX:ずんだもん") < got.index("--- 目次 ---")
+    assert got.endswith("1:00 い")
+
+
+def test_通しと切り抜きは同じ1か所を通す():
+    """道が分かれると、**片方だけクレジットが落ちても気づけない**（#91）。
+
+    いま `youtube_description` を呼んでいるのは、画面のコピー欄（`web/media.py`）と
+    `upload` 工程（`build.py`）。**増やすときも、ここを通すこと。**
+    """
+    import subprocess
+    from pathlib import Path as _P
+
+    root = _P(build.__file__).resolve().parent
+    out = subprocess.run(["grep", "-rn", "youtube_description", "--include=*.py",
+                          str(root / "build.py"), str(root / "web")],
+                         capture_output=True, text=True).stdout
+    callers = [line for line in out.splitlines() if "def youtube_description" not in line]
+    assert len(callers) == 2, f"呼んでいる所が2か所でなくなった:\n{out}"
 
 
 # ---------------------------------------------------------------- 文字起こしの元の文字
@@ -68,7 +118,8 @@ def test_古い概要欄には目次を足さない():
     }
     got = build.youtube_description(old)
     assert got.count("--- 目次 ---") == 1
-    assert got == old["description"]
+    assert got.startswith(old["description"])
+    assert "VOICEVOX:ずんだもん" in got, "古い回にもクレジットは付ける"
 
 
 # ---------------------------------------------------------------- くわしいログの書き出し

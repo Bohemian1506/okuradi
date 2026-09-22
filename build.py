@@ -733,14 +733,28 @@ def call_claude(prompt, schema=None, system=None, resume=None, persist=False):
 
 CHAPTER_HEAD = "--- 目次 ---"
 
+# 概要欄に必ず入れるクレジット（#137）。
+# **毎回付ける。「この回は使ったか」で判定しない。**
+# 判定が要ると、判定を間違えた回だけ落ちる。規約の義務なので、落ちても気づけない形は避ける。
+CREDITS = ["VOICEVOX:ずんだもん"]
+
 
 def youtube_description(meta):
-    """YouTube に貼る概要欄。概要欄のうしろに目次をつなげる。
+    """YouTube に貼る概要欄。クレジットと目次を、本文のうしろにつなげる。
+
+    **通しも切り抜きも、必ずここを通す**（#137 / #91）。道が分かれると、
+    片方だけクレジットが落ちても気づけない。
 
     #7 より前に作った meta.json は、概要欄にすでに目次が焼き込まれている。
     そのときは足さない（足すと目次が二重に付く）。
     """
     description = (meta.get("description") or "").rstrip()
+
+    # クレジットは毎回。すでに入っていれば足さない（手で貼った回と二重にしない）
+    missing = [c for c in CREDITS if c not in description]
+    if missing:
+        description = "\n\n".join(filter(None, [description, "\n".join(missing)]))
+
     chapters = sorted(meta.get("chapters") or [], key=lambda c: c.get("seconds", 0))
     if not chapters or CHAPTER_HEAD in description:
         return description
