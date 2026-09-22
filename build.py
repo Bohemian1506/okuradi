@@ -659,13 +659,16 @@ META_INSTRUCTION = """\
 # タイトルの規則
 {title_rules}
 
+# 章の見出しの規則
+{chapter_rules}
+
 # 文字起こし（タイムコード付き）
 {transcript}
 
 # 出力の条件
 - title: 60文字以内。タイトル規則に従う。煽らない。内容と一致させる。
 - description: 概要欄。3〜5行。最後に訂正歓迎の一文を必ず入れる。
-- chapters: [{{"seconds": 数値, "label": "見出し"}}] の配列。上の「この回のコーナー」と1対1にする（同じ数・同じ順番）。最初は必ず seconds: 0。
+- chapters: [{{"seconds": 数値, "label": "見出し"}}] の配列。上の「この回のコーナー」と1対1にする（同じ数・同じ順番）。最初は必ず seconds: 0。**見出しは「章の見出しの規則」のとおりに書く。**
 - tags: 文字列の配列。5〜10個。日本語中心。
 """
 
@@ -795,7 +798,7 @@ def step_meta(ep, cfg):
     dst = ep["03_meta"] / "meta.json"
 
     rules = cfg.get("series_rules", {})
-    seg_lines, rule_lines = [], []
+    seg_lines, rule_lines, chapter_lines = [], [], []
     for s in cfg["segments"]:
         r = rules.get(s["series"], {})
         label = r.get("label", s["series"])
@@ -804,11 +807,20 @@ def step_meta(ep, cfg):
         # 空の行を出すと、規則が無いのか書き忘れたのか分からなくなる。
         if r.get("title_hint"):
             rule_lines.append(f"- {label}: {r['title_hint']}")
+        # 章の見出し（r-hoso #52・案c）。
+        # **コーナー名と違うことがある**（「告知」→目次では「お知らせ」）。
+        # **テーマを付けるのは中身のあるコーナーだけ**（目次は検索の入口）。
+        head = r.get("chapter_label") or label
+        if r.get("chapter_theme"):
+            chapter_lines.append(f"- {label} → 「{head} ＋ その回のテーマ」")
+        else:
+            chapter_lines.append(f"- {label} → 「{head}」だけ。テーマは付けない")
 
     body = "\n".join(f"[{hhmmss(r['start'])}] {r['text']}" for r in transcript["segments"])
     res = call_claude(META_INSTRUCTION.format(
         concept=cfg["concept"].strip(),
         segments="\n".join(seg_lines),
+        chapter_rules="\n".join(chapter_lines),
         title_rules="\n".join(rule_lines),
         transcript=body,
     ), schema=META_SCHEMA)

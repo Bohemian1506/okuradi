@@ -22,24 +22,34 @@ series_rules:
   op:
     label: OP
     theme_hint: この回の中身の紹介。どのコーナーで何を扱うか
+    chapter_label: OP
+    chapter_theme: false
   imasara:
     label: 今さら聞けない
     title_hint: 「今さら聞けない○○」の形。○○は具体的な用語や概念にする
+    chapter_theme: true
   runteq_news:
     label: ランテック通信
     title_hint: '「ランテック通信 #N」の形。サブタイトルで内容を示す'
+    chapter_theme: true
   power_play:
     label: 今月のパワープレイ
     title_hint: 「今月のパワープレイ ○○」の形。○○は曲名。サブタイトルでどんな曲か示す
+    chapter_theme: true
   it_news:
     label: ざっくりITニュースヘッドライン
     title_hint: 「ざっくりITニュースヘッドライン」の形。サブタイトルで扱ったニュースを示す
+    chapter_theme: true
   announce:
     label: 告知
     theme_hint: 紹介する RUNTEQ 内のイベント。オールナイトランテックの回があるときは、それが主
+    chapter_label: お知らせ
+    chapter_theme: false
   ed:
     label: ED
     theme_hint: 締めの定型句の前に触れること。無ければ「定型どおり」
+    chapter_label: ED
+    chapter_theme: false
 cuts: []
 audio:
   source_track: 0
