@@ -118,12 +118,80 @@ def hhmmss(seconds):
 VIDEO_EXTS = [".mkv", ".mp4", ".mov", ".flv"]
 
 
+JOINED = "joined.wav"
+
+
+def _timeline_sources(ep):
+    """timeline.yml が並べている本編の音源を返す。無ければ None。
+
+    **ここで web/timeline.py を読むのは、関数の中でないと輪になるため**
+    （build -> web.timeline -> web.episodes -> build）。
+    """
+    from web import timeline          # noqa: PLC0415（輪を避けるためここで読む）
+    data = timeline.read(ep["dir"])
+    if not data:
+        return None
+    main = data["lanes"]["main"]
+    if len(main) < 2:
+        return None
+
+    # 編集点はまだ工程に繋がっていない。黙って無視すると、書いたのにかからない
+    # （CLAUDE.md「静かに失敗させない」）
+    has_edits = [c["id"] for c in main if c.get("edits")]
+    if has_edits:
+        raise ValueError(
+            f"編集点（カット・エコー）は、まだ工程に繋がっていません: {'・'.join(has_edits)}。"
+            "いまは音源を順に繋ぐところまでです")
+    return main
+
+
+def join_sources(ep, clips):
+    """timeline.yml の並びどおりに音源を繋いで1本にする。
+
+    **形式は必ずそろえてから繋ぐ。** 合っているかを判定して分岐しない。
+    24kHz の音を 48kHz として繋ぐと、ffmpeg は何も言わずに倍速・1オクターブ上の音を作る
+    （2026-09-22 に実測）。判定を間違えると気づけない壊れ方なので、常にそろえる。
+    """
+    raw_dir = ep["00_raw"]
+    dst = raw_dir / JOINED
+    parts = []
+    for clip in clips:
+        found = raw_dir / Path(clip["source"]).name
+        if not found.exists():
+            raise FileNotFoundError(f"{clip['id']} の音源がありません: {found}")
+        parts.append(found)
+
+    newest = max(f.stat().st_mtime for f in parts)
+    if dst.exists() and dst.stat().st_mtime >= newest:
+        return dst
+
+    graph = ";".join(
+        f"[{i}:a]aformat=sample_rates=48000:channel_layouts=mono[a{i}]"
+        for i in range(len(parts)))
+    graph += ";" + "".join(f"[a{i}]" for i in range(len(parts)))
+    graph += f"concat=n={len(parts)}:v=0:a=1[out]"
+
+    cmd = ["ffmpeg", "-y"]
+    for found in parts:
+        cmd += ["-i", str(found)]
+    cmd += ["-filter_complex", graph, "-map", "[out]",
+            "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)]
+    run(cmd)
+    print(f"-> {dst}  ({len(parts)}本を繋ぎました / {hhmmss(audio_duration(dst))})")
+    return dst
+
+
 def find_raw(ep, cfg=None):
     """収録音声を返す。
 
+    timeline.yml が音源を2本以上並べていれば、繋いだ1本を返す。
     OBS の録画ファイルが置いてあれば、音声だけを「録画名.trackN.wav」に取り出してそれを返す。
     録画が wav より新しければ取り出し直す。
     """
+    clips = _timeline_sources(ep)
+    if clips:
+        return join_sources(ep, clips)
+
     raw_dir = ep["00_raw"]
     videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
     if videos:
@@ -137,7 +205,8 @@ def find_raw(ep, cfg=None):
             print(f"-> {dst}  (録画から音声を取り出しました)")
         return dst
 
-    files = sorted(raw_dir.glob("*.wav")) + sorted(raw_dir.glob("*.m4a"))
+    files = [f for f in sorted(raw_dir.glob("*.wav")) if f.name != JOINED]
+    files += sorted(raw_dir.glob("*.m4a"))
     if not files:
         raise FileNotFoundError(f"{raw_dir} に音声ファイルがありません")
     return files[0]
