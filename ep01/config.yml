@@ -21,7 +21,7 @@ segments:
 series_rules:
   op:
     label: OP
-    theme_hint: この回の挨拶と、今日の流れを一言
+    theme_hint: この回の中身の紹介。どのコーナーで何を扱うか
   imasara:
     label: 今さら聞けない
     title_hint: 「今さら聞けない○○」の形。○○は具体的な用語や概念にする
@@ -36,10 +36,10 @@ series_rules:
     title_hint: 「ざっくりITニュースヘッドライン」の形。サブタイトルで扱ったニュースを示す
   announce:
     label: 告知
-    theme_hint: 告知する催しと、いつ・どこで
+    theme_hint: 紹介する RUNTEQ 内のイベント。オールナイトランテックの回があるときは、それが主
   ed:
     label: ED
-    theme_hint: 締めで触れること（定型なら「定型どおり」でよい）
+    theme_hint: 締めの定型句の前に触れること。無ければ「定型どおり」
 cuts: []
 audio:
   source_track: 0
