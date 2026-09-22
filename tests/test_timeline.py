@@ -8,7 +8,6 @@
 """
 
 import pytest
-import yaml
 
 from web import episodes, timeline
 
