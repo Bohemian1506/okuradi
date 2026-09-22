@@ -127,15 +127,17 @@ def test_configの項目が混ざっていたら断る(key):
         timeline.validate(data)
 
 
-def test_configymlにタイムラインの項目が無いこと():
-    """逆向き。config.yml に cuts / echoes が残っていたら、移行し忘れている。
+def test_人が書く項目は全部はじける():
+    """CONFIG_ONLY の取りこぼしを防ぐ。
 
-    いまは移行前なので cuts は config.yml にある。**移行したらこのテストを厳しくする。**
+    **実物の ep01/config.yml は読まない。** ユーザーが GUI で書き換えると前提が動くため
+    （次の PR で確かめるために手で lanes: を足したら、無関係な理由で落ちる）。
     """
-    import build
-    from pathlib import Path
-    cfg = yaml.safe_load((Path(build.__file__).parent / "ep01" / "config.yml").read_text(encoding="utf-8"))
-    assert "lanes" not in cfg, "config.yml にタイムラインのレーンが入っている"
+    for key in timeline.CONFIG_ONLY:
+        data = tl()
+        data[key] = "なにか"
+        with pytest.raises(episodes.EpisodeError, match="混ざって"):
+            timeline.validate(data)
 
 
 # ---------------------------------------------------------------- 読み書き
@@ -156,3 +158,40 @@ def test_壊れたファイルは理由をつけて断る(tmp_path):
     (tmp_path / "timeline.yml").write_text("lanes: [壊れて\n", encoding="utf-8")
     with pytest.raises(episodes.EpisodeError, match="読めません"):
         timeline.read(tmp_path)
+
+
+# ---------------------------------------------------------------- レビューで見つかった分
+
+def test_全体の長さと最後のクリップの終わりが一致する():
+    """足し算を2か所に置いていたとき、丸め方の違いで 0.0013秒 食い違った。"""
+    seq = [(0.34, 456.705482), (1.083, 147.547683), (0.292, 335.3775),
+           (0.297, 10.131609), (0.289, 232.495655)]
+    main = [{"id": f"c{i}", "source": f"{i}.wav", "gap": g} for i, (g, _) in enumerate(seq)]
+    durs = {f"c{i}": d for i, (_, d) in enumerate(seq)}
+    data = {"version": 1, "lanes": {"main": main, "bgm": [], "se": []}}
+    pos = timeline.positions(data, durs)
+    assert timeline.total_seconds(data, durs) == round(pos["c4"] + durs["c4"], 3)
+
+
+def test_本編が空なら全体の長さは0():
+    assert timeline.total_seconds(tl(main=[]), {}) == 0.0
+
+
+def test_区間が音の長さをはみ出していたら断る():
+    data = tl(main=[{"id": "op", "source": "a.wav", "cuts": [{"start": 100, "end": 9999}]}])
+    with pytest.raises(episodes.EpisodeError, match="はみ出して"):
+        timeline.positions(data, {"op": 50.0})
+
+
+def test_区間が音の長さに収まっていれば通る():
+    data = tl(main=[{"id": "op", "source": "a.wav", "echoes": [{"start": 10, "end": 20}]}])
+    assert timeline.positions(data, {"op": 50.0})["op"] == 0
+
+
+@pytest.mark.parametrize("key", ["cuts", "echoes"])
+def test_本編以外に区間は書けない(key):
+    """黙って残すと、値の形すら確かめないまま通っていた（レビューで見つかった）。"""
+    data = tl(bgm=[{"id": "b1", "source": "b.wav", "anchor": "op", "at": 0,
+                    key: "完全に壊れた文字列"}])
+    with pytest.raises(episodes.EpisodeError, match="書けません"):
+        timeline.validate(data)

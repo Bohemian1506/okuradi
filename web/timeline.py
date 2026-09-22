@@ -55,17 +55,17 @@ def save(ep_dir, data):
 
 # ---------------------------------------------------------------- 検証
 
-def _number(value, where, *, allow_zero=True):
+def _number(value, where):
     try:
         got = float(value)
     except (TypeError, ValueError):
         raise episodes.EpisodeError(f"{where} は数字で書いてください") from None
-    if got < 0 or (not allow_zero and got == 0):
+    if got < 0:
         raise episodes.EpisodeError(f"{where} が0より小さい値になっています")
     return round(got, 3)
 
 
-def _ranges(rows, where, keep_keys=()):
+def _ranges(rows, where):
     """区間の並び（エコー・カット）を整える。開始で並べ直す。
 
     知らないキーはそのまま残す（README の設計メモ。あとから足せるように）。
@@ -106,6 +106,11 @@ def _clip(row, lane, index):
         made["cuts"] = _ranges(row.get("cuts"), f"{clip_id} のカット")
         made["echoes"] = _ranges(row.get("echoes"), f"{clip_id} のエコー区間")
     else:
+        # 本編以外に区間は書けない。黙って残すと、値の形すら確かめないまま通ってしまう
+        for key in ("cuts", "echoes"):
+            if key in row:
+                raise episodes.EpisodeError(
+                    f"{where}（{clip_id}）に {key} は書けません。区間は本編のクリップに書いてください")
         anchor = str(row.get("anchor") or "").strip()
         if not anchor:
             raise episodes.EpisodeError(
@@ -166,6 +171,19 @@ def validate(data):
 
 # ---------------------------------------------------------------- 番組の時刻
 
+def _inside(clip, length):
+    """区間が、そのクリップの長さの中に収まっているか。
+
+    長さは音を読まないと分からないので、検証ではなくここで見る（#144 の受け入れ条件）。
+    """
+    for key, label in (("cuts", "カット"), ("echoes", "エコー区間")):
+        for row in clip.get(key) or []:
+            if row["end"] > length:
+                raise episodes.EpisodeError(
+                    f"{clip['id']} の{label}が音の長さをはみ出しています"
+                    f"（{row['start']}〜{row['end']} 秒 / 音は {round(length, 3)} 秒）")
+
+
 def positions(data, durations):
     """錨から、番組の先頭からの秒数を出す。
 
@@ -180,9 +198,11 @@ def positions(data, durations):
     for clip in data["lanes"]["main"]:
         if clip["id"] not in known:
             raise episodes.EpisodeError(f"{clip['id']} の長さが分かりません")
+        length = float(known[clip["id"]])
+        _inside(clip, length)
         at = round(at + clip["gap"], 3)
         out[clip["id"]] = at
-        at = round(at + float(known[clip["id"]]), 3)
+        at = round(at + length, 3)
 
     for lane in ("bgm", "se"):
         for clip in data["lanes"][lane]:
@@ -199,12 +219,14 @@ def program_seconds(data, durations, clip_id, inside):
 
 
 def total_seconds(data, durations):
-    """番組全体の長さ。本編のクリップと、その間を足す。"""
+    """番組全体の長さ。
+
+    **足し算は positions に1つだけ置く。** 同じ答えを2か所で出すと、丸め方が少し違うだけで
+    食い違う（レビューで 0.0013秒 の食い違いが出た）。ここは最後のクリップの終わりを返す。
+    """
     data = validate(data)
-    known = durations or {}
-    at = 0.0
-    for clip in data["lanes"]["main"]:
-        if clip["id"] not in known:
-            raise episodes.EpisodeError(f"{clip['id']} の長さが分かりません")
-        at = round(at + clip["gap"] + float(known[clip["id"]]), 3)
-    return at
+    main = data["lanes"]["main"]
+    if not main:
+        return 0.0
+    last = main[-1]
+    return round(positions(data, durations)[last["id"]] + float((durations or {})[last["id"]]), 3)
