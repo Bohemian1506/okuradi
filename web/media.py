@@ -376,10 +376,18 @@ def read_meta(name):
         raise episodes.EpisodeError(
             f"meta.json が読めません: {str(exc).splitlines()[0]}"
         ) from exc
-    return meta_view(data)
+    return meta_view(data, segments_of(name))
 
 
-def meta_view(data):
+def segments_of(name):
+    """その回のコーナーの並び。読めなければ空（保留チェックは数を見ない）。"""
+    try:
+        return episodes.read_config(episodes.resolve(name)).get("segments") or []
+    except episodes.EpisodeError:
+        return []
+
+
+def meta_view(data, segments=None):
     chapters = []
     for row in data.get("chapters") or []:
         if not isinstance(row, dict):
@@ -394,12 +402,17 @@ def meta_view(data):
         "chapters": chapters,
         "tags": [t for t in (data.get("tags") or []) if isinstance(t, str)],
     }
-    view["issues"] = pending_issues(view)
+    view["issues"] = pending_issues(view, segments)
     return view
 
 
-def pending_issues(meta):
-    """動画化に進む前に直してほしいこと（部品17 保留チェック）。"""
+def pending_issues(meta, segments=None):
+    """動画化に進む前に直してほしいこと（部品17 保留チェック）。
+
+    **章の数はコーナーの数と同じでなければならない**（#106 で案A を選んだ理由・1対1）。
+    数を見ないと、案 B・C（Claude に数を任せる）と同じ動きになる。
+    `segments` を渡さなければ、数は見ない（今までどおり）。
+    """
     issues = []
     title = meta.get("title") or ""
     description = meta.get("description") or ""
@@ -411,13 +424,20 @@ def pending_issues(meta):
         issues.append("概要欄が空です")
     elif PENDING in description:
         issues.append(f"概要欄が{PENDING}のままです")
-    if not meta.get("chapters"):
+    chapters = meta.get("chapters") or []
+    if not chapters:
         issues.append("章がありません。1つ以上必要です")
     else:
-        for chapter in meta["chapters"]:
+        for chapter in chapters:
             if not (chapter.get("label") or "").strip():
                 issues.append(f"{build.hhmmss(chapter.get('seconds', 0))} の章に見出しがありません")
                 break
+        # **コーナーと1対1**（#106 で決めた）。数が合わないのは、作り直しが要る印
+        want = len(segments or [])
+        if want and len(chapters) != want:
+            issues.append(
+                f"章が{len(chapters)}件ですが、コーナーは{want}件です。"
+                "コーナーと1対1になるよう、メタデータを作り直すか章を直してください")
     return issues
 
 
@@ -459,7 +479,7 @@ def copy_texts(name, draft=None):
         if meta["state"] != "表示":
             raise episodes.EpisodeError("まだメタデータを作っていません")
     else:
-        meta = meta_view(draft)
+        meta = meta_view(draft, segments_of(name))
     description = build.youtube_description(meta)
     return {
         "issues": meta["issues"],

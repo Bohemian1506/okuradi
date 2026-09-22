@@ -707,3 +707,70 @@ def test_画面のコピー欄にもクレジットが入る(ep):
     """
     write_meta(ep, title="題", description="本文", chapters=[{"seconds": 0, "label": "あ"}])
     assert "VOICEVOX:ずんだもん" in media.copy_texts("ep01")["description"]
+
+
+# ---------------------------------------------------------------- 章の数（#106 の4番）
+
+def _meta(chapters):
+    return {"title": "題", "description": "本文", "chapters": chapters}
+
+
+def _segs(n):
+    return [{"series": f"s{i}", "theme": "x"} for i in range(n)]
+
+
+def test_章の数がコーナーの数と合っていなければ知らせる():
+    """**#106 で案A（コーナーと1対1）を選んだ理由がここ。**
+
+    数を見ないと、案 B・C（Claude に数を任せる）と同じ動きになる。
+    """
+    issues = media.pending_issues(_meta([{"seconds": 0, "label": "あ"}]), _segs(7))
+    assert any("章が1件ですが、コーナーは7件です" in i for i in issues)
+
+
+def test_章の数が合っていれば何も言わない():
+    chapters = [{"seconds": i * 60, "label": f"章{i}"} for i in range(7)]
+    assert media.pending_issues(_meta(chapters), _segs(7)) == []
+
+
+def test_1コーナーの回は1件で合っている():
+    """ep01 がこの形。**少ないこと自体は問題ではない。**"""
+    assert media.pending_issues(_meta([{"seconds": 0, "label": "あ"}]), _segs(1)) == []
+
+
+def test_コーナーを渡さなければ数を見ない():
+    """今までどおりの呼び方を壊さない。"""
+    assert media.pending_issues(_meta([{"seconds": 0, "label": "あ"}])) == []
+
+
+def test_章が多すぎても知らせる():
+    issues = media.pending_issues(
+        _meta([{"seconds": i * 60, "label": f"章{i}"} for i in range(9)]), _segs(7))
+    assert any("章が9件ですが、コーナーは7件です" in i for i in issues)
+
+
+def test_画面とサーバーで同じ決まりにする():
+    """**判定が2か所にある。片方だけ直すとずれる。**"""
+    from pathlib import Path
+    app = (Path(__file__).resolve().parents[1] / "web" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "meta.chapters.length !== want" in app
+    assert "コーナーと1対1になるよう" in app
+
+
+def test_メタデータの画面にもコーナーの数が渡る(ep):
+    """`read_meta` 経由でも数を見ること。"""
+    import yaml
+    (ep / "config.yml").write_text(yaml.safe_dump(
+        {"episode": 1, "segments": [{"series": "imasara", "theme": "x"}]},
+        allow_unicode=True), encoding="utf-8")
+    write_meta(ep, title="題", description="本文",
+               chapters=[{"seconds": 0, "label": "あ"}, {"seconds": 60, "label": "い"}])
+    # コーナーは1つ。章2件は合っていない
+    issues = media.read_meta("ep01")["issues"]
+    assert any("コーナーは1件です" in i for i in issues)
+
+
+def test_設定ファイルが読めなければ数を見ない(ep):
+    """**読めないだけで止めない。** 数を見ないだけにする。"""
+    write_meta(ep, title="題", description="本文", chapters=[{"seconds": 0, "label": "あ"}])
+    assert media.read_meta("ep01")["issues"] == []
