@@ -72,8 +72,23 @@ def test_回の音声と途中のファイルはgitの管理外(path):
     assert _ignored(path), f"{path} が .gitignore から外れている"
 
 
-def test_回のフォルダで追跡しているのはconfigymlだけ():
-    """音声を1つでもコミットしたら、ここで落ちる。"""
+def test_回のフォルダで追跡しているのは設定ファイルだけ():
+    """音声を1つでもコミットしたら、ここで落ちる。
+
+    **`timeline.yml` も git で追跡すると決めた**（2026-09-22・#144）。
+    まだどの回にも無いので、いまは `config.yml` だけが並ぶ。
+    """
     out = subprocess.run(["git", "ls-files", "ep01/"],
                          cwd=ROOT, capture_output=True, text=True, check=True)
-    assert out.stdout.split() == ["ep01/config.yml"]
+    assert set(out.stdout.split()) <= {"ep01/config.yml", "ep01/timeline.yml"}
+    assert "ep01/config.yml" in out.stdout.split()
+
+
+def test_タイムラインはgitの管理下に置く():
+    """`timeline.yml` を `.gitignore` に足さない（2026-09-22 に決めた・#144）。
+
+    どこをカットしたか・どこにエコーをかけたかは、**消えたら手で作り直せない**。
+    音声や中間ファイルとは性質が違うので、git で守る。
+    """
+    assert not _ignored("ep01/timeline.yml"), \
+        "timeline.yml が .gitignore に入っている（追跡すると決めた）"
