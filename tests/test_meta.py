@@ -260,3 +260,21 @@ def test_クレジットが入っているかを画面に返せる():
     assert build.credits_in("本文\n\nvoicevox: ずんだもん") == ["VOICEVOX:ずんだもん"]
     assert build.credits_in("本文だけ") == []
     assert build.credits_in("本文でVOICEVOX:ずんだもん に触れただけ") == []
+
+
+def test_theme_hintはclaudeに渡さない():
+    """**`theme_hint` は画面のためのもの。** タイトルの規則に混ぜない（#106 の1番）。"""
+    from pathlib import Path
+
+    import yaml
+    cfg = yaml.safe_load(
+        (Path(build.__file__).resolve().parent / "ep01" / "config.yml").read_text(encoding="utf-8"))
+    rules = cfg["series_rules"]
+    渡る = [r["title_hint"] for r in rules.values() if r.get("title_hint")]
+    assert 渡る, "タイトルの規則が1つも無い"
+    for hint in 渡る:
+        assert "theme_hint" not in hint
+    # theme_hint を持つコーナーが、タイトルの規則に現れていないこと
+    for key, rule in rules.items():
+        if rule.get("theme_hint") and not rule.get("title_hint"):
+            assert rule["theme_hint"] not in "".join(渡る)

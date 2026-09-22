@@ -2047,7 +2047,9 @@ function seriesSelect(value) {
 
 function themeHint(series) {
   const rule = state.series[series];
-  return (rule && rule.hint) || "例: OSI参照モデルの7層";
+  // ヒントが無いコーナーに「例: OSI参照モデルの7層」を出すと、
+  // OP の欄に「今さら聞けない」用の例文が出る（#106 の1番）
+  return (rule && rule.hint) || "このコーナーで何を喋るかを一言";
 }
 
 // 行の並びは変わる（消せる・足せる）ので、位置ではなく札で突き合わせる。

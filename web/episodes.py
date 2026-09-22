@@ -210,11 +210,27 @@ def list_episodes(root=ROOT):
 
 
 def rule_view(key, rule):
-    """コーナー1つ分を、画面に出す形にする。"""
+    """コーナー1つ分を、画面に出す形にする。
+
+    **`title_hint` と `theme_hint` は役割が違う**（#106 の1番・2026-09-22）。
+
+    | キー | 何のためか | どこへ行くか |
+    |---|---|---|
+    | `title_hint` | **タイトルの型**（「今さら聞けない○○」の形） | `claude -p`（`build.py` の `step_meta`） |
+    | `theme_hint` | **テーマ欄に何を書くか** | 画面のテーマ欄の例文 |
+
+    **OP・告知・ED に `title_hint` が無いのは、書き忘れではない。**
+    章のタイトルを作らないコーナーなので、意図して無い（`build.py` にそう書いてある）。
+    それを流用していたので、**OP のテーマ欄に「例: OSI参照モデルの7層」が出ていた。**
+
+    `theme_hint` が無ければ `title_hint` の最初の文を使う（今までどおり）。
+    """
     rule = rule or {}
-    # title_hint は「「今さら聞けない○○」の形。○○は…」のように2文で書かれている。
-    # テーマ欄のヒントには、型を示す最初の文だけを使う。
-    hint = (rule.get("title_hint") or "").split("。")[0]
+    hint = (rule.get("theme_hint") or "").strip()
+    if not hint:
+        # title_hint は「「今さら聞けない○○」の形。○○は…」のように2文で書かれている。
+        # 型を示す最初の文だけを使う。
+        hint = (rule.get("title_hint") or "").split("。")[0]
     return {"label": rule.get("label") or key, "hint": hint}
 
 
