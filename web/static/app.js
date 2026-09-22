@@ -544,6 +544,17 @@ function copyCard() {
     rows.appendChild(button);
   }
   box.appendChild(rows);
+
+  // **YouTube は章が3件未満だと目次を表示しない**（#106 の6番）。
+  // 1コーナーの回は正しい動きなので、**止めずに知らせるだけ**にする。
+  // 貼った先で章にならないことに、いまは気づけなかった
+  if (chapters > 0 && chapters < 3) {
+    const note = el("div", "copy-note");
+    note.append(el("span", "mark", "i"), document.createTextNode(
+      `章が${chapters}件です。YouTube は3件以上ないと目次を出しません`
+      + "（コーナーが少ない回では、これで正しいです）"));
+    box.appendChild(note);
+  }
   return box;
 }
 
