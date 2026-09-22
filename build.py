@@ -124,10 +124,12 @@ JOINED = "joined.wav"
 def _timeline_sources(ep):
     """timeline.yml が並べている本編の音源を返す。無ければ None。
 
-    **ここで web/timeline.py を読むのは、関数の中でないと輪になるため**
-    （build -> web.timeline -> web.episodes -> build）。
+    `web/timeline.py` は関数の中で読む。`build.py` は `web/` を知らない側なので、
+    トップで読むと向きが逆になる（`web/episodes.py` が `build` を読んでいる）。
+    **輪になって落ちるかは試したが、落ちなかった**（2026-09-22。どちらの順に読んでも通る）。
+    落ちないので必須ではないが、向きを保つために関数の中に置いている。
     """
-    from web import timeline          # noqa: PLC0415（輪を避けるためここで読む）
+    from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
     data = timeline.read(ep["dir"])
     if not data:
         return None
@@ -164,12 +166,16 @@ def join_sources(ep, clips):
     # **timeline.yml 自身の更新日時も見る。** 音源のファイルだけ見ていると、
     # 並びを入れ替えたときと、行を1つ消したときに繋ぎ直されない
     # （どちらも元のファイルは変わらないため。2026-09-22 にテストで見つかった）
-    from web import timeline          # noqa: PLC0415（輪を避けるためここで読む）
+    from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
     stamps = [f.stat().st_mtime for f in parts]
     written = timeline.path(ep["dir"])
     if written.exists():
         stamps.append(written.stat().st_mtime)
-    if dst.exists() and dst.stat().st_mtime >= max(stamps):
+    # **同着のときは繋ぎ直す。** `>=` にすると、更新日時がぴったり同じときに
+    # 黙って古い音を返す（2026-09-22 に再現した。録り直して 6.0秒になるべき所が 4.0秒のまま）。
+    # ext4 はナノ秒まで見るので普段は起きないが、exFAT / FAT32 は粒度が粗い。
+    # 同じ PR の「形式を判定して分岐しない」と同じで、迷ったら安全側に倒す
+    if dst.exists() and dst.stat().st_mtime > max(stamps):
         return dst
 
     # 入力を並べる。gap があれば、その長さの無音を手前に挟む。

@@ -309,3 +309,26 @@ def test_gapを変えたら繋ぎ直す(ep):
     timeline_yml(ep, TWO.replace("{id: b, source: b.wav, gap: 0}",
                                  "{id: b, source: b.wav, gap: 2.0}"))
     assert build.audio_duration(build.find_raw(ep)) == pytest.approx(6.0, abs=0.02)
+
+
+def test_更新日時が同着なら繋ぎ直す(ep):
+    """`>=` だと、ぴったり同じ時刻のときに黙って古い音を返していた。
+
+    ext4 はナノ秒まで見るので普段は起きないが、exFAT / FAT32 は粒度が粗い。
+    起きても何も出ないのが一番まずい（CLAUDE.md「静かに失敗させない」）。
+    """
+    import os
+
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "b.wav", 2)
+    timeline_yml(ep, TWO)
+    first = build.find_raw(ep)
+    assert build.audio_duration(first) == pytest.approx(4.0, abs=0.02)
+
+    sine(ep["00_raw"] / "b.wav", 4)                     # 録り直した
+    same = first.stat().st_mtime
+    for name in ("a.wav", "b.wav"):
+        os.utime(ep["00_raw"] / name, (same, same))
+    os.utime(ep["dir"] / "timeline.yml", (same, same))
+
+    assert build.audio_duration(build.find_raw(ep)) == pytest.approx(6.0, abs=0.02)
