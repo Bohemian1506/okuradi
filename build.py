@@ -118,12 +118,108 @@ def hhmmss(seconds):
 VIDEO_EXTS = [".mkv", ".mp4", ".mov", ".flv"]
 
 
+JOINED = "joined.wav"
+
+
+def _timeline_sources(ep):
+    """timeline.yml が並べている本編の音源を返す。無ければ None。
+
+    `web/timeline.py` は関数の中で読む。`build.py` は `web/` を知らない側なので、
+    トップで読むと向きが逆になる（`web/episodes.py` が `build` を読んでいる）。
+    **輪になって落ちるかは試したが、落ちなかった**（2026-09-22。どちらの順に読んでも通る）。
+    落ちないので必須ではないが、向きを保つために関数の中に置いている。
+    """
+    from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
+    data = timeline.read(ep["dir"])
+    if not data:
+        return None
+    main = data["lanes"]["main"]
+    if len(main) < 2:
+        return None
+
+    # 編集点はまだ工程に繋がっていない。黙って無視すると、書いたのにかからない
+    # （CLAUDE.md「静かに失敗させない」）
+    has_edits = [c["id"] for c in main if c.get("edits")]
+    if has_edits:
+        raise ValueError(
+            f"編集点（カット・エコー）は、まだ工程に繋がっていません: {'・'.join(has_edits)}。"
+            "いまは音源を順に繋ぐところまでです")
+    return main
+
+
+def join_sources(ep, clips):
+    """timeline.yml の並びどおりに音源を繋いで1本にする。
+
+    **形式は必ずそろえてから繋ぐ。** 合っているかを判定して分岐しない。
+    24kHz の音を 48kHz として繋ぐと、ffmpeg は何も言わずに倍速・1オクターブ上の音を作る
+    （2026-09-22 に実測）。判定を間違えると気づけない壊れ方なので、常にそろえる。
+    """
+    raw_dir = ep["00_raw"]
+    dst = raw_dir / JOINED
+    parts = []
+    for clip in clips:
+        found = raw_dir / Path(clip["source"]).name
+        if not found.exists():
+            raise FileNotFoundError(f"{clip['id']} の音源がありません: {found}")
+        parts.append(found)
+
+    # **timeline.yml 自身の更新日時も見る。** 音源のファイルだけ見ていると、
+    # 並びを入れ替えたときと、行を1つ消したときに繋ぎ直されない
+    # （どちらも元のファイルは変わらないため。2026-09-22 にテストで見つかった）
+    from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
+    stamps = [f.stat().st_mtime for f in parts]
+    written = timeline.path(ep["dir"])
+    if written.exists():
+        stamps.append(written.stat().st_mtime)
+    # **同着のときは繋ぎ直す。** `>=` にすると、更新日時がぴったり同じときに
+    # 黙って古い音を返す（2026-09-22 に再現した。録り直して 6.0秒になるべき所が 4.0秒のまま）。
+    # ext4 はナノ秒まで見るので普段は起きないが、exFAT / FAT32 は粒度が粗い。
+    # 同じ PR の「形式を判定して分岐しない」と同じで、迷ったら安全側に倒す
+    if dst.exists() and dst.stat().st_mtime > max(stamps):
+        return dst
+
+    # 入力を並べる。gap があれば、その長さの無音を手前に挟む。
+    # **挟まないと、positions が出す時刻と実際の音が食い違う**
+    # （計算は gap を足しているのに、音には入っていない。2026-09-22 に実測）
+    cmd = ["ffmpeg", "-y"]
+    labels, gaps = [], 0
+    for clip, found in zip(clips, parts):
+        if clip["gap"] > 0:
+            cmd += ["-f", "lavfi", "-i",
+                    f"anullsrc=r=48000:cl=mono:d={clip['gap']}"]
+            labels.append(None)
+            gaps += 1
+        cmd += ["-i", str(found)]
+        labels.append(found)
+
+    steps, names = [], []
+    for i, found in enumerate(labels):
+        steps.append(f"[{i}:a]aformat=sample_rates=48000:channel_layouts=mono[a{i}]")
+        names.append(f"[a{i}]")
+    graph = ";".join(steps) + ";" + "".join(names)
+    graph += f"concat=n={len(labels)}:v=0:a=1[out]"
+
+    cmd += ["-filter_complex", graph, "-map", "[out]",
+            "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)]
+    run(cmd)
+    made = f"{len(parts)}本を繋ぎました"
+    if gaps:
+        made += f"（間を{gaps}か所はさみました）"
+    print(f"-> {dst}  ({made} / {hhmmss(audio_duration(dst))})")
+    return dst
+
+
 def find_raw(ep, cfg=None):
     """収録音声を返す。
 
+    timeline.yml が音源を2本以上並べていれば、繋いだ1本を返す。
     OBS の録画ファイルが置いてあれば、音声だけを「録画名.trackN.wav」に取り出してそれを返す。
     録画が wav より新しければ取り出し直す。
     """
+    clips = _timeline_sources(ep)
+    if clips:
+        return join_sources(ep, clips)
+
     raw_dir = ep["00_raw"]
     videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
     if videos:
@@ -137,7 +233,8 @@ def find_raw(ep, cfg=None):
             print(f"-> {dst}  (録画から音声を取り出しました)")
         return dst
 
-    files = sorted(raw_dir.glob("*.wav")) + sorted(raw_dir.glob("*.m4a"))
+    files = [f for f in sorted(raw_dir.glob("*.wav")) if f.name != JOINED]
+    files += sorted(raw_dir.glob("*.m4a"))
     if not files:
         raise FileNotFoundError(f"{raw_dir} に音声ファイルがありません")
     return files[0]
