@@ -460,10 +460,14 @@ def copy_texts(name, draft=None):
             raise episodes.EpisodeError("まだメタデータを作っていません")
     else:
         meta = meta_view(draft)
+    description = build.youtube_description(meta)
     return {
         "issues": meta["issues"],
         "title": meta["title"],
-        "description": build.youtube_description(meta),
+        "description": description,
+        # 画面が「クレジットが入っているか」を見るのに使う（#137）。
+        # 規約の義務なので、落ちていたら気づけるようにする
+        "credits": build.credits_in(description),
         "tags": ", ".join(meta["tags"]),
     }
 

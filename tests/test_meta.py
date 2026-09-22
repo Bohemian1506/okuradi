@@ -76,21 +76,21 @@ def test_目次は最後のかたまりのままにする():
     assert got.endswith("1:00 い")
 
 
-def test_通しと切り抜きは同じ1か所を通す():
-    """道が分かれると、**片方だけクレジットが落ちても気づけない**（#91）。
+def test_入口が2つとも同じ中身を返す():
+    """**通しも切り抜きも同じ1か所を通す**（#91）。道が分かれると、片方だけ落ちても気づけない。
 
-    いま `youtube_description` を呼んでいるのは、画面のコピー欄（`web/media.py`）と
-    `upload` 工程（`build.py`）。**増やすときも、ここを通すこと。**
+    **呼んでいる所を grep で数える形はやめた**（コメントが1行増えただけで落ちる。
+    2026-09-22 のレビューで再現）。**両方の入口を実際に呼んで、出力を突き合わせる。**
     """
-    import subprocess
-    from pathlib import Path as _P
+    from web import media
 
-    root = _P(build.__file__).resolve().parent
-    out = subprocess.run(["grep", "-rn", "youtube_description", "--include=*.py",
-                          str(root / "build.py"), str(root / "web")],
-                         capture_output=True, text=True).stdout
-    callers = [line for line in out.splitlines() if "def youtube_description" not in line]
-    assert len(callers) == 2, f"呼んでいる所が2か所でなくなった:\n{out}"
+    meta = {"title": "題", "description": "本文",
+            "chapters": [{"seconds": 0, "label": "あ"}], "tags": ["RUNTEQ"]}
+    # 画面のコピー欄（web/media.py）と、upload 工程（build.py）は同じ関数を通る
+    from_screen = media.copy_texts("ep01", dict(meta))["description"]
+    from_command = build.youtube_description(media.meta_view(dict(meta)))
+    assert from_screen == from_command
+    assert "VOICEVOX:ずんだもん" in from_screen
 
 
 # ---------------------------------------------------------------- 文字起こしの元の文字
@@ -118,8 +118,9 @@ def test_古い概要欄には目次を足さない():
     }
     got = build.youtube_description(old)
     assert got.count("--- 目次 ---") == 1
-    assert got.startswith(old["description"])
-    assert "VOICEVOX:ずんだもん" in got, "古い回にもクレジットは付ける"
+    # **古い回でも並びは 本文 → クレジット → 目次。**
+    # うしろに付けると並びが崩れる（2026-09-22 のレビューで再現した）
+    assert got == "本文です。\n\nVOICEVOX:ずんだもん\n\n--- 目次 ---\n0:00 あいさつ"
 
 
 # ---------------------------------------------------------------- くわしいログの書き出し
@@ -230,3 +231,32 @@ def test_タイトルの規則には規則のあるコーナーだけ出す(tmp_
     prompt = _prompt_of(tmp_path, monkeypatch, segments, rules)
     rules_block = prompt.split("# タイトルの規則\n")[1].split("\n# ")[0]
     assert rules_block.strip() == "- 今さら聞けない: 「今さら聞けない○○」の形"
+
+
+def test_本文でクレジットに触れただけでは足したことにしない():
+    """番組が VOICEVOX を扱う回は普通にある。
+
+    部分一致で見ていたころは、**規約が求める体裁の行が入らないまま確定していた**
+    （2026-09-22 のレビューで再現）。
+    """
+    got = build.youtube_description({
+        "description": "今日はVOICEVOX:ずんだもん の使い方について話しました"})
+    assert got.count("VOICEVOX:ずんだもん") == 2, "本文の言及とは別に、クレジット行が要る"
+    assert got.splitlines()[-1] == "VOICEVOX:ずんだもん"
+
+
+@pytest.mark.parametrize("written", [
+    "VOICEVOX:ずんだもん", "voicevox:ずんだもん",
+    "VOICEVOX: ずんだもん", "VOICEVOX：ずんだもん",
+])
+def test_書き方がゆれていても二重にしない(written):
+    """大文字小文字・全角半角のコロン・空白のゆれを吸収する。"""
+    got = build.youtube_description({"description": f"本文\n\n{written}"})
+    assert got.count("ずんだもん") == 1
+
+
+def test_クレジットが入っているかを画面に返せる():
+    """画面のコピー欄が「入っているか」を見るのに使う。"""
+    assert build.credits_in("本文\n\nvoicevox: ずんだもん") == ["VOICEVOX:ずんだもん"]
+    assert build.credits_in("本文だけ") == []
+    assert build.credits_in("本文でVOICEVOX:ずんだもん に触れただけ") == []
