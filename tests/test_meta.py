@@ -278,3 +278,71 @@ def test_theme_hintはclaudeに渡さない():
     for key, rule in rules.items():
         if rule.get("theme_hint") and not rule.get("title_hint"):
             assert rule["theme_hint"] not in "".join(渡る)
+
+
+# ---------------------------------------------------------------- 章の見出し（r-hoso #52・案c）
+
+def _chapter_rules(segments, rules):
+    """`build.step_meta` が組み立てる「章の見出しの規則」と同じ作り方。"""
+    lines = []
+    for s in segments:
+        r = rules.get(s["series"], {})
+        label = r.get("label", s["series"])
+        head = r.get("chapter_label") or label
+        if r.get("chapter_theme"):
+            lines.append(f"- {label} → 「{head} ＋ その回のテーマ」")
+        else:
+            lines.append(f"- {label} → 「{head}」だけ。テーマは付けない")
+    return lines
+
+
+def test_コーナー名と違う見出しを渡せる():
+    """**「告知」は目次では「お知らせ」**（台本の定型句が「ここからはお知らせです」）。
+
+    コーナー名は作り手の言葉、見出しはリスナーが読む言葉（r-hoso #52）。
+    """
+    rules = {"announce": {"label": "告知", "chapter_label": "お知らせ"}}
+    got = _chapter_rules([{"series": "announce", "theme": "x"}], rules)
+    assert got == ["- 告知 → 「お知らせ」だけ。テーマは付けない"]
+
+
+def test_テーマを付けるのは中身のあるコーナーだけ():
+    """**目次は検索の入口。** テーマが入っている行が、探している人に届く。"""
+    rules = {"imasara": {"label": "今さら聞けない", "chapter_theme": True},
+             "op": {"label": "OP", "chapter_theme": False}}
+    got = _chapter_rules(
+        [{"series": "imasara", "theme": "x"}, {"series": "op", "theme": "y"}], rules)
+    assert "＋ その回のテーマ" in got[0]
+    assert "テーマは付けない" in got[1]
+
+
+def test_chapter_labelが無ければコーナー名を使う():
+    rules = {"imasara": {"label": "今さら聞けない", "chapter_theme": True}}
+    got = _chapter_rules([{"series": "imasara", "theme": "x"}], rules)
+    assert "「今さら聞けない ＋" in got[0]
+
+
+def test_ep01の7コーナーが番組側の決定どおりになる():
+    """r-hoso #52 の表と、`config.yml` が合っているか。"""
+    from pathlib import Path
+
+    import yaml
+    cfg = yaml.safe_load(
+        (Path(build.__file__).resolve().parent / "ep01" / "config.yml").read_text(encoding="utf-8"))
+    rules = cfg["series_rules"]
+    want = {
+        "op": ("OP", False), "imasara": ("今さら聞けない", True),
+        "runteq_news": ("ランテック通信", True), "power_play": ("今月のパワープレイ", True),
+        "it_news": ("ざっくりITニュースヘッドライン", True),
+        "announce": ("お知らせ", False), "ed": ("ED", False),
+    }
+    for key, (head, with_theme) in want.items():
+        r = rules[key]
+        assert (r.get("chapter_label") or r["label"]) == head, f"{key} の見出しが違う"
+        assert bool(r.get("chapter_theme")) is with_theme, f"{key} のテーマの有無が違う"
+
+
+def test_指示文に章の見出しの規則を渡している():
+    assert "# 章の見出しの規則" in build.META_INSTRUCTION
+    assert "chapter_rules" in build.META_INSTRUCTION
+    assert "「章の見出しの規則」のとおりに書く" in build.META_INSTRUCTION
