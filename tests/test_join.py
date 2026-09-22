@@ -424,3 +424,36 @@ def test_止まった理由がログに残る():
         assert "音源が2本あります" in said
     finally:
         shutil.rmtree(made, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- 拡張子の大文字小文字
+
+def test_大文字の拡張子も音源として数える(ep):
+    """`glob("*.wav")` だと `second.WAV` を拾えない（Linux は大文字小文字を区別する）。
+
+    **この PR が防ごうとしている事故が、拡張子が大文字なだけで起きていた**
+    （2本あるのに1本しか見えず、黙って1本目で進む）。
+    """
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "second.WAV", 2)
+    assert len(build.source_candidates(ep["00_raw"])) == 2
+    with pytest.raises(ValueError, match="音源が2本あります"):
+        build.find_raw(ep)
+
+
+def test_大文字の拡張子1本だけなら使える(ep):
+    """数えるときは見えるのに、使うときは見つからない、というちぐはぐを作らない。"""
+    sine(ep["00_raw"] / "ONLY.WAV", 2)
+    assert build.find_raw(ep).name == "ONLY.WAV"
+
+
+def test_録画から取り出した名前のm4aは音源として数える(ep):
+    """`find_raw` が作るのは wav だけ。
+
+    m4a まで除外すると、**人が偶然その名前で置いた音源が黙って消える**。
+    """
+    (ep["00_raw"] / "収録.mkv").write_bytes(b"")
+    sine(ep["00_raw"] / "収録.track0.wav", 2)          # これはアプリが作ったもの
+    (ep["00_raw"] / "収録.track0.m4a").write_bytes(b"")  # これは人が置いたもの
+    names = [f.name for f in build.source_candidates(ep["00_raw"])]
+    assert names == ["収録.mkv", "収録.track0.m4a"]

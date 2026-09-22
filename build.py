@@ -116,6 +116,7 @@ def hhmmss(seconds):
 
 
 VIDEO_EXTS = [".mkv", ".mp4", ".mov", ".flv"]
+AUDIO_EXTS = [".wav", ".m4a"]
 
 
 JOINED = "joined.wav"
@@ -234,11 +235,24 @@ def find_raw(ep, cfg=None):
             print(f"-> {dst}  (録画から音声を取り出しました)")
         return dst
 
-    files = [f for f in sorted(raw_dir.glob("*.wav")) if f.name != JOINED]
-    files += sorted(raw_dir.glob("*.m4a"))
+    files = [f for f in audio_files(raw_dir) if f.name != JOINED]
     if not files:
         raise FileNotFoundError(f"{raw_dir} に音声ファイルがありません")
     return files[0]
+
+
+def audio_files(raw_dir):
+    """音声ファイルを並べる。**拡張子の大文字小文字は見ない。**
+
+    `glob("*.wav")` だと `second.WAV` を拾えない（Linux は大文字小文字を区別する）。
+    録画側は `suffix.lower()` で吸収しているのに、音声側だけ吸収していなかった。
+    そのせいで **2本あるのに1本しか見えない**ことがあった（2026-09-22 のレビューで再現）。
+    """
+    if not raw_dir.is_dir():
+        return []
+    return sorted((f for f in raw_dir.iterdir()
+                   if f.is_file() and f.suffix.lower() in AUDIO_EXTS),
+                  key=lambda f: f.name)
 
 
 def source_candidates(raw_dir):
@@ -253,12 +267,14 @@ def source_candidates(raw_dir):
     videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
     stems = {v.stem for v in videos}
     others = []
-    for found in sorted(raw_dir.glob("*.wav")) + sorted(raw_dir.glob("*.m4a")):
+    for found in audio_files(raw_dir):
         if found.name == JOINED:
             continue
-        # 「録画名.track0」のような名前は、その録画から取り出したもの
+        # 「録画名.track0.wav」のような名前は、その録画から取り出したもの。
+        # **`find_raw` が作るのは wav だけ**なので、m4a は除外しない
+        # （人が偶然その名前の m4a を置いたときに、黙って消えてしまう）
         base, _, tail = found.stem.rpartition(".")
-        if base in stems and tail.startswith("track"):
+        if found.suffix.lower() == ".wav" and base in stems and tail.startswith("track"):
             continue
         others.append(found)
     return videos + others
@@ -890,7 +906,9 @@ def main():
             HANDLERS[name](ep, cfg)
         except BaseException as exc:
             # **止まった理由をログに残す。** これが無いと 00_logs/<工程>.log には
-            # ffmpeg の出力までしか入らず、なぜ止まったかは端末にしか出ない（#154）
+            # ffmpeg の出力までしか入らず、なぜ止まったかは端末にしか出ない（#154）。
+            # **BaseException で受けるのは、Ctrl+C で止めたことも残したいため。**
+            # 必ず投げ直すので、握りつぶしにはならない
             log_detail(f"!! {STEP_LABELS[name]}が止まりました: {type(exc).__name__}: {exc}")
             print(f"!! {STEP_LABELS[name]}が止まりました: {exc}", file=sys.stderr)
             raise
