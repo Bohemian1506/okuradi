@@ -91,6 +91,23 @@ wait_idle_shell() {
   return 1
 }
 
+# タブの中から「何も動いていないシェル」を1つ探す。**生えるのを待つ**（#135）。
+#
+# Herdr のサーバーが応答してから、前回のペインのシェルが生えるまで数秒かかる。
+# 待たずに探すと「空いているシェルが無い」と早合点して、呼び出し側がペインを割り、
+# 復元されたペインの Claude と合わせて2つ立つ（day-6 に実際に起きた）。
+# 見つからなければ空を返す（呼び出し側が割る。全ペインで Claude が動いている場合は、それが正しい）。
+find_idle_pane() {
+  local ws="$1" tab="$2" p
+  for _ in $(seq 1 ${FIND_IDLE_TRIES:-40}); do   # 上限10秒。wait_idle_shell と同じ
+    for p in $(herdr pane list --workspace "$ws" | jq -r --arg t "$tab" '.result.panes[]? | select(.tab_id == $t) | .pane_id'); do
+      if pane_is_idle_shell "$p"; then printf '%s' "$p"; return 0; fi
+    done
+    sleep "${FIND_IDLE_WAIT:-0.25}"
+  done
+  return 1
+}
+
 # ラベルでワークスペースを探す
 workspace_by_label() {
   herdr workspace list | jq -r --arg l "$1" '[.result.workspaces[]? | select(.label == $l)][0].workspace_id // empty'
@@ -235,10 +252,9 @@ else
   if [[ -n "$root_pane" ]] && wait_idle_shell "$root_pane"; then
     pane="$root_pane"
   fi
+  # ワークスペースを使い回すときは、**ペインの復元が終わるのを待ってから探す**（#135）
   if [[ -z "$pane" ]]; then
-    for p in $(herdr pane list --workspace "$ws" | jq -r --arg t "$main_tab" '.result.panes[]? | select(.tab_id == $t) | .pane_id'); do
-      if pane_is_idle_shell "$p"; then pane="$p"; break; fi
-    done
+    pane=$(find_idle_pane "$ws" "$main_tab") || pane=""
   fi
   if [[ -z "$pane" ]]; then
     first=$(herdr pane list --workspace "$ws" | jq -r --arg t "$main_tab" '[.result.panes[]? | select(.tab_id == $t)][0].pane_id // empty')
