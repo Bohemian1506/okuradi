@@ -332,3 +332,128 @@ def test_更新日時が同着なら繋ぎ直す(ep):
     os.utime(ep["dir"] / "timeline.yml", (same, same))
 
     assert build.audio_duration(build.find_raw(ep)) == pytest.approx(6.0, abs=0.02)
+
+
+# ---------------------------------------------------------------- 2本あるのに並びが無い（#154）
+
+def test_音源が2本あって並びが無ければ断る(ep):
+    """**黙って1本目を使わない。** 2本置いた人は2本使うつもり。"""
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "b.wav", 2)
+    with pytest.raises(ValueError, match="音源が2本あります"):
+        build.find_raw(ep)
+
+
+def test_断るときはファイル名と直し方を言う(ep):
+    sine(ep["00_raw"] / "rec.wav", 2)
+    sine(ep["00_raw"] / "zunda.wav", 2)
+    with pytest.raises(ValueError) as caught:
+        build.find_raw(ep)
+    said = str(caught.value)
+    assert "rec.wav" in said and "zunda.wav" in said
+    assert "timeline.yml" in said
+
+
+def test_並びを書けば通る(ep):
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "b.wav", 3)
+    timeline_yml(ep, TWO)
+    assert build.audio_duration(build.find_raw(ep)) == pytest.approx(5.0, abs=0.02)
+
+
+def test_1本だけなら今までどおり通る(ep):
+    sine(ep["00_raw"] / "a.wav", 2)
+    assert build.find_raw(ep).name == "a.wav"
+
+
+def test_録画から取り出したwavは音源として数えない(ep):
+    """`録画名.trackN.wav` は `find_raw` 自身が作る。
+
+    数えると、**OBS の録画がある回が全部止まる**（ep01 がその形）。
+    """
+    (ep["00_raw"] / "収録.mkv").write_bytes(b"")
+    sine(ep["00_raw"] / "収録.track0.wav", 2)
+    assert [f.name for f in build.source_candidates(ep["00_raw"])] == ["収録.mkv"]
+
+
+def test_繋いだwavも音源として数えない(ep):
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / build.JOINED, 9)
+    assert [f.name for f in build.source_candidates(ep["00_raw"])] == ["a.wav"]
+
+
+def test_録画が2本あれば断る(ep):
+    """録画でも同じ。どちらを使うかは決められない。"""
+    (ep["00_raw"] / "前半.mkv").write_bytes(b"")
+    (ep["00_raw"] / "後半.mkv").write_bytes(b"")
+    with pytest.raises(ValueError, match="音源が2本あります"):
+        build.find_raw(ep)
+
+
+def test_止まった理由がログに残る():
+    """**これが無いと、00_logs/<工程>.log には ffmpeg の出力までしか入らない。**
+
+    なぜ止まったかが端末にしか出ないと、あとから追えない（#154）。
+
+    `build.py` は自分の隣にある回しか見ないので、リポジトリの中に捨て回を作る。
+    名前は使っていない番号にして、最後に必ず消す。
+    """
+    import shutil
+    import sys
+    from pathlib import Path
+
+    root = Path(build.__file__).resolve().parent
+    made = root / "ep97"
+    assert not made.exists(), "ep97 が残っている。前のテストが片付いていない"
+    try:
+        (made / "00_raw").mkdir(parents=True)
+        shutil.copy(root / "ep01" / "config.yml", made / "config.yml")
+        sine(made / "00_raw" / "a.wav", 1)
+        sine(made / "00_raw" / "b.wav", 1)
+
+        proc = subprocess.run(
+            [sys.executable, str(root / "build.py"), "ep97", "--from", "clean", "--to", "clean"],
+            cwd=root, capture_output=True, text=True,
+        )
+        assert proc.returncode != 0
+
+        log = made / "00_logs" / "clean.log"
+        assert log.exists(), f"工程のログそのものが無い:\n{proc.stderr[-400:]}"
+        said = log.read_text(encoding="utf-8")
+        assert "止まりました" in said, f"止まった理由がログに無い:\n{said}"
+        assert "音源が2本あります" in said
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- 拡張子の大文字小文字
+
+def test_大文字の拡張子も音源として数える(ep):
+    """`glob("*.wav")` だと `second.WAV` を拾えない（Linux は大文字小文字を区別する）。
+
+    **この PR が防ごうとしている事故が、拡張子が大文字なだけで起きていた**
+    （2本あるのに1本しか見えず、黙って1本目で進む）。
+    """
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "second.WAV", 2)
+    assert len(build.source_candidates(ep["00_raw"])) == 2
+    with pytest.raises(ValueError, match="音源が2本あります"):
+        build.find_raw(ep)
+
+
+def test_大文字の拡張子1本だけなら使える(ep):
+    """数えるときは見えるのに、使うときは見つからない、というちぐはぐを作らない。"""
+    sine(ep["00_raw"] / "ONLY.WAV", 2)
+    assert build.find_raw(ep).name == "ONLY.WAV"
+
+
+def test_録画から取り出した名前のm4aは音源として数える(ep):
+    """`find_raw` が作るのは wav だけ。
+
+    m4a まで除外すると、**人が偶然その名前で置いた音源が黙って消える**。
+    """
+    (ep["00_raw"] / "収録.mkv").write_bytes(b"")
+    sine(ep["00_raw"] / "収録.track0.wav", 2)          # これはアプリが作ったもの
+    (ep["00_raw"] / "収録.track0.m4a").write_bytes(b"")  # これは人が置いたもの
+    names = [f.name for f in build.source_candidates(ep["00_raw"])]
+    assert names == ["収録.mkv", "収録.track0.m4a"]
