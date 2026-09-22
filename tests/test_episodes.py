@@ -362,3 +362,49 @@ def test_前の回のコーナーが1つなら今までどおり(tmp_path):
     episodes.create_episode(2, [{"series": "imasara", "theme": "新しい"}], root=tmp_path)
     made = yaml.safe_load((tmp_path / "ep02" / "config.yml").read_text(encoding="utf-8"))
     assert made["segments"] == [{"series": "imasara", "theme": "新しい"}]
+
+
+# ---------------------------------------------------------------- テーマ欄のヒント（#106 の1番）
+
+def test_theme_hintがあればそれを使う():
+    """**`title_hint` と `theme_hint` は役割が違う。**
+
+    `title_hint` はタイトルの型で、`claude -p` に渡る。
+    `theme_hint` は「何を書くか」で、画面のテーマ欄に出る。
+    """
+    got = episodes.rule_view("op", {"label": "OP", "theme_hint": "この回の挨拶と、今日の流れを一言"})
+    assert got["hint"] == "この回の挨拶と、今日の流れを一言"
+
+
+def test_theme_hintが無ければtitle_hintの最初の文を使う():
+    """今までどおり。コーナーによってはタイトルの型がそのままヒントになる。"""
+    got = episodes.rule_view("imasara", {
+        "label": "今さら聞けない",
+        "title_hint": "「今さら聞けない○○」の形。○○は具体的な用語や概念にする"})
+    assert got["hint"] == "「今さら聞けない○○」の形"
+
+
+def test_両方あればtheme_hintが勝つ():
+    got = episodes.rule_view("op", {"label": "OP", "theme_hint": "挨拶",
+                                    "title_hint": "使わないはず"})
+    assert got["hint"] == "挨拶"
+
+
+def test_どちらも無ければ空を返す():
+    """画面側が「このコーナーで何を喋るかを一言」に落とす。
+
+    **前は `title_hint` を流用していたので、OP の欄に
+    「例: OSI参照モデルの7層」が出ていた**（#106 の1番）。
+    """
+    assert episodes.rule_view("op", {"label": "OP"})["hint"] == ""
+
+
+def test_ep01の全コーナーにヒントがある():
+    """**7コーナーすべてで、そのコーナー向けの文が出ること。**"""
+    from pathlib import Path
+
+    import build
+    rules = episodes.rules_of(Path(build.__file__).resolve().parent / "ep01")
+    無し = [v["label"] for v in rules.values() if not v["hint"]]
+    assert not 無し, f"ヒントが無いコーナー: {無し}"
+    assert "OSI参照モデル" not in rules["op"]["hint"], "OP に今さら聞けない用の例文が出ている"
