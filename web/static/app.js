@@ -309,7 +309,7 @@ function screenFinishing() {
     videoCard(), stepOf("video")));
 
   box.appendChild(section(4, "コピーして YouTube に貼る",
-    "動画をアップロードしたら、順に貼るだけ。章は概要欄の末尾に付きます。",
+    "動画をアップロードしたら、順に貼るだけ。章とクレジットは概要欄の末尾に自動で付きます。",
     copyCard(), null, studioLink()));
   return box;
 }
@@ -519,13 +519,17 @@ function copyCard() {
   const rows = el("div", "copies");
   // 概要欄は、目次が付いているかを押す前に確かめられるようにする
   const chapters = (data.description.match(/\n\d+:\d\d /g) || []).length;
-  const descPeek = chapters
-    ? `${data.description.split("\n")[0]} …＋目次${chapters}件`
-    : `${data.description.split("\n")[0]}（目次なし）`;
+  // クレジットは規約で要るもの（#137）。**入っていないことに気づけるようにする**
+  const credited = (data.credits || []).length > 0;
+  const added = [credited ? "クレジット" : null, chapters ? `目次${chapters}件` : null]
+    .filter(Boolean).join("・");
+  const descPeek = `${data.description.split("\n")[0]}`
+    + (added ? ` …＋${added}` : "")
+    + (credited ? "" : "（クレジットなし）");
 
   const items = [
     ["title", "タイトル", SVG.title, data.title],
-    ["description", "概要欄（章つき）", SVG.lines, descPeek],
+    ["description", "概要欄（章・クレジットつき）", SVG.lines, descPeek],
     ["tags", "タグ", SVG.tag, data.tags],
   ];
   for (const [key, label, mark, peek] of items) {
@@ -642,7 +646,7 @@ function metaCard() {
   desc.value = draft.description;
   desc.oninput = () => { draft.description = desc.value; refreshCopy(); renderMain(); };
   descField.append(el("div", "meta-label", "概要欄"), desc,
-                   el("div", "meta-note", "章はコピー時に概要欄の末尾へ自動で付きます"));
+                   el("div", "meta-note", "章とクレジットはコピー時に概要欄の末尾へ自動で付きます"));
   card.appendChild(descField);
 
   // 章とタグ

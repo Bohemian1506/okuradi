@@ -546,7 +546,7 @@ def test_コピーは概要欄の末尾に目次を付ける(ep):
                tags=["RUNTEQ", "OSI"])
     got = media.copy_texts("ep01")
     assert got["issues"] == []
-    assert got["description"] == "本文\n\n--- 目次 ---\n0:00 あいさつ\n2:05 本題"
+    assert got["description"] == "本文\n\nVOICEVOX:ずんだもん\n\n--- 目次 ---\n0:00 あいさつ\n2:05 本題"
     assert got["tags"] == "RUNTEQ, OSI"
 
 
@@ -598,7 +598,7 @@ def test_コピーは保存前の直しからも作れる(ep):
     got = media.copy_texts("ep01", draft)
     assert got["issues"] == []
     assert got["title"] == "直した題"
-    assert got["description"] == "直した本文\n\n--- 目次 ---\n0:00 あいさつ"
+    assert got["description"] == "直した本文\n\nVOICEVOX:ずんだもん\n\n--- 目次 ---\n0:00 あいさつ"
 
 
 def test_下書きが保留のままなら問題を返す(ep):
@@ -697,3 +697,13 @@ def test_長さが読めなくても完了として出す(ep, monkeypatch):
     monkeypatch.setattr(media, "video_size", lambda path: "")
     (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
     assert media.video_view("ep01")["duration"] == ""
+
+
+def test_画面のコピー欄にもクレジットが入る(ep):
+    """**通しも切り抜きも同じ1か所を通す**（#137 / #91）。
+
+    画面のコピー欄は `build.youtube_description` を通っているので、
+    ここが落ちたら道が分かれている。
+    """
+    write_meta(ep, title="題", description="本文", chapters=[{"seconds": 0, "label": "あ"}])
+    assert "VOICEVOX:ずんだもん" in media.copy_texts("ep01")["description"]

@@ -733,14 +733,56 @@ def call_claude(prompt, schema=None, system=None, resume=None, persist=False):
 
 CHAPTER_HEAD = "--- 目次 ---"
 
+# 概要欄に必ず入れるクレジット（#137）。
+# **毎回付ける。「この回は使ったか」で判定しない。**
+# 判定が要ると、判定を間違えた回だけ落ちる。規約の義務なので、落ちても気づけない形は避ける。
+CREDITS = ["VOICEVOX:ずんだもん"]
+
+
+def _flat(text):
+    """クレジットを見比べるための形にそろえる。
+
+    大文字小文字・全角半角のコロン・空白のゆれで、二重に付くのを防ぐ
+    （2026-09-22 のレビューで `voicevox:` や `VOICEVOX: ` が二重になった）。
+    """
+    return (text or "").lower().replace("：", ":").replace(" ", "").replace("\u3000", "")
+
+
+def credits_in(description):
+    """概要欄に入っているクレジットを返す。画面が「入っているか」を見るのに使う。
+
+    **行がまるごと一致するかで見る。** 部分一致だと、本文でクレジットに触れただけで
+    「入っている」ことになり、**規約が求める体裁の行が入らないまま確定する**
+    （番組が VOICEVOX を扱う回は普通にある。2026-09-22 のレビューで再現した）。
+    """
+    lines = {_flat(line) for line in (description or "").splitlines()}
+    return [c for c in CREDITS if _flat(c) in lines]
+
 
 def youtube_description(meta):
-    """YouTube に貼る概要欄。概要欄のうしろに目次をつなげる。
+    """YouTube に貼る概要欄。クレジットと目次を、本文のうしろにつなげる。
+
+    **通しも切り抜きも、必ずここを通す**（#137 / #91）。道が分かれると、
+    片方だけクレジットが落ちても気づけない。
 
     #7 より前に作った meta.json は、概要欄にすでに目次が焼き込まれている。
     そのときは足さない（足すと目次が二重に付く）。
     """
     description = (meta.get("description") or "").rstrip()
+
+    # クレジットは毎回。すでに入っていれば足さない（手で書いた回と二重にしない）
+    have = credits_in(description)
+    missing = [c for c in CREDITS if c not in have]
+    if missing:
+        block = "\n".join(missing)
+        if CHAPTER_HEAD in description:
+            # 古い回は概要欄に目次が焼き込まれている。**その前に入れる**。
+            # うしろに付けると「本文 → クレジット → 目次」の並びが崩れる
+            head, _, tail = description.partition(CHAPTER_HEAD)
+            description = f"{head.rstrip()}\n\n{block}\n\n{CHAPTER_HEAD}{tail}"
+        else:
+            description = "\n\n".join(filter(None, [description, block]))
+
     chapters = sorted(meta.get("chapters") or [], key=lambda c: c.get("seconds", 0))
     if not chapters or CHAPTER_HEAD in description:
         return description
