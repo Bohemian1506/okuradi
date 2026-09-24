@@ -11,6 +11,11 @@
 #
 # **gh を呼ばない。** 固まると毎回それだけ待つことになる
 # （始まるときの hook が gh で 45秒かかった件）。
+#
+# **stdout に JSON で出す。** day-6 の最初の版は stderr に文字を出していて、
+# **2日間ずっと誰にも届いていなかった**（終了コード 0 のとき stderr はどこにも出ない）。
+# テストが stderr を見ていたので、**テストは緑のまま**だった（#188）。
+# 届け先は Claude（additionalContext）。忘れるのは Claude なので、直接届く方が効く。
 
 set -uo pipefail
 
@@ -47,7 +52,7 @@ done < <(printf '%s\n' "$command" | tr -d '\r' | strip_heredocs | tr ';&|' '\n\n
 
 (( merged )) || exit 0
 
-cat >&2 <<'MSG'
+jq -Rs '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: .}}' <<'MSG'
 PR をマージしました。CLAUDE.md の「作業の流れ」7 では、次はこれです。
 
   次の作業に入る前に、その PR に至った経緯を docs/dev-log/day-N.md に追記し、

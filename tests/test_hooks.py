@@ -222,16 +222,30 @@ def test_始まるときの状態出しは未コミットの変更を知らせ�
 MERGE = "gh pr " + "merge"
 
 
-def remind(command):
-    """議事録の知らせが出たかどうか。**止めないので、終了コードではなく中身で見る。**"""
-    proc = subprocess.run(
+def run_remind(command):
+    """議事録の hook を1回走らせる。"""
+    return subprocess.run(
         [str(HOOKS / "remind-devlog.sh")],
         input=json.dumps({"tool_input": {"command": command}}, ensure_ascii=False),
         capture_output=True, text=True,
         env={"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(Path.cwd())},
     )
+
+
+def remind(command):
+    """議事録の知らせが出たかどうか。**止めないので、終了コードではなく中身で見る。**
+
+    **stdout の JSON を見る。** day-6 の最初の版は stderr に文字を出していて、
+    **2日間ずっと誰にも届いていなかった**のに、ここが `proc.stderr` を見ていたので
+    **テストは緑のままだった**（#188）。
+    """
+    proc = run_remind(command)
     assert proc.returncode == 0, "知らせるだけの hook なので、止めてはいけない"
-    return "議事録" in proc.stderr
+    if not proc.stdout.strip():
+        return False
+    d = json.loads(proc.stdout)        # 壊れた JSON なら、ここで落ちる
+    assert d["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+    return "議事録" in d["hookSpecificOutput"]["additionalContext"]
 
 
 @pytest.mark.parametrize("command", [
@@ -260,6 +274,16 @@ def test_ヒアドキュメントの中身は文字列なので黙る():
 
 def test_コミットメッセージに書いただけでは黙る():
     assert not remind(f'git commit -m "{MERGE} のルールを直す"')
+
+
+def test_知らせはstdoutに出す():
+    """**stderr に出すと、終了コード 0 ではどこにも表示されない**（#188）。
+
+    day-6 の最初の版はここで消えていた。**作ったことと、届いたことは別。**
+    """
+    proc = run_remind(f"{MERGE} 1 --merge")
+    assert proc.stdout.strip(), "知らせは stdout に出す"
+    assert "議事録" not in proc.stderr, "stderr に出すと、誰にも届かない"
 
 
 def test_止めない():
