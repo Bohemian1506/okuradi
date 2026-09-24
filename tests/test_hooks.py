@@ -274,3 +274,56 @@ def test_止めない():
         env={"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(Path.cwd())},
     )
     assert proc.returncode == 0
+
+
+# ------------------------------------------- 起動のときだけ `/始め` を促す（#180）
+
+def run_begin(source, raw=None):
+    """SessionStart の入力を渡し、(終了コード, 出たもの) を返す。"""
+    payload = raw if raw is not None else json.dumps(
+        {"hook_event_name": "SessionStart", "source": source}, ensure_ascii=False)
+    proc = subprocess.run([str(HOOKS / "session-start-begin.py")],
+                          input=payload, capture_output=True, text=True)
+    return proc.returncode, proc.stdout
+
+
+def test_起動のときは始めの手順を渡す():
+    code, out = run_begin("startup")
+    assert code == 0
+    d = json.loads(out)
+    assert d["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "始め" in d["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.parametrize("source", ["resume", "compact", "clear", "知らない値"])
+def test_起動以外では黙る(source):
+    """要約（compact）でも走る。ここで出すと、作業の真っ最中に始まってしまう。
+
+    知らない値でも出さない。出しすぎる側に倒れると、作業を邪魔する。
+    """
+    code, out = run_begin(source)
+    assert code == 0
+    assert out.strip() == ""
+
+
+@pytest.mark.parametrize("raw", ["", "これは JSON ではない", "{}", "null"])
+def test_入力が壊れていてもセッションを止めない(raw):
+    code, out = run_begin(None, raw=raw)
+    assert code == 0
+    assert out.strip() == ""
+
+
+def test_渡す手順の正本がある():
+    """hook は手順を写さず、場所だけを指す。指す先が消えたら気づけるようにする。"""
+    assert (HOOKS.parent / "commands" / "始め.md").exists()
+    text = (HOOKS / "session-start-begin.py").read_text(encoding="utf-8")
+    assert "commands/始め.md" in text
+
+
+def test_起動の促しがsettingsに登録してある():
+    """ファイルがあっても、設定に載っていなければ動かない（静かに効かなくなる）。"""
+    settings = json.loads((HOOKS.parent / "settings.json").read_text(encoding="utf-8"))
+    commands = [h["command"]
+                for group in settings["hooks"]["SessionStart"]
+                for h in group["hooks"]]
+    assert any("session-start-begin.py" in c for c in commands)
