@@ -21,7 +21,8 @@
       "Bash(curl -s http://127.0.0.1:*)",
       "mcp__claude_design__read_file",
       "mcp__claude_design__render_preview",
-      "mcp__claude_design__list_files"
+      "mcp__claude_design__list_files",
+      "Bash(gh pr merge:*)"
     ]
   },
   "hooks": {
