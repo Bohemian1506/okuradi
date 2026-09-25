@@ -77,35 +77,53 @@ def test_ペインを探す所で待つようになっている():
     assert text.count("find_idle_pane") == 2, "定義1つと呼び出し1つのはず"
 
 
-# ------------------------------------------ 最初の一言として /始め を渡す（#194）
+# ------------------------------------------ 最初の一言として /始め を送る（#194・#205）
 
-def lead_args(tmp_path, *, cont, mark):
-    """`lead_args` だけを取り出して動かし、claude に渡す引数の並びを返す。"""
+def run_func(tmp_path, name, *, cont, mark, call):
+    """start.sh から関数 `name` だけを取り出し、`call` を動かした結果を返す。"""
     body = subprocess.run(
-        ["sed", "-n", "/^lead_args()/,/^}/p", str(START)],
+        ["sed", "-n", f"/^{name}()/,/^}}/p", str(START)],
         capture_output=True, text=True, check=True).stdout
-    assert body.strip(), "lead_args が start.sh に無い"
+    assert body.strip(), f"{name} が start.sh に無い"
     if mark:
         (tmp_path / ".claude" / "state").mkdir(parents=True)
         (tmp_path / ".claude" / "state" / "作業終了").touch()
-    script = f'set -uo pipefail\nROOT="{tmp_path}"\nCONTINUE="{"on" if cont else "off"}"\n{body}\nlead_args'
-    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
-    return out.split()
+    script = f'set -uo pipefail\nROOT="{tmp_path}"\nCONTINUE="{"on" if cont else "off"}"\n{body}\n{call}'
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+
+
+def lead_args(tmp_path, *, cont, mark):
+    return run_func(tmp_path, "lead_args", cont=cont, mark=mark, call="lead_args").split()
+
+
+def wants_hajime(tmp_path, *, cont, mark):
+    out = run_func(tmp_path, "wants_hajime", cont=cont, mark=mark,
+                   call="wants_hajime && echo yes || echo no")
+    return out.strip() == "yes"
+
+
+@pytest.mark.parametrize("cont", [False, True])
+@pytest.mark.parametrize("mark", [False, True])
+def test_起動の引数に始めを入れない(tmp_path, cont, mark):
+    """渡すと Claude がすぐ作業を始め、Herdr が入力待ちを確かめられずに lead の名前を付けない（#205）。"""
+    got = lead_args(tmp_path, cont=cont, mark=mark)
+    assert "/始め" not in got
+    assert got == (["--continue"] if cont else [])
 
 
 @pytest.mark.parametrize("mark", [False, True])
-def test_新しく起動したら始めを渡す(tmp_path, mark):
+def test_新しく起動したら始めを送る(tmp_path, mark):
     """起動の hook は知らせを渡すだけで、Claude は人の最初の一言を待つ（day-8 に分かった）。"""
-    assert lead_args(tmp_path, cont=False, mark=mark) == ["/始め"]
+    assert wants_hajime(tmp_path, cont=False, mark=mark)
 
 
-def test_続きからで印が無ければ渡さない(tmp_path):
-    """作業の途中で開き直したとき。ここで渡すと、作業の真っ最中に突き合わせが始まる。"""
-    assert lead_args(tmp_path, cont=True, mark=False) == ["--continue"]
+def test_続きからで印が無ければ送らない(tmp_path):
+    """作業の途中で開き直したとき。ここで送ると、作業の真っ最中に突き合わせが始まる。"""
+    assert not wants_hajime(tmp_path, cont=True, mark=False)
 
 
-def test_作業終了の印があれば続きからでも渡す(tmp_path):
-    assert lead_args(tmp_path, cont=True, mark=True) == ["--continue", "/始め"]
+def test_作業終了の印があれば続きからでも送る(tmp_path):
+    assert wants_hajime(tmp_path, cont=True, mark=True)
 
 
 def test_組み立てた引数をclaudeに渡している():
@@ -113,6 +131,17 @@ def test_組み立てた引数をclaudeに渡している():
     text = START.read_text(encoding="utf-8")
     assert "< <(lead_args)" in text
     assert '--pane "$pane" "${args[@]}"' in text
+
+
+def test_始めは名前が付いたあとでpromptで送る():
+    """送るのは起動に成功した枝の中だけ。確認の画面で止まっているときに送ると、答えとして入ってしまう。"""
+    text = START.read_text(encoding="utf-8")
+    ok = text.index('say "$LEAD を起動しました"')
+    not_ready = text.index("    agent_not_ready)")
+    send = text.index('herdr agent prompt "$LEAD" "/始め"')
+    assert text.count('herdr agent prompt "$LEAD"') == 1
+    assert ok < send < not_ready
+    assert "wants_hajime" in text[ok:send]
 
 
 def test_名前の付いた作業のペインにはClaudeを置かない():
@@ -134,9 +163,10 @@ def test_名前の付いた作業のペインにはClaudeを置かない():
 
 
 @pytest.mark.parametrize("cont,mark,expected", [
-    (False, False, ["/始め"]),
+    (False, False, []),
+    (False, True, []),
     (True, False, ["--continue"]),
-    (True, True, ["--continue", "/始め"]),
+    (True, True, ["--continue"]),
 ])
 def test_claudeに渡る直前の引数を通しで見る(tmp_path, cont, mark, expected):
     """`lead_args` から `herdr agent start` の呼び出しまでを、**start.sh の実物の行**で通す（#198 のレビュー）。
