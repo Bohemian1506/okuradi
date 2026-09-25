@@ -11,6 +11,11 @@
 クリア（clear）でも走る。絞らないと、作業の真っ最中に「申し送りを読み直します」が始まる。
 `source` の実測値は `startup` と `resume`（2026-09-24・#180）。
 
+**ただし、印があれば続きから（resume）でも出す**（#183）。`/作業終了` が
+`.claude/state/作業終了` を置く。`start.sh -c` で続きから開いた朝は `source` が `resume` になり、
+起動だけ見ていると突き合わせが一度も走らないため。**出したら印を消す**（出しっぱなしにしない）。
+要約・クリアでは、印があっても出さない（作業の途中で起きるもの）。
+
 **知らない値が来たら出さない側に倒す。** 出しすぎると、作業の邪魔になる方に倒れるため。
 
 **手順はここに写さない。** 正本は `.claude/commands/始め.md` ひとつ。
@@ -21,9 +26,19 @@
 """
 
 import json
+import os
 import sys
+from pathlib import Path
 
-MESSAGE = """このセッションは「起動」です（SessionStart hook）。
+ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parents[2])
+MARK = ROOT / ".claude" / "state" / "作業終了"
+
+OPENING = {
+    "startup": "このセッションは「起動」です（SessionStart hook）。",
+    "resume": "このセッションは、`/作業終了` で終えたあとの「続きから」です（SessionStart hook）。",
+}
+
+MESSAGE = """
 
 **最初に `/始め` をやってください。** 手順は `.claude/commands/始め.md` にあります。
 読んで、そのとおりに進めてください（ここには写していません。正本はあちらです）。
@@ -34,11 +49,15 @@ MESSAGE = """このセッションは「起動」です（SessionStart hook）�
 
 def main():
     raw = sys.stdin.read()
-    if json.loads(raw).get("source") != "startup":
-        return           # 続きから・要約・クリア、そして知らない値では出さない
+    source = json.loads(raw).get("source")
+    marked = MARK.exists()
+    if not (source == "startup" or (source == "resume" and marked)):
+        return           # 印の無い続きから・要約・クリア、そして知らない値では出さない
+    if marked:
+        MARK.unlink(missing_ok=True)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SessionStart",
-        "additionalContext": MESSAGE,
+        "additionalContext": OPENING[source] + MESSAGE,
     }}, ensure_ascii=False))
 
 

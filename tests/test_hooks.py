@@ -9,6 +9,7 @@ day-4 に、ヒアストリング（`<<<foo`）をヒアドキュメントの始
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -302,39 +303,101 @@ def test_止めない():
 
 # ------------------------------------------- 起動のときだけ `/始め` を促す（#180）
 
-def run_begin(source, raw=None):
-    """SessionStart の入力を渡し、(終了コード, 出たもの) を返す。"""
+def run_begin(project_dir, source, raw=None):
+    """SessionStart の入力を渡し、(終了コード, 出たもの) を返す。
+
+    **必ず `CLAUDE_PROJECT_DIR` を渡す。** 渡さないと、hook はスクリプトの位置から
+    見た本物のリポジトリを見に行く。手元に `.claude/state/作業終了` があると、
+    そちらを拾って「resume で黙る」テストが崩れる（#183）。
+    """
     payload = raw if raw is not None else json.dumps(
         {"hook_event_name": "SessionStart", "source": source}, ensure_ascii=False)
     proc = subprocess.run([str(HOOKS / "session-start-begin.py")],
-                          input=payload, capture_output=True, text=True)
+                          input=payload, capture_output=True, text=True,
+                          env={"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(project_dir)})
     return proc.returncode, proc.stdout
 
 
-def test_起動のときは始めの手順を渡す():
-    code, out = run_begin("startup")
+def test_起動のときは始めの手順を渡す(tmp_path):
+    code, out = run_begin(tmp_path, "startup")
     assert code == 0
     d = json.loads(out)
     assert d["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert "始め" in d["hookSpecificOutput"]["additionalContext"]
+    ctx = d["hookSpecificOutput"]["additionalContext"]
+    assert "始め" in ctx
+    assert "起動" in ctx
 
 
 @pytest.mark.parametrize("source", ["resume", "compact", "clear", "知らない値"])
-def test_起動以外では黙る(source):
+def test_起動以外では黙る(source, tmp_path):
     """要約（compact）でも走る。ここで出すと、作業の真っ最中に始まってしまう。
 
     知らない値でも出さない。出しすぎる側に倒れると、作業を邪魔する。
+    `resume` は印（`.claude/state/作業終了`）が無い場合の話（印があるときは #183 で別）。
     """
-    code, out = run_begin(source)
+    code, out = run_begin(tmp_path, source)
     assert code == 0
     assert out.strip() == ""
 
 
 @pytest.mark.parametrize("raw", ["", "これは JSON ではない", "{}", "null"])
-def test_入力が壊れていてもセッションを止めない(raw):
-    code, out = run_begin(None, raw=raw)
+def test_入力が壊れていてもセッションを止めない(raw, tmp_path):
+    code, out = run_begin(tmp_path, None, raw=raw)
     assert code == 0
     assert out.strip() == ""
+
+
+# --------------------------- `/作業終了` の印があれば resume でも促す（#183）
+
+def mark_path(project_dir):
+    return project_dir / ".claude" / "state" / "作業終了"
+
+
+def put_mark(project_dir):
+    p = mark_path(project_dir)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("", encoding="utf-8")
+    return p
+
+
+def test_印があればresumeでも始めを促す(tmp_path):
+    put_mark(tmp_path)
+    code, out = run_begin(tmp_path, "resume")
+    assert code == 0
+    d = json.loads(out)
+    ctx = d["hookSpecificOutput"]["additionalContext"]
+    assert "続きから" in ctx
+    assert "始め" in ctx
+
+
+def test_促したら印を消す(tmp_path):
+    put_mark(tmp_path)
+    run_begin(tmp_path, "resume")
+    assert not mark_path(tmp_path).exists()
+
+
+def test_startupは印の有無に関係なく出し印があれば消す(tmp_path):
+    put_mark(tmp_path)
+    code, out = run_begin(tmp_path, "startup")
+    assert code == 0
+    assert "起動" in json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert not mark_path(tmp_path).exists(), "出したら印は消す"
+
+
+def test_startupは印が無くても出る(tmp_path):
+    code, out = run_begin(tmp_path, "startup")
+    assert code == 0
+    assert "起動" in json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.parametrize("source", ["compact", "clear", "知らない値"])
+def test_compactやclearは印があっても出さず印も消さない(source, tmp_path):
+    """作業の途中で起きるものなので、印があっても割り込まない。印は次の resume のために残す。"""
+    put_mark(tmp_path)
+    code, out = run_begin(tmp_path, source)
+    assert code == 0
+    assert out.strip() == ""
+    assert mark_path(tmp_path).exists(), "出さないときは印を消してはいけない"
 
 
 def test_渡す手順の正本がある():
@@ -351,3 +414,170 @@ def test_起動の促しがsettingsに登録してある():
                 for group in settings["hooks"]["SessionStart"]
                 for h in group["hooks"]]
     assert any("session-start-begin.py" in c for c in commands)
+
+
+# ------------------------------------------- 「変更」ペインへの差分の書き出し（#183）
+
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def run_show_diff(project_dir, data):
+    """PostToolUse の入力を渡し、(終了コード, 書き出したファイルの中身 or None) を返す。"""
+    proc = subprocess.run([str(HOOKS / "show-diff.py")],
+                          input=json.dumps(data, ensure_ascii=False),
+                          capture_output=True, text=True,
+                          env={"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(project_dir)})
+    out = project_dir / ".claude" / "state" / "変更.txt"
+    return proc.returncode, (ANSI.sub("", out.read_text(encoding="utf-8")) if out.exists() else None)
+
+
+def test_structuredPatchの行番号がそのまま出る(tmp_path):
+    """本物のパッチがあれば、そちらを信じる（予備の作り方で作り直さない）。"""
+    data = {
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(tmp_path / "a.txt")},
+        "tool_response": {"structuredPatch": [
+            {"oldStart": 10, "oldLines": 2, "newStart": 10, "newLines": 3,
+             "lines": [" 変わらない行", "+増えた行", " もう1行"]},
+        ]},
+    }
+    code, content = run_show_diff(tmp_path, data)
+    assert code == 0
+    assert "@@ -10,2 +10,3 @@" in content
+    assert "+増えた行" in content
+
+
+def test_structuredPatchが無ければ予備の作り方でプラスマイナスが出る(tmp_path):
+    data = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": str(tmp_path / "a.txt"),
+            "old_string": "前\n",
+            "new_string": "後\n",
+        },
+    }
+    code, content = run_show_diff(tmp_path, data)
+    assert code == 0
+    assert "-前" in content
+    assert "+後" in content
+
+
+def test_structuredPatchが空リストでも予備の作り方に回る(tmp_path):
+    """`structuredPatch: []` は「無い」と同じ扱いにする（存在チェックだけだと空リストで空振りする）。"""
+    data = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": str(tmp_path / "a.txt"),
+            "old_string": "前\n",
+            "new_string": "後\n",
+        },
+        "tool_response": {"structuredPatch": []},
+    }
+    code, content = run_show_diff(tmp_path, data)
+    assert code == 0
+    assert "-前" in content
+    assert "+後" in content
+
+
+def test_MultiEditも予備の作り方でプラスマイナスが出る(tmp_path):
+    data = {
+        "tool_name": "MultiEdit",
+        "tool_input": {
+            "file_path": str(tmp_path / "a.txt"),
+            "edits": [
+                {"old_string": "あ\n", "new_string": "い\n"},
+                {"old_string": "う\n", "new_string": "え\n"},
+            ],
+        },
+    }
+    code, content = run_show_diff(tmp_path, data)
+    assert code == 0
+    assert "-あ" in content and "+い" in content
+    assert "-う" in content and "+え" in content
+
+
+def test_Writeで新規ファイルの中身は出さずN行とだけ書く(tmp_path):
+    """新規ファイルは structuredPatch が無い。中身をそのまま出すと、秘密がペインに映る。"""
+    data = {
+        "tool_name": "Write",
+        "tool_input": {
+            "file_path": str(tmp_path / "secret.txt"),
+            "content": "SECRET_TOKEN=abcdef\n2行目\n3行目",
+        },
+    }
+    code, content = run_show_diff(tmp_path, data)
+    assert code == 0
+    assert "SECRET_TOKEN" not in content
+    assert "3行" in content
+
+
+def test_EditWriteMultiEdit以外は何もしない(tmp_path):
+    data = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+    code, content = run_show_diff(tmp_path, data)
+    assert code == 0
+    assert content is None, "対象外のツールでファイルを作ってはいけない"
+
+
+@pytest.mark.parametrize("raw", ["", "これは JSON ではない", "{}", "null",
+                                  '{"tool_name": "Edit"}'])
+def test_壊れた入力でも終了コードは0(tmp_path, raw):
+    proc = subprocess.run([str(HOOKS / "show-diff.py")],
+                          input=raw, capture_output=True, text=True,
+                          env={"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(tmp_path)})
+    assert proc.returncode == 0
+
+
+def test_パスはリポジトリ相対で1行目に書く(tmp_path):
+    data = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": str(tmp_path / "ep01" / "config.yml"),
+            "old_string": "a",
+            "new_string": "b",
+        },
+    }
+    code, content = run_show_diff(tmp_path, data)
+    assert code == 0
+    head = content.splitlines()[0]
+    assert "ep01/config.yml" in head
+    assert str(tmp_path) not in head, "見せるのは相対パス（フルパスは長くて読みにくい）"
+    assert "Edit" in head
+
+
+def test_show_diffがsettingsに登録してある():
+    """ファイルがあっても、設定に載っていなければ動かない。"""
+    settings = json.loads((HOOKS.parent / "settings.json").read_text(encoding="utf-8"))
+    commands = [h["command"]
+                for group in settings["hooks"]["PostToolUse"]
+                for h in group["hooks"]]
+    assert any("show-diff.py" in c for c in commands)
+
+
+# ------------------------------------------------------- 作業ペイン.sh（#183）
+
+SCRIPTS = Path(__file__).resolve().parents[1] / ".claude" / "scripts"
+
+
+@pytest.mark.parametrize("sub", [[], ["open"], ["gui"], ["close"]])
+def test_herdrの外では何もせず1行出して終わる(sub, tmp_path):
+    """この開発環境自体が Herdr の中で動くので、HERDR_ENV をわざと外して確かめる。
+
+    **本物の herdr は絶対に呼ばない**（herdr をあえて PATH から外し、呼んだら失敗するようにする）。
+    """
+    proc = subprocess.run(
+        [str(SCRIPTS / "作業ペイン.sh"), *sub],
+        capture_output=True, text=True, cwd=str(tmp_path),
+        env={"PATH": "/usr/bin:/bin"},   # HERDR_ENV は渡さない。herdr も置かない
+    )
+    assert proc.returncode == 0
+    assert "Herdr の外" in proc.stdout
+
+
+def test_herdr_envが1でなければ同じく何もしない(tmp_path):
+    proc = subprocess.run(
+        [str(SCRIPTS / "作業ペイン.sh")],
+        capture_output=True, text=True, cwd=str(tmp_path),
+        env={"PATH": "/usr/bin:/bin", "HERDR_ENV": "0"},
+    )
+    assert proc.returncode == 0
+    assert "Herdr の外" in proc.stdout
