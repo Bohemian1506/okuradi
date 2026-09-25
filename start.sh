@@ -100,12 +100,28 @@ wait_idle_shell() {
 find_idle_pane() {
   local ws="$1" tab="$2" p
   for _ in $(seq 1 ${FIND_IDLE_TRIES:-40}); do   # 上限10秒。wait_idle_shell と同じ
-    for p in $(herdr pane list --workspace "$ws" | jq -r --arg t "$tab" '.result.panes[]? | select(.tab_id == $t) | .pane_id'); do
+    # 名前の付いたペイン（/始め が作る作業のペイン・#183）には Claude を置かない
+    for p in $(herdr pane list --workspace "$ws" | jq -r --arg t "$tab" '.result.panes[]? | select(.tab_id == $t and (.label // "") == "") | .pane_id'); do
       if pane_is_idle_shell "$p"; then printf '%s' "$p"; return 0; fi
     done
     sleep "${FIND_IDLE_WAIT:-0.25}"
   done
   return 1
+}
+
+# lead（claude）に渡す引数を出す（1行に1つ）。**最初の一言として `/始め` を渡す**（#194）。
+#   新しく起動      → /始め
+#   続きから（-c）  → --continue。/作業終了 の印があるときだけ /始め も
+# 続きからで印が無いのは「作業の途中で開き直した」ときなので、渡さない。
+# 渡さなくても、起動の hook の促しは残る（人の最初の一言を待つ形）。
+lead_args() {
+  if [[ "$CONTINUE" == "on" ]]; then
+    echo "--continue"
+    [[ -e "$ROOT/.claude/state/作業終了" ]] && echo "/始め"
+  else
+    echo "/始め"
+  fi
+  return 0
 }
 
 # ラベルでワークスペースを探す
@@ -265,14 +281,15 @@ else
     wait_idle_shell "$pane" || fail "Claude を起動するペインの準備ができませんでした。もう一度実行してください"
   fi
 
-  args=()
-  [[ "$CONTINUE" == "on" ]] && args=(-- --continue)
+  args=(--)
+  mapfile -t -O 1 args < <(lead_args)
 
   if [[ "$CONTINUE" == "on" ]]; then
     say "$LEAD を、前回の会話の続きから起動します"
   else
     say "$LEAD を起動します"
   fi
+  [[ " ${args[*]} " == *" /始め "* ]] && say "（最初に /始め を渡します）"
   # シェルがまだ入力を受け付けない（agent_pane_busy）ときだけ、少し待ってやり直す
   for _ in $(seq 1 10); do
     out=$(herdr agent start "$LEAD" --kind claude --pane "$pane" "${args[@]}" 2>&1)

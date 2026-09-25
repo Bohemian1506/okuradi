@@ -75,3 +75,59 @@ def test_ペインを探す所で待つようになっている():
     assert "find_idle_pane" in text
     # 呼び出しは1か所（lead を起動するペインを選ぶ所）
     assert text.count("find_idle_pane") == 2, "定義1つと呼び出し1つのはず"
+
+
+# ------------------------------------------ 最初の一言として /始め を渡す（#194）
+
+def lead_args(tmp_path, *, cont, mark):
+    """`lead_args` だけを取り出して動かし、claude に渡す引数の並びを返す。"""
+    body = subprocess.run(
+        ["sed", "-n", "/^lead_args()/,/^}/p", str(START)],
+        capture_output=True, text=True, check=True).stdout
+    assert body.strip(), "lead_args が start.sh に無い"
+    if mark:
+        (tmp_path / ".claude" / "state").mkdir(parents=True)
+        (tmp_path / ".claude" / "state" / "作業終了").touch()
+    script = f'set -uo pipefail\nROOT="{tmp_path}"\nCONTINUE="{"on" if cont else "off"}"\n{body}\nlead_args'
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+    return out.split()
+
+
+@pytest.mark.parametrize("mark", [False, True])
+def test_新しく起動したら始めを渡す(tmp_path, mark):
+    """起動の hook は知らせを渡すだけで、Claude は人の最初の一言を待つ（day-8 に分かった）。"""
+    assert lead_args(tmp_path, cont=False, mark=mark) == ["/始め"]
+
+
+def test_続きからで印が無ければ渡さない(tmp_path):
+    """作業の途中で開き直したとき。ここで渡すと、作業の真っ最中に突き合わせが始まる。"""
+    assert lead_args(tmp_path, cont=True, mark=False) == ["--continue"]
+
+
+def test_作業終了の印があれば続きからでも渡す(tmp_path):
+    assert lead_args(tmp_path, cont=True, mark=True) == ["--continue", "/始め"]
+
+
+def test_組み立てた引数をclaudeに渡している():
+    """関数を作っても、呼び出しに使っていなければ効かない。"""
+    text = START.read_text(encoding="utf-8")
+    assert "< <(lead_args)" in text
+    assert '--pane "$pane" "${args[@]}"' in text
+
+
+def test_名前の付いた作業のペインにはClaudeを置かない():
+    """GUIログのペインは、サーバーを立てるまで「何も動いていないシェル」に見える。
+    /作業終了 を通さずに閉じた翌朝、lead がそこ（14行）で起動してしまう（#194 で見つけた）。"""
+    body = subprocess.run(
+        ["sed", "-n", "/^find_idle_pane()/,/^}/p", str(START)],
+        capture_output=True, text=True, check=True).stdout
+    script = textwrap.dedent(f"""
+        set -uo pipefail
+        {body}
+        herdr() {{ printf '{{"result":{{"panes":[{{"tab_id":"t1","pane_id":"pL","label":"GUIログ"}},{{"tab_id":"t1","pane_id":"p1"}}]}}}}'; }}
+        pane_is_idle_shell() {{ true; }}
+        export FIND_IDLE_TRIES=1 FIND_IDLE_WAIT=0.01
+        find_idle_pane ws t1
+    """)
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout
+    assert out == "p1"
