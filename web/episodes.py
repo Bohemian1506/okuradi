@@ -378,8 +378,9 @@ def new_segments(before, asked, known):
 
 
 def create_episode(number, segments, root=ROOT):
-    if not isinstance(number, int) or number < 1:
-        raise EpisodeError("回の番号は1以上の数字にしてください")
+    # 0 を許すのは第0回（テスト収録）のため。番組側の呼び方（r-hoso の ep00）にそろえる
+    if not isinstance(number, int) or number < 0:
+        raise EpisodeError("回の番号は0以上の数字にしてください")
     name = f"ep{number:02d}"
     ep_dir = root / name
     if ep_dir.exists():

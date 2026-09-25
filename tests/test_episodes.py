@@ -148,6 +148,28 @@ def test_知らないコーナーは断る(tmp_path):
         episodes.create_episode(2, [{"series": "nope", "theme": "x"}], root=tmp_path)
 
 
+def test_第0回を作れる(tmp_path):
+    """第0回（テスト収録）は番組側の呼び方（r-hoso の ep00）にそろえる。
+
+    小さい番号の回が無いときは、いちばん小さい回（ここでは試験用の ep01）をひな型にする。
+    """
+    make_episode(tmp_path, number=1, config={**CONFIG, "concept": "番組の芯"})
+    made = episodes.create_episode(0, [{"series": "imasara", "theme": "第0回"}], root=tmp_path)
+
+    assert made["name"] == "ep00"
+    cfg = episodes.read_config(tmp_path / "ep00")
+    assert cfg["episode"] == 0
+    assert cfg["concept"] == "番組の芯"
+    assert episodes.next_number(tmp_path) == 2, "第0回を作っても、次の番号は最後の回の次のまま"
+
+
+def test_負の番号は断る(tmp_path):
+    make_episode(tmp_path)
+    with pytest.raises(episodes.EpisodeError, match="0以上"):
+        episodes.create_episode(-1, [{"series": "imasara", "theme": "x"}], root=tmp_path)
+    assert not list(tmp_path.glob("ep-*"))
+
+
 def test_ひな型にする回が無ければ理由を言って断る(tmp_path):
     with pytest.raises(episodes.EpisodeError, match="手で作って"):
         episodes.create_episode(1, [{"series": "imasara", "theme": "x"}], root=tmp_path)
