@@ -581,3 +581,87 @@ def test_herdr_envが1でなければ同じく何もしない(tmp_path):
     )
     assert proc.returncode == 0
     assert "Herdr の外" in proc.stdout
+
+
+def test_印を消せなくても促しは出す(tmp_path):
+    """消すのは後片付け。**消せないせいで促しまで消えると、この hook の目的を裏切る**（#193 のレビュー）。"""
+    mark = put_mark(tmp_path)
+    mark.parent.chmod(0o555)          # 親の書き込み権を外すと、消せなくなる
+    try:
+        code, out = run_begin(tmp_path, "startup")
+    finally:
+        mark.parent.chmod(0o755)
+    assert code == 0
+    assert "始め" in json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+
+# ------------------------------------ 作業ペイン.sh を偽の herdr で動かす（#193 のレビュー）
+
+FAKE_HERDR = r'''#!/usr/bin/env bash
+# 本物の herdr の代わり。呼ばれた引数を記録し、決めておいた答えを返す
+echo "$*" >> "$FAKE_DIR/calls"
+case "$1 $2" in
+  "pane current") echo '{"result":{"pane":{"tab_id":"t1"}}}' ;;
+  "pane list")
+    [ -f "$FAKE_DIR/list_fails" ] && exit 1
+    echo '{"result":{"panes":[
+      {"pane_id":"p1","tab_id":"t1"},
+      {"pane_id":"pD","tab_id":"t1","label":"変更"},
+      {"pane_id":"pL","tab_id":"t1","label":"GUIログ"},
+      {"pane_id":"pT","tab_id":"t1","label":"今日の一手"}]}}' ;;
+  "pane process-info")
+    if [ "$4" = "pL" ] && [ -f "$FAKE_DIR/gui_busy" ]; then
+      echo '{"result":{"process_info":{"shell_pid":1,"foreground_processes":[{"pid":1,"name":"bash"},{"pid":2,"name":"python"}]}}}'
+    else
+      echo '{"result":{"process_info":{"shell_pid":1,"foreground_processes":[{"pid":1,"name":"bash"}]}}}'
+    fi ;;
+  *) echo '{"result":{}}' ;;
+esac
+'''
+
+
+def run_panes(tmp_path, *args, gui_busy=False, list_fails=False):
+    """偽の herdr を PATH の先頭に置いて 作業ペイン.sh を動かし、(proc, 呼ばれた herdr の一覧) を返す。"""
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "herdr").write_text(FAKE_HERDR, encoding="utf-8")
+    (fake / "herdr").chmod(0o755)
+    if gui_busy:
+        (tmp_path / "gui_busy").touch()
+    if list_fails:
+        (tmp_path / "list_fails").touch()
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    proc = subprocess.run(
+        [str(SCRIPTS / "作業ペイン.sh"), *args],
+        capture_output=True, text=True, cwd=str(repo),
+        env={"PATH": f"{fake}:/usr/bin:/bin", "HERDR_ENV": "1", "FAKE_DIR": str(tmp_path)},
+    )
+    calls = (tmp_path / "calls").read_text(encoding="utf-8").splitlines() \
+        if (tmp_path / "calls").exists() else []
+    return proc, calls
+
+
+def test_GUIログで何か動いていたらどれも閉じない(tmp_path):
+    """GUI のサーバーごと閉じると、裏の工程（build.py は別のプロセスグループ）が取り残され、
+    作りかけのファイルを消す後片付けも走らない（#193 のレビュー・`web/runner.py`）。"""
+    proc, calls = run_panes(tmp_path, "close", gui_busy=True)
+    assert proc.returncode == 3
+    assert "閉じなかった" in proc.stdout
+    assert not [c for c in calls if c.startswith("pane close")]
+
+
+def test_GUIログが空なら3つとも閉じる(tmp_path):
+    proc, calls = run_panes(tmp_path, "close")
+    assert proc.returncode == 0
+    assert sorted(c for c in calls if c.startswith("pane close")) == \
+        ["pane close pD", "pane close pL", "pane close pT"]
+
+
+@pytest.mark.parametrize("sub", ["open", "gui", "close"])
+def test_ペインの一覧が取れなければ触らない(sub, tmp_path):
+    """失敗を「ペインが無い」と読むと、二重に作る・二重に立てる（#193 のレビュー）。"""
+    proc, calls = run_panes(tmp_path, sub, list_fails=True)
+    assert proc.returncode == 0
+    assert "取れなかった" in proc.stdout
+    assert not [c for c in calls if c.split()[:2] in (["pane", "split"], ["pane", "close"], ["pane", "run"])]

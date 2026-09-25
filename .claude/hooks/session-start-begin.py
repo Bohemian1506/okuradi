@@ -53,12 +53,15 @@ def main():
     marked = MARK.exists()
     if not (source == "startup" or (source == "resume" and marked)):
         return           # 印の無い続きから・要約・クリア、そして知らない値では出さない
-    if marked:
-        MARK.unlink(missing_ok=True)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SessionStart",
         "additionalContext": OPENING[source] + MESSAGE,
     }}, ensure_ascii=False))
+    if marked:
+        try:
+            MARK.unlink(missing_ok=True)   # 促しを出してから消す。消せなくても促しは届いている
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

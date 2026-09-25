@@ -30,17 +30,24 @@ GUI_CMD=".venv/bin/python -m uvicorn web.main:app --host 0.0.0.0 --reload"
 TAB=$(herdr pane current | jq -r '.result.pane.tab_id // empty')
 [ -n "$TAB" ] || { echo "いまのタブが分からないので、作業のペインは扱わなかった"; exit 0; }
 
+# herdr が失敗したときは「ペインが無い」「何も動いていない」と区別がつかない。
+# **分からないときは触らない側に倒す**（二重に作る・二重に立てるのを防ぐ）。
+LIST=$(herdr pane list 2>/dev/null) && jq -e '.result.panes' >/dev/null 2>&1 <<<"$LIST" \
+  || { echo "herdr からペインの一覧が取れなかった。作業のペインは触らなかった"; exit 0; }
+
 find_pane() {
-  herdr pane list | jq -r --arg t "$TAB" --arg l "$1" \
-    '.result.panes[]? | select(.tab_id==$t and .label==$l) | .pane_id' | head -1
+  jq -r --arg t "$TAB" --arg l "$1" \
+    '.result.panes[]? | select(.tab_id==$t and .label==$l) | .pane_id' <<<"$LIST" | head -1
 }
 
-# ペインの中で動いているもの（シェルだけなら空）
+# ペインの中で動いているもの（シェルだけなら空）。**取れなければ「?」**（動いている扱いになる）
 fg_of() {
-  herdr pane process-info --pane "$1" 2>/dev/null | jq -r '
+  local out
+  out=$(herdr pane process-info --pane "$1" 2>/dev/null) || { echo "?"; return; }
+  jq -r '
     .result.process_info as $p
     | if ($p.foreground_processes | length) == 1 and $p.foreground_processes[0].pid == $p.shell_pid
-      then "" else ($p.foreground_processes | map(.name) | join(",")) end'
+      then "" else ($p.foreground_processes | map(.name) | join(",")) end' <<<"$out" 2>/dev/null || echo "?"
 }
 
 # 作ったばかりのペインは、シェルの準備ができるまで何か動いて見える（上限10秒）
@@ -59,7 +66,12 @@ open)
     [ -n "$D" ] || { echo "ペインを作れなかった（右に割れなかった）"; exit 0; }
     L=$(herdr pane split "$D" --direction down --ratio 0.46 --cwd "$PWD" --no-focus | jq -r '.result.pane.pane_id // empty')
     T=$(herdr pane split "$L" --direction down --ratio 0.54 --cwd "$PWD" --no-focus | jq -r '.result.pane.pane_id // empty')
-    [ -n "$L" ] && [ -n "$T" ] || { echo "ペインを途中までしか作れなかった。Herdr の画面で確かめる"; exit 0; }
+    if [ -z "$L" ] || [ -z "$T" ]; then
+      # 名前を付ける前なので、残すと次から見つけられない。作った分を閉じて戻す
+      for p in "$T" "$L" "$D"; do [ -n "$p" ] && herdr pane close "$p" >/dev/null 2>&1; done
+      echo "ペインを途中までしか作れなかったので、作った分を閉じた"
+      exit 0
+    fi
     herdr pane rename "$D" $DIFF >/dev/null
     herdr pane rename "$L" $LOG >/dev/null
     herdr pane rename "$T" $TODAY >/dev/null
@@ -96,10 +108,19 @@ gui)
   ;;
 
 close)
+  # GUIログで何か動いていたら閉じない。GUI のサーバーごと閉じると、裏で動いている工程
+  # （build.py は別のプロセスグループ）が取り残され、作りかけのファイルを消す後片付けも走らない
+  if [ -n "$L" ]; then
+    fg=$(fg_of "$L")
+    if [ -n "$fg" ]; then
+      echo "GUIログのペインで $fg が動いている。閉じなかった（どれも閉じていない）"
+      echo "GUI で工程が動いていないか確かめ、サーバーを止めて（Ctrl+C）から、もう一度 close する"
+      exit 3
+    fi
+  fi
   closed=0
   for p in "$D" "$L" "$T"; do
     [ -n "$p" ] || continue
-    [ "$p" = "$L" ] && [ -n "$(fg_of "$L")" ] && echo "GUI のサーバーも止まる（GUIログのペインを閉じるため）"
     herdr pane close "$p" >/dev/null && closed=$((closed + 1))
   done
   echo "作業のペインを ${closed} つ閉じた"
