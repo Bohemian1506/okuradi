@@ -71,15 +71,15 @@ def issues_section(lines):
         order = sorted(tally.items(), key=lambda kv: -kv[1])
         lines.append("  内訳: " + " / ".join(f"{k} {v}" for k, v in order))
 
-    # 名前まで出すのは「いま効くもの」だけ
+    # 名前まで出すのは「いま効くもの」だけ。番組側からのものは、見落とすと半日止まる（day-4）
     for r in rows:
         names = [x["name"] for x in r["labels"]]
-        if not names or "v1" in names:
+        if not names or "v1" in names or "番組側から" in names:
             tag = ",".join(names) or "ラベル無し"
             lines.append(f"  #{r['number']} [{tag}] {r['title']}")
     if any(not r["labels"] for r in rows):
-        lines.append("  ※ ラベル無しは番組側（r-hoso）が立てたものかもしれない。"
-                     "中身を読んで v1 か enhancement に振り分ける")
+        lines.append("  ※ ラベル無しは付け忘れ（#182）。番組側が立てたものなら `番組側から`、"
+                     "こちらのものなら中身を読んで v1 / enhancement / 道具 に振り分ける")
 
 
 def recent_section(lines):
