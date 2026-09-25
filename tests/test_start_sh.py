@@ -131,3 +131,37 @@ def test_名前の付いた作業のペインにはClaudeを置かない():
     """)
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout
     assert out == "p1"
+
+
+@pytest.mark.parametrize("cont,mark,expected", [
+    (False, False, ["/始め"]),
+    (True, False, ["--continue"]),
+    (True, True, ["--continue", "/始め"]),
+])
+def test_claudeに渡る直前の引数を通しで見る(tmp_path, cont, mark, expected):
+    """`lead_args` から `herdr agent start` の呼び出しまでを、**start.sh の実物の行**で通す（#198 のレビュー）。
+
+    関数だけ試すと、組み立て方（`args=(--)`・`mapfile -O 1`）を変えたときの壊れ方に気づけない。
+    `herdr` は偽物にして、受け取った引数を1行に1つ返させる。
+    """
+    text = START.read_text(encoding="utf-8")
+    func = subprocess.run(["sed", "-n", "/^lead_args()/,/^}/p", str(START)],
+                          capture_output=True, text=True, check=True).stdout
+    lines = [l.strip() for l in text.splitlines()]
+    build = [l for l in lines if l in ("args=(--)", "mapfile -t -O 1 args < <(lead_args)")]
+    call = [l for l in lines if l.startswith('out=$(herdr agent start "$LEAD"')]
+    assert len(build) == 2 and len(call) == 1, "組み立てと呼び出しの行が見つからない"
+    if mark:
+        (tmp_path / ".claude" / "state").mkdir(parents=True)
+        (tmp_path / ".claude" / "state" / "作業終了").touch()
+    script = "\n".join([
+        "set -uo pipefail",
+        f'ROOT="{tmp_path}"', f'CONTINUE="{"on" if cont else "off"}"', 'LEAD=lead', 'pane=p1',
+        "herdr() { printf '%s\\n' \"$@\"; }",
+        func, *build, *call, 'printf "%s" "$out"',
+    ])
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+    got = out.splitlines()
+    assert got[:6] == ["agent", "start", "lead", "--kind", "claude", "--pane"]
+    assert got[7] == "--", "claude への引数は -- のあと"
+    assert got[8:] == expected
