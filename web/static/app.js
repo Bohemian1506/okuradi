@@ -2716,7 +2716,7 @@ function openNewEpisode() {
 
   const number = el("input", "field");
   number.type = "number";
-  number.min = "1";
+  number.min = "0";   // 第0回（テスト収録）を作れるように
   number.value = String(state.nextNumber);
 
   const numberLabel = el("span", "form-label", "回の番号");
@@ -2746,10 +2746,18 @@ function openNewEpisode() {
 
   cancel.onclick = () => overlay.remove();
   create.onclick = async () => {
-    setBusy(true);
     error.hidden = true;
     number.classList.remove("is-wrong");
     numberLabel.classList.remove("is-wrong");
+    // 空欄は Number("") で 0 になり、黙って ep00 ができてしまう。先に止める
+    if (number.value.trim() === "") {
+      error.textContent = "回の番号を入れてください";
+      error.hidden = false;
+      number.classList.add("is-wrong");
+      numberLabel.classList.add("is-wrong");
+      return;
+    }
+    setBusy(true);
     try {
       const made = await api("/api/episodes", {
         method: "POST",
