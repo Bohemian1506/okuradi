@@ -17,12 +17,18 @@ import build
 
 from web import episodes, timeline
 
-# アプリ全体の設定の置き場所。既定はコードの場所（CODE_ROOT）の settings.yml。
-# 環境変数 `OKURADI_SETTINGS` があれば、そこに変わる（担当が一時フォルダへ試す
-# ため。#221）。「回を置く場所」（OKURADI_EPISODES_DIR）とは別に切り替えられる。
+# アプリ全体の設定の置き場所（#221）。決め方は上から順に:
+#   1. 環境変数 `OKURADI_SETTINGS` があれば、そこ
+#   2. `OKURADI_EPISODES_DIR`（回を置く場所）が付いていれば、**その中の settings.yml**
+#      （回の場所だけ一時フォルダに向けて、設定だけ本物に書く、を起こさないため。2026-09-26・ユーザーの判断）
+#   3. どちらも無ければ、コードの場所（CODE_ROOT）の settings.yml（今までどおり）
 _settings_override = os.environ.get("OKURADI_SETTINGS")
-SETTINGS = Path(_settings_override).expanduser().resolve() if _settings_override \
-    else episodes.CODE_ROOT / "settings.yml"
+if _settings_override:
+    SETTINGS = Path(_settings_override).expanduser().resolve()
+elif os.environ.get("OKURADI_EPISODES_DIR"):
+    SETTINGS = episodes.ROOT / "settings.yml"
+else:
+    SETTINGS = episodes.CODE_ROOT / "settings.yml"
 # 回を置く場所（build.episodes_root）と同じく、**置き場所のフォルダが無いときは起動の時点で止める。**
 # 黙って進むと、設定を保存した瞬間に素の FileNotFoundError で落ちる（#221 のレビュー前に気づいた）
 if _settings_override and not SETTINGS.parent.is_dir():

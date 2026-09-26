@@ -144,6 +144,19 @@ def test_settingsの置き場所のフォルダが無ければ読み込みが止
         reload_web()
 
 
+def test_回の場所だけ付けるとsettingsもその中になる(tmp_path, monkeypatch, reload_web):
+    """回の場所だけ一時フォルダに向けて、設定だけ本物に書く、を起こさない（2026-09-26・ユーザーの判断）。"""
+    monkeypatch.setenv("OKURADI_EPISODES_DIR", str(tmp_path))
+    _, sources_mod = reload_web()
+    assert sources_mod.SETTINGS == tmp_path.resolve() / "settings.yml"
+
+
+def test_app_pyも回の場所の切り替えに乗る():
+    """古い GUI も build.episodes_root() を使う（#228 のレビュー）。直書きの Path(__file__) に戻さない。"""
+    text = (REAL_CODE_ROOT / "app.py").read_text(encoding="utf-8")
+    assert "ROOT = build.episodes_root()" in text
+
+
 def test_web_episodesは環境変数が無ければ今までどおり(reload_web):
     episodes_mod, sources_mod = reload_web()
     assert episodes_mod.ROOT == REAL_CODE_ROOT
