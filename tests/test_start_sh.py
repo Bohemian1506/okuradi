@@ -144,6 +144,81 @@ def test_始めは名前が付いたあとでpromptで送る():
     assert "wants_hajime" in text[ok:send]
 
 
+PROMPT_OK = '{"id":"cli:agent:prompt","result":{"type":"agent_prompted","agent":{"name":"lead"}}}'
+PROMPT_ERR = '{"id":"cli:agent:prompt","error":{"code":"agent_not_found","message":"agent not found"}}'
+
+
+def run_after_start(tmp_path, *, code, prompt_out=PROMPT_OK, cont=False, mark=False):
+    """起動のあとの分岐（`case "$code" in` 〜 `esac`）を、**start.sh の実物の行**で動かす（#206 のレビュー）。
+
+    `herdr` は偽物にして、呼ばれた引数をファイルに残し、`agent prompt` には `prompt_out` を返す。
+    返すのは (画面に出た言葉, herdr に渡った引数の行)。
+    """
+    lines = START.read_text(encoding="utf-8").splitlines()
+    begin = lines.index('  case "$code" in', lines.index('  mapfile -t -O 1 args < <(lead_args)'))
+    end = lines.index("  esac", begin)
+    block = "\n".join(lines[begin:end + 1])
+    funcs = "".join(
+        subprocess.run(["sed", "-n", f"/^{n}()/,/^}}/p", str(START)],
+                       capture_output=True, text=True, check=True).stdout
+        for n in ("error_of", "wants_hajime"))
+    if mark:
+        (tmp_path / ".claude" / "state").mkdir(parents=True)
+        (tmp_path / ".claude" / "state" / "作業終了").touch()
+    calls = tmp_path / "calls"
+    script = "\n".join([
+        "set -uo pipefail",
+        f'ROOT="{tmp_path}"', f'CONTINUE="{"on" if cont else "off"}"', "LEAD=lead",
+        f"code='{code}'", "out=''",
+        "say() { printf '%s\\n' \"$*\"; }",
+        "fail() { printf 'FAIL %s\\n' \"$*\"; exit 1; }",
+        f"herdr() {{ printf '%s\\n' \"$*\" >> '{calls}'; printf '%s' '{prompt_out}'; }}",
+        funcs, block,
+    ])
+    shown = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout
+    sent = calls.read_text().splitlines() if calls.exists() else []
+    return shown, sent
+
+
+def test_起動できたら始めを送り送ったと出す(tmp_path):
+    shown, sent = run_after_start(tmp_path, code="")
+    assert sent == ["agent prompt lead /始め"]
+    assert "最初に /始め を送りました" in shown
+    assert "送れませんでした" not in shown
+
+
+@pytest.mark.parametrize("prompt_out", [PROMPT_ERR, "", "not json"])
+def test_送れなかったら理由を出して止めない(tmp_path, prompt_out):
+    """lead は動いているので止めない。ただし静かに失敗させない（CLAUDE.md）。"""
+    shown, sent = run_after_start(tmp_path, code="", prompt_out=prompt_out)
+    assert sent == ["agent prompt lead /始め"]
+    assert "/始め を送れませんでした" in shown
+    assert "送りました" not in shown
+    assert "FAIL" not in shown
+    if prompt_out == PROMPT_ERR:
+        assert "agent not found" in shown
+
+
+def test_続きからで印が無ければ始めを送らない(tmp_path):
+    shown, sent = run_after_start(tmp_path, code="", cont=True, mark=False)
+    assert sent == []
+    assert "lead を起動しました" in shown
+
+
+def test_確認の画面で止まっていたら送らずに打つよう促す(tmp_path):
+    """送ると、確認の画面への答えとして入ってしまう。"""
+    shown, sent = run_after_start(tmp_path, code="agent_not_ready")
+    assert sent == []
+    assert "答えたあと、/始め を打ってください" in shown
+
+
+def test_確認の画面で止まっても続きからで印が無ければ促さない(tmp_path):
+    shown, sent = run_after_start(tmp_path, code="agent_not_ready", cont=True, mark=False)
+    assert sent == []
+    assert "確認の画面で止まっています" in shown
+    assert "/始め" not in shown
+
+
 def test_名前の付いた作業のペインにはClaudeを置かない():
     """GUIログのペインは、サーバーを立てるまで「何も動いていないシェル」に見える。
     /作業終了 を通さずに閉じた翌朝、lead がそこ（14行）で起動してしまう（#194 で見つけた）。"""
