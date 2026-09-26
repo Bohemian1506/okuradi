@@ -9,7 +9,7 @@
     mix        01_clean -> 01_mix/mix.wav           timeline.yml の bgm/se を重ねる（#85）
     transcribe 01_clean -> 02_text/transcript.json  確定版の文字起こし（喋りだけの音を使う）
     meta       02_text  -> 03_meta/meta.json        タイトル・概要欄・チャプター
-    video      01_mix   -> 04_video/epNN.mp4        静止画と合成
+    video      01_mix   -> 04_video/epNN.mp4        静止画と合成（timeline.yml が無い回は 01_clean を使う）
     upload     04_video -> YouTube（限定公開）
 
 CLI:
@@ -660,6 +660,9 @@ def step_clean(ep, cfg):
          "-ar", "48000", "-ac", "1", str(trimmed)])
     total = audio_duration(trimmed)
 
+    # **denoise（afftdn）の分も含む。** 無音を削っていなくても、フィルタの遅延で
+    # 一定量（約0.025秒・2026-09-26 に実測）縮む。トリムだけの量ではないので、
+    # ここから「トリムで削れた秒数」を正確に逆算することはできない
     head_removed = round(before - after_head, 2)
     tail_removed = round(after_head - total, 2)
     note = "（枠の回のため頭は削っていません）" if framed else ""
@@ -742,6 +745,65 @@ def _mix_overlay_chain(clip, lane, cfg):
     return filters
 
 
+# 本編の「生の長さの積み上げ」と、実際の clean.wav の長さの、許す差。
+# denoise（afftdn）だけで、フィルタの遅延ぶん一定に約0.025秒縮むと実測した
+# （2026-09-26、レビューで指摘）。その4倍ほどの余白を持たせる。
+# これを超えて食い違うのは、カット・config のエコー・（将来の #85 6段目の）
+# 編集点で、本編クリップの生の長さと clean.wav の長さの対応が崩れているとき
+MIX_POSITION_TOLERANCE = 0.1
+
+
+def _read_clean_json(ep):
+    path = ep["01_clean"] / "clean.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _clip_audio_duration(clip, path):
+    """`audio_duration` を、失敗したときにクリップの id が分かる形にして呼ぶ。
+
+    壊れたファイルだと ffprobe が空を返し、`float('')` の
+    `ValueError: could not convert string to float: ''` がそのまま出る。
+    それだけだと**どのクリップで壊れているか分からない**（レビューで指摘）。
+    """
+    try:
+        return audio_duration(path)
+    except ValueError as exc:
+        raise ValueError(
+            f"{clip['id']} の音源の長さが読めません（壊れているかもしれません）: "
+            f"{path}（{exc}）") from exc
+
+
+def _check_mix_positions(ep, main, durations):
+    """本編クリップの生の長さの積み上げが、実際の clean.wav の長さと合っているか。
+
+    合っていないと、`positions()` が出す位置と実際の音がずれる。**cut.wav が
+    あるかどうかでは判定しない**（`step_cut` は cuts が空でも毎回 cut.wav を書くので、
+    それだけで判定すると、カットを1つも使っていない回まで止まってしまう
+    ＝2026-09-26 のレビューで見つかった不具合）。
+    """
+    clean_json = _read_clean_json(ep)
+    if not clean_json or "head_removed" not in clean_json or "tail_removed" not in clean_json:
+        print("(位置が合っているか確かめられません: 01_clean/clean.json に記録がありません。"
+              "整音をやり直すと確かめられるようになります)", flush=True)
+        return
+
+    raw_total = sum(durations[clip["id"]] + clip["gap"] for clip in main)
+    expected = raw_total - clean_json["head_removed"] - clean_json["tail_removed"]
+    clean_total = audio_duration(ep["01_clean"] / "clean.wav")
+    if abs(expected - clean_total) > MIX_POSITION_TOLERANCE:
+        raise ValueError(
+            f"本編の長さが合いません（生の長さからの見積もり {hhmmss(expected)} / "
+            f"実際の clean.wav {hhmmss(clean_total)}）。カットや config.yml の "
+            "エコーで長さが変わった可能性があります。位置の変換はまだ実装していません"
+            "（#85 の6段目）。"
+        )
+
+
 def step_mix(ep, cfg):
     """整音した喋り（clean.wav）に、timeline.yml の bgm・se を重ねる。
 
@@ -775,18 +837,11 @@ def step_mix(ep, cfg):
         _write_mix_json(ep, src, dst, clean_total, [])
         return
 
-    # **カット（01_cut/cut.wav）を使った回で bgm/se があると、位置がずれる。**
-    # positions は本編クリップの「生の長さ」を積み上げて出すが、カットした回は
-    # clean.wav の中でその長さが詰まっている。黙って進むと聞こえる位置がずれるので断る
-    if (ep["01_cut"] / "cut.wav").exists():
-        raise ValueError(
-            "この回はカット（cut）を使っています。カットと BGM・SE の組み合わせは、"
-            "いまの実装では位置がずれるので対応していません（#85）。"
-        )
-
     main = data["lanes"]["main"]
-    durations = {clip["id"]: audio_duration(_clip_source_path(ep, clip, cfg))
+    durations = {clip["id"]: _clip_audio_duration(clip, _clip_source_path(ep, clip, cfg))
                  for clip in main}
+    # **位置がずれていないかは、長さで確かめる**（cut.wav の有無では判定しない。上を参照）
+    _check_mix_positions(ep, main, durations)
     positions = timeline.positions(data, durations)
 
     cmd = ["ffmpeg", "-y", "-i", str(src)]
@@ -794,19 +849,31 @@ def step_mix(ep, cfg):
     labels = ["[0:a]"]
     for index, (lane, clip) in enumerate(overlays, start=1):
         found = _clip_source_path(ep, clip, cfg)
-        clip_total = audio_duration(found)
+        clip_total = _clip_audio_duration(clip, found)
         at = positions[clip["id"]]
 
         if at > clean_total + 0.01:
             raise ValueError(
                 f"{clip['id']} の位置（{hhmmss(at)}）が番組の長さ（{hhmmss(clean_total)}）"
                 "を超えています。timeline.yml の at を見直してください")
+        # 曲（bgm）が、被さっているコーナーの終わりより先に尽きるか。
+        # **BGM だけ見る**（SE は短く鳴らして終わるものなので、対象外・レビューで指摘）。
+        # 「クリップの長さ」ではなく「at + 曲の長さ」でコーナーの終わりと比べる
+        # （曲がコーナーの途中から鳴るときは、そこからの残り時間と比べるのが正しい）
         anchor_total = durations.get(clip.get("anchor"))
-        if anchor_total is not None and clip_total < anchor_total:
-            # 止めない。番組の仕様は「曲の長さ ＞ コーナーの尺」だが、
-            # ここで止めると曲を差し替えるまで何も進められなくなる（#82・仮置き）
-            print(f"({clip['id']}: 曲（{hhmmss(clip_total)}）が錨のコーナー"
-                  f"（{hhmmss(anchor_total)}）より短いです。曲が先に終わります)", flush=True)
+        if lane == "bgm" and anchor_total is not None:
+            covers = clip.get("at", 0) + clip_total
+            if covers < anchor_total:
+                # 止めない。番組の仕様は「曲の長さ ＞ コーナーの尺」だが、
+                # ここで止めると曲を差し替えるまで何も進められなくなる（#82・仮置き）
+                print(f"({clip['id']}: 曲がコーナーの終わり（{hhmmss(anchor_total)}）より"
+                      f"{hhmmss(anchor_total - covers)}早く尽きます。曲が先に終わります)",
+                      flush=True)
+        # 曲・SE の終わりが、番組の末尾を超えて切れるか。
+        # `amix` は `duration=first` で全体の尺を保つので、超えたぶんは黙って切られる
+        if at + clip_total > clean_total + 0.05:
+            print(f"({clip['id']}: 終わり（{hhmmss(at + clip_total)}）が番組の長さ"
+                  f"（{hhmmss(clean_total)}）を超えるので、末尾が切れます)", flush=True)
 
         cmd += ["-i", str(found)]
         filters = _mix_overlay_chain(clip, lane, cfg) + [
@@ -1053,12 +1120,21 @@ def step_meta(ep, cfg):
 # ---------------------------------------------------------------- 07. 動画化
 
 def step_video(ep, cfg):
-    wav = ep["01_mix"] / "mix.wav"
-    if not wav.exists():
-        # **clean.wav を黙って使わない。** mix はいつも作られる工程なので、
-        # 無いのは「まだ実行していない」だけ（CLAUDE.md「静かに失敗させない」）
-        raise FileNotFoundError(
-            f"{wav} がありません。先にミックス（mix）を実行してください")
+    # **timeline.yml が無い回（枠でない回。ep01 など）は、mix を待たない。**
+    # 重ねる曲が無い回なので、整音の音（clean.wav）をそのまま使う（2026-09-26 のユーザーの判断）。
+    # timeline.yml がある回は、今までどおり mix.wav が無ければ止める
+    # （黙って clean.wav に切り替えない。CLAUDE.md「静かに失敗させない」）
+    if _has_timeline(ep):
+        wav = ep["01_mix"] / "mix.wav"
+        if not wav.exists():
+            raise FileNotFoundError(
+                f"{wav} がありません。先にミックス（mix）を実行してください")
+    else:
+        wav = ep["01_clean"] / "clean.wav"
+        if not wav.exists():
+            raise FileNotFoundError(
+                f"{wav} がありません。先に整音（clean）を実行してください")
+        print("(曲が無い回なので、整音の音を使います)")
     dst = ep["04_video"] / f"ep{cfg['episode']:02d}.mp4"
     total = audio_duration(wav)
 

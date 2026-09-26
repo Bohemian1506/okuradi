@@ -132,7 +132,7 @@ def artifact(ep_dir, key, cfg):
 def step_states(ep_dir, cfg):
     """7工程の状態を返す。
 
-    未実行 / 実行できる / 完了 / 古い の4つ。
+    未実行 / 実行できる / 完了 / 古い / 不要 の5つ。
     処理中・エラー・中止は工程を実行したときに決まるので、ここでは出ない（#8）。
     """
     mtimes = {}
@@ -145,19 +145,32 @@ def step_states(ep_dir, cfg):
     # （`web/timeline.py` は `episodes` を読むので、輪にならないよう関数の中で読む）
     from web import timeline          # noqa: PLC0415
     timeline_path = timeline.path(ep_dir)
-    timeline_mtime = timeline_path.stat().st_mtime if timeline_path.exists() else None
+    # **timeline.yml が無い回（枠でない回。ep01 など）は、mix が要らない。**
+    # 重ねる曲が無いので、`build.py` の `step_video` も mix を待たず clean.wav を使う
+    # （2026-09-26 のユーザーの判断）。ここも同じ条件でそろえる
+    framed = timeline_path.exists()
+    timeline_mtime = timeline_path.stat().st_mtime if framed else None
 
     states = []
     for step in STEPS:
         key = step["key"]
         mine = mtimes[key]
-        deps = DEPS[key]
+        deps = list(DEPS[key])
+        if key == "video" and not framed:
+            deps = ["clean"]          # 枠でない回は、動画化は mix を待たない
         row = {"key": key, "label": step["label"]}
         if mine is None:
-            missing = [d for d in deps if mtimes[d] is None]
-            row["state"] = "未実行" if (missing or not deps) else "実行できる"
-            if row["state"] == "未実行":
-                row["reason"] = _why_not(missing)
+            if key == "mix" and not framed:
+                # 実行はできる（強制してもよい）が、動画化はもう待っていないので
+                # 「実行できる」と紛らわしくない言い方にする
+                row["state"] = "不要"
+                row["reason"] = "この回は timeline.yml が無いので、BGM・SE を重ねません" \
+                    "（動画化は整音の音をそのまま使います）"
+            else:
+                missing = [d for d in deps if mtimes[d] is None]
+                row["state"] = "未実行" if (missing or not deps) else "実行できる"
+                if row["state"] == "未実行":
+                    row["reason"] = _why_not(missing)
         else:
             stale = any(mtimes[d] is not None and mtimes[d] > mine for d in deps)
             if key == "mix" and timeline_mtime is not None and timeline_mtime > mine:

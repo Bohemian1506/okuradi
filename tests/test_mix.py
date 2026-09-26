@@ -65,6 +65,20 @@ def timeline_yml(ep, body):
     (ep["dir"] / "timeline.yml").write_text(body, encoding="utf-8")
 
 
+def write_clean_json(ep, head_removed=0.0, tail_removed=0.0):
+    """`_check_mix_positions` が読む記録を、テストの前提に合わせて用意する。
+
+    実際に `step_clean` を通していないテストでは、この記録が無いと
+    「位置が合っているか確かめられません」という警告だけが出て終わる
+    （止まりはしない）。位置の食い違いを検知するテストでは、わざと
+    ズレた値を書く。
+    """
+    import json
+    (ep["01_clean"] / "clean.json").write_text(json.dumps({
+        "head_removed": head_removed, "tail_removed": tail_removed,
+    }), encoding="utf-8")
+
+
 @pytest.fixture
 def ep(tmp_path):
     made = {"dir": tmp_path, "name": "ep98", "root": tmp_path}
@@ -166,6 +180,7 @@ def test_mixの長さはclean_wavと1サンプルも変わらない(ep):
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
     sine(ep["00_raw"] / "bgm.wav", 3, freq=1000, amp=0.6)
     timeline_yml(ep, TWO_CORNERS.format(at=1.0))
+    write_clean_json(ep)
 
     build.step_mix(ep, CFG)
 
@@ -180,6 +195,7 @@ def test_曲は正しい位置から鳴りその位置より前は鳴らない(e
     sine(ep["01_clean"] / "clean.wav", 10, freq=100, amp=0.05)   # 喋りに見立てた小さい音
     sine(ep["00_raw"] / "bgm.wav", 3, freq=1000, amp=0.8)        # 曲。振幅を大きくして見分ける
     timeline_yml(ep, TWO_CORNERS.format(at=1.0))                  # 位置 = 4 + 1 = 5秒
+    write_clean_json(ep)
 
     build.step_mix(ep, CFG)
     mix = ep["01_mix"] / "mix.wav"
@@ -198,6 +214,7 @@ def test_位置が番組の長さを超えたら断る(ep):
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
     sine(ep["00_raw"] / "bgm.wav", 2)
     timeline_yml(ep, TWO_CORNERS.format(at=100))   # 4 + 100 = 104秒。番組は10秒しか無い
+    write_clean_json(ep)
 
     with pytest.raises(ValueError, match="番組の長さ"):
         build.step_mix(ep, CFG)
@@ -209,6 +226,7 @@ def test_曲のファイルが無ければ理由を出して断る(ep):
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
     # bgm.wav をわざと置かない
     timeline_yml(ep, TWO_CORNERS.format(at=1.0))
+    write_clean_json(ep)
 
     with pytest.raises(FileNotFoundError, match="theme の音源がありません"):
         build.step_mix(ep, CFG)
@@ -232,25 +250,107 @@ def test_曲が錨のコーナーより短ければ警告だけ出して止ま�
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
     sine(ep["00_raw"] / "bgm.wav", 1)              # talk（6秒）よりずっと短い曲
     timeline_yml(ep, TWO_CORNERS.format(at=0))
+    write_clean_json(ep)
 
     build.step_mix(ep, CFG)                         # 止まらない
 
     assert (ep["01_mix"] / "mix.wav").exists()
-    assert "短いです" in capsys.readouterr().out
+    assert "曲が先に終わります" in capsys.readouterr().out
+
+
+def test_曲が短いという警告はseには出ない(ep, capsys):
+    """レビューで指摘: 短さの警告は BGM だけ。SE は短く鳴って終わるのが普通"""
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
+    sine(ep["00_raw"] / "pin.wav", 1)               # talk（6秒）よりずっと短い SE
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - {id: op, source: op.wav, gap: 0}
+    - {id: talk, source: talk.wav, gap: 0}
+  bgm: []
+  se:
+    - {id: pin, source: pin.wav, anchor: talk, at: 0}
+""")
+    write_clean_json(ep)
+
+    build.step_mix(ep, CFG)
+
+    assert "曲が先に終わります" not in capsys.readouterr().out
+
+
+def test_曲の終わりが番組の末尾を超えると切れることをログに出す(ep, capsys):
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
+    sine(ep["00_raw"] / "bgm.wav", 8)               # at=4 だと 4+8=12秒。番組は10秒しかない
+    timeline_yml(ep, TWO_CORNERS.format(at=4))
+    write_clean_json(ep)
+
+    build.step_mix(ep, CFG)                          # 止まらない
+
+    assert (ep["01_mix"] / "mix.wav").exists()
+    assert "末尾が切れます" in capsys.readouterr().out
+
+
+def test_bgmもseもファイルが壊れているとidを含めて断る(ep):
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
+    (ep["00_raw"] / "bgm.wav").write_bytes(b"not really audio")
+    timeline_yml(ep, TWO_CORNERS.format(at=0))
+    write_clean_json(ep)
+
+    with pytest.raises(ValueError, match="theme の音源の長さが読めません"):
+        build.step_mix(ep, CFG)
 
 
 # ---------------------------------------------------------------- mix: カットとの組み合わせ
 
-def test_カットを使った回でbgmがあると断る(ep):
+def test_cutwavがあるだけでは断らない(ep):
+    """`step_cut` は cuts が空でも毎回 cut.wav を書く。**それだけで止めない**
+    （2026-09-26 のレビューで見つかった不具合。cut.wav の有無ではなく、長さで確かめる）。
+    """
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)   # 実際にカットされていない
+    sine(ep["00_raw"] / "bgm.wav", 2)
+    timeline_yml(ep, TWO_CORNERS.format(at=0))
+    (ep["01_cut"] / "cut.wav").write_bytes(b"dummy")   # cuts が空でも書かれるファイル
+    write_clean_json(ep)                                # 実際は削れていない（head=0, tail=0）
+
+    build.step_mix(ep, CFG)                             # 止まらない
+
+    assert (ep["01_mix"] / "mix.wav").exists()
+
+
+def test_本編の長さが合わなければ断る(ep):
+    """カットやエコーで本編の長さが変わっているのに、位置の変換をしていない場合。"""
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
     sine(ep["00_raw"] / "bgm.wav", 2)
     timeline_yml(ep, TWO_CORNERS.format(at=0))
-    (ep["01_cut"] / "cut.wav").write_bytes(b"dummy")   # カットを使った回、という印
+    # 生の長さ(10秒)から5秒引いた記録＝本当は5秒のはずなのに、実際は10秒のまま
+    write_clean_json(ep, head_removed=5.0, tail_removed=0.0)
 
-    with pytest.raises(ValueError, match="カット"):
+    with pytest.raises(ValueError, match="本編の長さが合いません"):
         build.step_mix(ep, CFG)
+
+
+def test_clean_jsonが無ければ確かめずに警告だけ出す(ep, capsys):
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
+    sine(ep["00_raw"] / "bgm.wav", 2)
+    timeline_yml(ep, TWO_CORNERS.format(at=0))
+    # clean.json を書かない
+
+    build.step_mix(ep, CFG)                             # 止まらない
+
+    assert (ep["01_mix"] / "mix.wav").exists()
+    assert "確かめられません" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------- mix: ラウドネスをそろえる
@@ -296,3 +396,56 @@ def test_音量カーブで下げた区間だけ音量が下がる(ep):
     dropped = rms(out, 2.5, 3.5)   # 0.25 に下げたところ
     ratio = dropped / base
     assert ratio == pytest.approx(0.25, abs=0.03)
+
+
+# ---------------------------------------------------------------- 動画化: 枠でない回は mix を待たない
+
+def make_image(path):
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                    "-i", "color=c=blue:s=64x64:d=1", "-frames:v", "1", str(path)], check=True)
+
+
+def _video_cfg(ep, episode=99):
+    (ep["dir"] / "04_video").mkdir()
+    ep["04_video"] = ep["dir"] / "04_video"
+    (ep["dir"] / "assets").mkdir()
+    make_image(ep["dir"] / "assets" / "pic.png")
+    return {**CFG, "episode": episode, "images": [{"file": "assets/pic.png", "duration": "full"}]}
+
+
+def test_枠でない回はvideoが整音の音を使う(ep, capsys):
+    """timeline.yml が無い回（ep01 のような回）は、動画化はミックスを待たない
+    （2026-09-26・ユーザーの判断）。"""
+    sine(ep["01_clean"] / "clean.wav", 2, amp=0.2)
+    cfg = _video_cfg(ep)
+    # timeline.yml を書かない・01_mix/mix.wav も作らない
+
+    build.step_video(ep, cfg)
+
+    assert (ep["04_video"] / "ep99.mp4").exists()
+    assert "曲が無い回なので、整音の音を使います" in capsys.readouterr().out
+
+
+def test_枠の回はmixが無いと理由を出して断る(ep):
+    silence(ep["00_raw"] / "op.wav", 2)
+    sine(ep["01_clean"] / "clean.wav", 2, amp=0.2)
+    timeline_yml(ep, "version: 1\nlanes:\n  main: [{id: op, source: op.wav, gap: 0}]\n"
+                     "  bgm: []\n  se: []\n")
+    cfg = _video_cfg(ep)
+    # 01_mix/mix.wav を作らない
+
+    with pytest.raises(FileNotFoundError, match="先にミックス"):
+        build.step_video(ep, cfg)
+
+
+def test_枠の回はmixがあればそれを使う(ep):
+    silence(ep["00_raw"] / "op.wav", 2)
+    sine(ep["01_clean"] / "clean.wav", 2, amp=0.2)
+    sine(ep["01_mix"] / "mix.wav", 2, amp=0.2)
+    timeline_yml(ep, "version: 1\nlanes:\n  main: [{id: op, source: op.wav, gap: 0}]\n"
+                     "  bgm: []\n  se: []\n")
+    cfg = _video_cfg(ep)
+
+    build.step_video(ep, cfg)
+
+    assert (ep["04_video"] / "ep99.mp4").exists()

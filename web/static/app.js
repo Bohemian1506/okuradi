@@ -8,6 +8,7 @@ const STATE_CLASS = {
   "実行できる": "is-ready",
   "完了": "is-done",
   "古い": "is-stale",
+  "不要": "is-skip",   // timeline.yml が無い回のミックス（要らないが、実行はできる）
 };
 
 // 工程がどの画面にあるか（docs/components.md の画面の割り当て）
@@ -205,6 +206,8 @@ function renderSteps() {
     return;
   }
   $("tabs-episode").textContent = state.selected.name;
+  // 工程の数が変わっても、列の幅と目盛りの数を CSS 側で書き換えずに済むように
+  box.style.setProperty("--step-count", steps.length);
 
   steps.forEach((step, index) => {
     const button = el("button", `step ${STATE_CLASS[step.state]}`);
@@ -312,8 +315,9 @@ function screenRecording() {
     "前後の無音を切り、音量をそろえ、エコーをかける。聴いて確かめる1つ目の確認ポイント。",
     cleanCard(), stepOf("clean")));
 
-  box.appendChild(section(5, "ミックスして聴く",
+  box.appendChild(section(5, "ミックス（曲を重ねる）して聴く",
     "整音した喋りに、timeline.yml の BGM・SE を重ねる。無ければ喋りだけの音のまま。"
+    + "重ねた曲の大きさ・位置が合っているかを聴いて確かめる。"
     + "BGM・SE を画面で置く・音量カーブを描く部品はこのあと足す（いまは timeline.yml を直に書く）。",
     mixCard(), stepOf("mix")));
 
@@ -349,7 +353,8 @@ function screenFinishing() {
     metaCard(), stepOf("meta"), metaSave()));
 
   box.appendChild(section(3, "動画を確かめる",
-    "背景画像と整音後の音声で mp4 を作る。これを YouTube に上げます。",
+    "背景画像と音声で mp4 を作る。BGM・SE を重ねた回はミックスの音、"
+    + "重ねていない回は整音の音をそのまま使う。これを YouTube に上げます。",
     videoCard(), stepOf("video")));
 
   box.appendChild(section(4, "コピーして YouTube に貼る",
@@ -1171,6 +1176,16 @@ function cleanPlayer(result) {
 function mixCard() {
   const card = el("div", "panel-card");
   const result = state.mix || { state: "未実行" };
+  const step = stepOf("mix");
+
+  // timeline.yml が無い回は、ミックスが要らない（動画化は整音の音をそのまま使う）。
+  // まだ実行していなくても、それが分かるようにする（2026-09-26 のレビューで指摘）
+  if (step && step.state === "不要" && result.state === "未実行") {
+    card.appendChild(el("div", "result-empty",
+      "この回は timeline.yml が無いので、BGM・SE を重ねません。"
+      + "動画化は整音の音（clean.wav）をそのまま使います（実行してもかまいません）。"));
+    return card;
+  }
 
   const banner = jobBanner("mix", "ミックス");
   if (banner) { card.appendChild(banner); if (result.state === "未実行") return card; }
@@ -1181,8 +1196,7 @@ function mixCard() {
     return card;
   }
 
-  const step = stepOf("mix");
-  const stale = !!(step && step.state === "古い");
+  const stale = result.state === "古い";
   if (stale) card.classList.add("is-stale");
 
   const box = el("div", "result");
@@ -1199,6 +1213,12 @@ function mixCard() {
     top.appendChild(redo);
   }
   box.appendChild(top);
+  if (stale) {
+    const why = el("div", "result-stale");
+    why.append(el("span", "mark", "!"), el("span", null,
+      `${result.stale_reason}。ミックスをやり直すまで、次の工程には前の結果が使われます。`));
+    box.appendChild(why);
+  }
   box.appendChild(mixPlayer(result));
   card.appendChild(box);
   return card;
@@ -2697,6 +2717,9 @@ function runRow(step) {
     look = "is-done"; label = "やり直す"; mark = SVG.redo;
   } else if (step.state === "古い") {
     note = "前の工程をやり直したので、作り直しが要ります";
+  } else if (step.state === "不要") {
+    // 「未実行」と違って押せない理由ではないので、ボタンは止めない（実行してもよい）
+    look = "is-skip"; note = step.reason || "";
   }
 
   const button = el("button", `btn-run ${look}`);

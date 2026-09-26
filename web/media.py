@@ -411,8 +411,10 @@ def confirm_clean(name):
 def mix_result(name):
     """ミックス（BGM・SE を重ねる）の結果。見た目は最低限（#85 の4段目）。
 
-    「古い」かどうかは `episodes.step_states` がすでに持っている
-    （画面は `stepOf("mix")` を見る）。ここでは事実（長さ・本数）だけを返す。
+    「古い」の理由は、`video_view` と同じ出し方にそろえる（レビューで指摘）。
+    整音をやり直した／timeline.yml を直した、を分けて言う。
+    「不要」（timeline.yml が無い回で、まだ実行していない）は
+    `episodes.step_states` の側が持つ（画面は `stepOf("mix")` を見る）。
     """
     ep_dir = episodes.resolve(name)
     mix = ep_dir / "01_mix" / "mix.wav"
@@ -426,13 +428,31 @@ def mix_result(name):
             detail = json.loads(info.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             detail = {}
+
+    stale = _why_mix_stale(ep_dir, mix)
     return {
-        "state": "表示",
+        "state": "古い" if stale else "完了",
+        "stale_reason": stale,
         "duration": detail.get("duration"),
         "bgm": detail.get("bgm", 0),
         "se": detail.get("se", 0),
         "at": int(mix.stat().st_mtime),   # 作り直したら波形/音を読み直させる
     }
+
+
+def _why_mix_stale(ep_dir, mix):
+    """ミックスの作り直しが要るなら、その理由を返す。要らなければ None。
+
+    2つのもとを見る。**先に整音（クリップの中身）、次に timeline.yml（並び・BGM・SE・
+    音量カーブ）の順**で見る。両方古くても、理由は1つにそろえる（`video_view` と同じ形）。
+    """
+    clean = ep_dir / "01_clean" / "clean.wav"
+    if clean.exists() and clean.stat().st_mtime > mix.stat().st_mtime:
+        return "整音をやり直しました"
+    tl_path = timeline.path(ep_dir)
+    if tl_path.exists() and tl_path.stat().st_mtime > mix.stat().st_mtime:
+        return "timeline.yml を直しました"
+    return None
 
 
 # ---------------------------------------------------------------- 確定版の文字起こし
@@ -719,11 +739,16 @@ def video_view(name):
     if not path.exists():
         return {"state": "未実行"}
     seconds = duration_of(path)
-    # ミックスをやり直したら動画も作り直し（step_video は mix.wav から作る。#85）
-    mix = ep_dir / "01_mix" / "mix.wav"
-    stale = None
-    if mix.exists() and mix.stat().st_mtime > path.stat().st_mtime:
-        stale = "ミックスをやり直しました"
+    # **timeline.yml が無い回（枠でない回）は、`build.py` の `step_video` が
+    # mix ではなく clean.wav を使う**（2026-09-26 のユーザーの判断）。
+    # ここも同じ音を見ないと、「古い」の理由が実態と食い違う
+    if timeline.path(ep_dir).exists():
+        source = ep_dir / "01_mix" / "mix.wav"
+        reason = "ミックスをやり直しました"
+    else:
+        source = ep_dir / "01_clean" / "clean.wav"
+        reason = "整音をやり直しました"
+    stale = reason if source.exists() and source.stat().st_mtime > path.stat().st_mtime else None
     poster, poster_error = make_poster(ep_dir)
     return {
         "state": "古い" if stale else "完了",
