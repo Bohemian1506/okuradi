@@ -72,7 +72,7 @@ okuradi/
 │   ├── chat.py           # この回について Claude に相談する
 │   ├── memo.py           # 会話から改善メモを作り、Issueに登録する
 │   └── static/           # index.html / style.css / app.js
-│       └── vendor/       # wavesurfer.js（波形）。CDNからは読まない。README あり
+│       └── vendor/       # wavesurfer.js（波形）と wavesurfer-multitrack（タイムライン）。CDNからは読まない。README あり
 ├── settings.yml          # OBSの録画フォルダなど（git管理外。GUIの画面から作れる）
 ├── tests/
 ├── docs/design/          # 画面のデザインの見本（Claude Design から取り込み）
