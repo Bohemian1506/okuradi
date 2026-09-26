@@ -30,6 +30,7 @@ clone し直したら `git config core.hooksPath .githooks` を実行する（`.
   - 中間ファイルを全工程で残す（1か所で失敗しても最初からやり直さずに済む）
   - 無音の自動カットはしない（喋りの「間」を残す）
   - Claude は `claude -p` から呼ぶ（サブスクの枠で動かし、API キーの従量課金にしない）
+    - モデルは Sonnet（`build.py` の `call_claude`）。2026-09-26 に Opus への変更を検討し、見送った。特に変える理由がないため。理由ができれば変える（#204）
   - **GUI が完成するまでも、コマンド（`python build.py ep01 ...`）で番組を作れる状態を保つ**。GUI で使わない `cut`・`upload` の工程も消さない
   - **試すときは一時フォルダに向ける。本物の `ep*/` と `settings.yml` に書かない**（lead・Herdr で増やした Claude も。やり方は `docs/testing.md`。Claude から起動すると build.py が止まる。#221）
   - 将来の拡張（表情差分・BGM・コーナー制）を塞がない。画像の並びや `segments` は配列のまま扱う（README の設計メモ）
