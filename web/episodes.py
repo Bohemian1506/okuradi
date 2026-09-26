@@ -208,8 +208,10 @@ def summary(ep_dir, cfg):
         "episode": episode_number(cfg, ep_dir),
         "theme": "／".join(segment_label(cfg, s) for s in segments) or "（テーマ未設定）",
         "steps": states,
+        # **「不要」の工程は数えない。** 枠でない回の mix は要らないので、数に入れると
+        # 全部終わっても「6/7」のまま、未完了に見え続ける（#224 のレビュー）
         "done": sum(1 for s in states if s["state"] == "完了"),
-        "total": len(states),
+        "total": sum(1 for s in states if s["state"] != "不要"),
     }
 
 

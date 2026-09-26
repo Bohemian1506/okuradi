@@ -85,6 +85,15 @@ def test_全部そろえば全部完了(tmp_path):
     assert set(states(ep_dir).values()) == {"完了"}
 
 
+def test_枠でない回はミックスが無くても全部終われば数がそろう(tmp_path):
+    """mix が「不要」の回は、全体の数からも外す。外さないと、全部終わっても 6/7 のまま（#224）。"""
+    files = [f for f in ALL_FILES if not f.startswith("01_mix/")]
+    ep_dir = make_episode(tmp_path, files=files)
+    data = episodes.summary(ep_dir, episodes.read_config(ep_dir))
+    assert states(ep_dir)["mix"] == "不要"
+    assert data["done"] == data["total"] == 6
+
+
 def timeline_yml(ep_dir, body="version: 1\nlanes: {main: [], bgm: [], se: []}\n"):
     (ep_dir / "timeline.yml").write_text(body, encoding="utf-8")
 
