@@ -122,6 +122,18 @@ AUDIO_EXTS = [".wav", ".m4a"]
 JOINED = "joined.wav"
 
 
+def _raw_listing(raw_dir):
+    """00_raw の中の、仮のファイル（`.` で始まる名前）を除いたファイル一覧。
+
+    `web/sources.py` の `_place_raw` が書き込み中に使う一時ファイル（`.tmp-...`）が
+    ここに混ざると、枠が1つしか埋まっていない間でも `_refuse_ambiguous` が
+    「音源が2本あります」と誤って断ってしまう（#216 のレビュー）。
+    """
+    if not raw_dir.is_dir():
+        return []
+    return [f for f in raw_dir.iterdir() if f.is_file() and not f.name.startswith(".")]
+
+
 def _timeline_sources(ep):
     """timeline.yml が並べている本編の音源を返す。無ければ None。
 
@@ -148,12 +160,36 @@ def _timeline_sources(ep):
     return main
 
 
-def join_sources(ep, clips):
+def _track_wav(video, cfg):
+    """録画から音声トラックを取り出した wav を返す。無ければ作る。
+
+    使うトラックは `config.yml` の `audio.source_track`（既定 0）。
+    OBS はマイクとデスクトップ音声を別トラックにできるので、選べるようにしている。
+    **`find_raw`（録画1本）と `join_sources`（録画が複数並ぶとき）の両方から呼ぶ。**
+    決め方を1か所にまとめないと、片方だけ直して食い違う（#85）。
+    """
+    track = ((cfg or {}).get("audio") or {}).get("source_track", 0)
+    dst = video.with_name(f"{video.stem}.track{track}.wav")
+    if not dst.exists() or dst.stat().st_mtime < video.stat().st_mtime:
+        run(["ffmpeg", "-y", "-i", str(video), "-map", f"0:a:{track}", "-vn",
+             "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)])
+        print(f"-> {dst}  (録画から音声を取り出しました)")
+    # **取り出し直さないときも、どのトラックを使ったかを毎回出す。** 番号を前の値に戻すと、
+    # 古い wav をそのまま使い、繋ぎ直されないことがある（#214）。ログで気づけるように
+    print(f"   {video.name}: トラック {track} を使います（config.yml の audio.source_track）")
+    return dst
+
+
+def join_sources(ep, clips, cfg=None):
     """timeline.yml の並びどおりに音源を繋いで1本にする。
 
     **形式は必ずそろえてから繋ぐ。** 合っているかを判定して分岐しない。
     24kHz の音を 48kHz として繋ぐと、ffmpeg は何も言わずに倍速・1オクターブ上の音を作る
     （2026-09-22 に実測）。判定を間違えると気づけない壊れ方なので、常にそろえる。
+
+    並んでいる音源が録画（`VIDEO_EXTS`）のときは、`find_raw` と同じ決まりで
+    音声トラックを選ぶ（`_track_wav`）。ここで見ないと、録画1本のときと
+    2本以上のときでトラックの選び方が食い違う（#85）。
     """
     raw_dir = ep["00_raw"]
     dst = raw_dir / JOINED
@@ -162,6 +198,8 @@ def join_sources(ep, clips):
         found = raw_dir / Path(clip["source"]).name
         if not found.exists():
             raise FileNotFoundError(f"{clip['id']} の音源がありません: {found}")
+        if found.suffix.lower() in VIDEO_EXTS:
+            found = _track_wav(found, cfg)
         parts.append(found)
 
     # **timeline.yml 自身の更新日時も見る。** 音源のファイルだけ見ていると、
@@ -219,21 +257,13 @@ def find_raw(ep, cfg=None):
     """
     clips = _timeline_sources(ep)
     if clips:
-        return join_sources(ep, clips)
+        return join_sources(ep, clips, cfg)
 
     raw_dir = ep["00_raw"]
     _refuse_ambiguous(raw_dir)
-    videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
+    videos = sorted(f for f in _raw_listing(raw_dir) if f.suffix.lower() in VIDEO_EXTS)
     if videos:
-        # OBS はマイクとデスクトップ音声を別トラックにできるので、使うトラックを選べるようにする
-        track = ((cfg or {}).get("audio") or {}).get("source_track", 0)
-        src = videos[0]
-        dst = src.with_name(f"{src.stem}.track{track}.wav")
-        if not dst.exists() or dst.stat().st_mtime < src.stat().st_mtime:
-            run(["ffmpeg", "-y", "-i", str(src), "-map", f"0:a:{track}", "-vn",
-                 "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)])
-            print(f"-> {dst}  (録画から音声を取り出しました)")
-        return dst
+        return _track_wav(videos[0], cfg)
 
     files = [f for f in audio_files(raw_dir) if f.name != JOINED]
     if not files:
@@ -248,10 +278,7 @@ def audio_files(raw_dir):
     録画側は `suffix.lower()` で吸収しているのに、音声側だけ吸収していなかった。
     そのせいで **2本あるのに1本しか見えない**ことがあった（2026-09-22 のレビューで再現）。
     """
-    if not raw_dir.is_dir():
-        return []
-    return sorted((f for f in raw_dir.iterdir()
-                   if f.is_file() and f.suffix.lower() in AUDIO_EXTS),
+    return sorted((f for f in _raw_listing(raw_dir) if f.suffix.lower() in AUDIO_EXTS),
                   key=lambda f: f.name)
 
 
@@ -262,9 +289,7 @@ def source_candidates(raw_dir):
       - `録画名.trackN.wav`（録画から取り出したもの。`find_raw` が作る）
       - `joined.wav`（繋いだもの）
     """
-    if not raw_dir.is_dir():
-        return []
-    videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
+    videos = sorted(f for f in _raw_listing(raw_dir) if f.suffix.lower() in VIDEO_EXTS)
     stems = {v.stem for v in videos}
     others = []
     for found in audio_files(raw_dir):

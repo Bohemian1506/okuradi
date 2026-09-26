@@ -154,6 +154,34 @@ def post_source_from_obs(name: str, body: FromObs):
     return _guard(sources.add_from_obs, name, body.file)
 
 
+# ---------------------------------------------------------------- コーナーの枠（#85 の3段目）
+
+
+@app.get("/api/episodes/{name}/frames")
+def get_frames(name: str):
+    return _guard(sources.frames_view, name)
+
+
+@app.post("/api/episodes/{name}/frames/{frame_id}")
+async def post_frame(name: str, frame_id: str, file: UploadFile = File(...)):
+    return _guard(sources.add_frame_from_upload, name, frame_id, file.filename, file.file)
+
+
+@app.post("/api/episodes/{name}/frames/{frame_id}/from-obs")
+def post_frame_from_obs(name: str, frame_id: str, body: FromObs):
+    return _guard(sources.add_frame_from_obs, name, frame_id, body.file)
+
+
+@app.delete("/api/episodes/{name}/frames/{frame_id}")
+def delete_frame(name: str, frame_id: str):
+    return _guard(sources.remove_frame, name, frame_id)
+
+
+@app.delete("/api/episodes/{name}/orphans/{orphan_id}")
+def delete_orphan(name: str, orphan_id: str):
+    return _guard(sources.remove_orphan, name, orphan_id)
+
+
 @app.get("/api/episodes/{name}/scan")
 def get_scan(name: str):
     return _guard(media.read_scan, name)
