@@ -665,3 +665,60 @@ def test_ペインの一覧が取れなければ触らない(sub, tmp_path):
     assert proc.returncode == 0
     assert "取れなかった" in proc.stdout
     assert not [c for c in calls if c.split()[:2] in (["pane", "split"], ["pane", "close"], ["pane", "run"])]
+
+
+# ---------------------------------------------------------------- 本物の作業フォルダ（#221）
+
+REAL = "block-real-workspace.py"
+BUILD = ".venv/bin/python " + "build.py"
+SERVER = ".venv/bin/python -m " + "uvicorn web.main:app"
+ENVSET = "OKURADI_EPISODES_DIR=/tmp/x "
+URL = "http://127.0.0.1:" + "8000"
+
+
+@pytest.mark.parametrize("command", [
+    f"{BUILD} ep01 --from clean --to clean",
+    f"python3 {'build.py'} ep01 --to scan",
+    f"cd /home/x && {BUILD} ep01",
+    f"{SERVER} --port 8123",
+    "uvicorn " + "web.main:app --reload",
+    "streamlit " + "run app.py",
+    f"OKURADI_SETTINGS=/tmp/x/s.yml {BUILD} ep01",     # 回の場所を付けていない
+    f"OKURADI_EPISODES_DIR= {BUILD} ep01",              # 空
+    f"curl -s -X PUT {URL}/api/settings -d '{{}}'",
+    f"curl -s {URL}/api/episodes/ep01/steps/mix/run -X POST",
+    f"curl -sS --data '{{}}' {URL}/api/settings",
+    f"curl -s -F f=@a.wav {URL}/api/episodes/ep01/source",
+    f"curl -s --request DELETE {URL}/api/episodes/ep01/chat",
+])
+def test_本物の作業フォルダで試すのは止める(command):
+    assert run(REAL, command)
+
+
+@pytest.mark.parametrize("command", [
+    f"{ENVSET}{BUILD} ep01 --from clean --to clean",
+    f"{ENVSET}OKURADI_SETTINGS=/tmp/x/s.yml {SERVER} --port 8123",
+    f'OKURADI_EPISODES_DIR="$TMP" {BUILD} ep01',
+    f"export OKURADI_EPISODES_DIR=/tmp/x && {BUILD} ep01",
+    f"env OKURADI_EPISODES_DIR=/tmp/x {BUILD} ep01",
+    f"git diff {'build.py'}",                          # 読むだけ
+    f"sed -n 1,20p {'build.py'}",
+    f"grep -n step_mix {'build.py'}",
+    ".venv/bin/python -m pytest -q",
+    f"curl -s {URL}/api/episodes",                      # 読むだけ
+    f"curl -fsS -o /dev/null {URL}/",                   # -f は読むだけ
+    f"curl -s -X PUT http://127.0.0.1:8123/api/settings -d '{{}}'",   # 一時フォルダに向けた別の番号
+    f"git commit -F - <<'EOF'\n{BUILD} ep01 を直す\nEOF",              # 説明文の中の文字列
+])
+def test_一時フォルダに向けたものと読むだけのものは通す(command):
+    assert not run(REAL, command)
+
+
+def test_区切り語が来ないヒアドキュメントでも本物の起動は止める():
+    assert run(REAL, f"cat <<EOF\n{BUILD} ep01")
+
+
+def test_入力が読めないときは止める():
+    proc = subprocess.run([str(HOOKS / REAL)], input="{壊れた", capture_output=True, text=True,
+                          env={"PATH": "/usr/bin:/bin"})
+    assert proc.returncode != 0
