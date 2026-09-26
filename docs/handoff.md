@@ -15,7 +15,7 @@
 - **番組のリポジトリは別。** [r-hoso](https://github.com/Bohemian1506/r-hoso)（非公開、`~/workspace/r-hoso`）
 - **hook が6つ**（`main` への push を止める / `git reset --hard` を止める / 始まるときの状態出し /
   マージしたら議事録を知らせる / 起動したら `/始め` を促す / **直した所の差分を「変更」のペインに書く**）
-- 波形は wavesurfer.js 7.8.6。**`wavesurfer-multitrack` を採ると決めたが、まだ置いていない**（#87・置くのは #85 のとき）
+- 波形は wavesurfer.js 7.8.6。**`wavesurfer-multitrack` 0.4.12 も `vendor/` に置いた**（#85 の1段目・2026-09-26）。**本体が2つ同居する（案A・ユーザーの判断）**。まだ画面からは読み込んでいない
 - 回のデータは `ep01`（**試験用**）だけ。**`config.yml`（人が書く）と `timeline.yml`（画面が書く）の2つ**を git で管理する
 
 ### 番組の日程（いちばん大事）
