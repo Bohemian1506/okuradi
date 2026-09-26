@@ -673,6 +673,7 @@ def test_ペインの一覧が取れなければ触らない(sub, tmp_path):
 
 REAL = "block-real-workspace.py"
 WORD = "OKURADI_" + "REAL"
+MARK = "CLAUDE" + "CODE"
 BUILD = ".venv/bin/python " + "build.py"
 URL = "http://127.0.0.1:" + "8000"
 
@@ -696,6 +697,17 @@ URL = "http://127.0.0.1:" + "8000"
     f"wget --method=PUT {URL}/api/settings",
     f"wget --post-data=x {URL}/api/settings",
     f"python3 - <<'EOF'\nimport urllib.request as u\nu.urlopen(u.Request('{URL}/api/settings', method='PUT'))\nEOF",
+    # 起動の守りが見る印を外す（#228 の3回目のレビュー）
+    f"env -u {MARK} {BUILD} ep01 --to scan",
+    f"unset {MARK}; {BUILD} ep01",
+    f"bash -c 'unset {MARK}; {BUILD} ep01'",
+    f"env -i PATH=/usr/bin {BUILD} ep01",
+    f"env --ignore-environment {BUILD} ep01",
+    # 8000番の書き方の違い（curl が本当に 8000 番へ繋ぐことは確かめてある）
+    "curl -s -X PUT http://127.0.0.1:0" + "8000/api/settings",
+    "curl -s -X PUT http://127.1:" + "8000/api/settings",
+    "curl -s -X PUT http://2130706433:" + "8000/api/settings",
+    "HOST=127.0.0.1; PORT=" + "8000; curl -s -X PUT http://$HOST:$PORT/api/settings",
 ])
 def test_本物に届く道は止める(command):
     assert run(REAL, command)
@@ -712,6 +724,10 @@ def test_本物に届く道は止める(command):
     f"curl -s -D - {URL}/",                             # -D はヘッダを書き出すだけ
     f"curl -s -X PUT http://127.0.0.1:8123/api/settings -d '{{}}'",   # 別の番号（一時フォルダのサーバー）
     f"git commit -F - <<'EOF'\n{WORD}=1 を足した\nEOF",               # 説明文（Bash が実行しない）
+    f"git commit -F - <<'EOF'\n{MARK} を見る守り\nEOF",
+    "curl -s http://127.1:" + "8000/api/episodes",       # 別表記でも、読むだけは通す
+    "HOST=x; PORT=" + "8123; curl -s -X PUT http://$HOST:$PORT/api/settings",
+    "env PATH=/usr/bin ls",                               # env -i でない env
 ])
 def test_それ以外は通す(command):
     assert not run(REAL, command)
