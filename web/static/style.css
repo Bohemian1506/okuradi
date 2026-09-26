@@ -135,6 +135,7 @@ button, input, select, textarea { font-family: inherit; }
 .dot.is-ready { background: var(--accent); }
 .dot.is-done { background: var(--dot-done); }
 .dot.is-stale { background: var(--stale); }
+.dot.is-skip { border: 1.5px dashed var(--rule-strong); }
 
 .episode.is-broken { opacity: .75; cursor: not-allowed; }
 .episode-error {
@@ -201,7 +202,9 @@ button, input, select, textarea { font-family: inherit; }
 
 .steps {
   position: relative; flex: 1;
-  display: grid; grid-template-columns: repeat(6, 1fr);
+  /* 工程の数は app.js の renderSteps() が --step-count に入れる。
+     JS が動く前の初期表示だけ 7（2026-09-26 時点の工程数）で決め打ち */
+  display: grid; grid-template-columns: repeat(var(--step-count, 7), 1fr);
   padding-bottom: 14px; border-bottom: 2px solid var(--ink);
 }
 
@@ -219,6 +222,7 @@ button, input, select, textarea { font-family: inherit; }
 .step.is-ready .step-state { color: var(--accent-text); }
 .step.is-done .step-state { color: var(--done-text); }
 .step.is-stale .step-state { color: var(--stale-text); }
+.step.is-skip { color: var(--muted); }   /* 要らない工程（timeline.yml が無い回のミックス） */
 
 /* チューニング目盛りと、今いる工程を指す針 */
 .ticks-fine, .ticks-coarse, .needle { position: absolute; bottom: -2px; }
@@ -228,7 +232,9 @@ button, input, select, textarea { font-family: inherit; }
 }
 .ticks-coarse {
   left: 0; right: 0; height: 10px;
-  background: repeating-linear-gradient(90deg, var(--ink) 0 1.5px, transparent 1.5px calc(100% / 6));
+  /* .steps と同じ --step-count を使う（inherit で下りてくる） */
+  background: repeating-linear-gradient(90deg, var(--ink) 0 1.5px,
+    transparent 1.5px calc(100% / var(--step-count, 7)));
 }
 .needle {
   bottom: -10px; width: 2px; height: 60px;
@@ -1135,6 +1141,10 @@ select.field { font-weight: 500; }
   background: var(--cream); color: oklch(0.5 0.2 25);
   border: 2px solid oklch(0.55 0.2 25);
 }
+.btn-run.is-skip {
+  background: var(--cream); color: var(--muted); border: 1.5px dashed var(--rule-strong);
+}
+.btn-run.is-skip:hover { border-color: var(--ink); }
 .btn-run .elapsed { font: 13px var(--mono); color: var(--muted); margin-left: 2px; }
 
 /* ---------------------------------------------------------------- 部品5 処理状況バーとログ */

@@ -26,7 +26,7 @@ CONFIG = {
 def make_episode(root, number=1, files=(), config=None):
     """回のディレクトリを作る。files は新しい順ではなく、渡した順に古い→新しいで作る。"""
     ep_dir = root / f"ep{number:02d}"
-    for sub in ["00_raw", "01_cut", "01_clean", "02_text", "03_meta", "04_video"]:
+    for sub in ["00_raw", "01_cut", "01_clean", "01_mix", "02_text", "03_meta", "04_video"]:
         (ep_dir / sub).mkdir(parents=True, exist_ok=True)
     cfg = dict(config or CONFIG)
     cfg["episode"] = number
@@ -45,6 +45,7 @@ ALL_FILES = [
     "00_raw/rec.wav",
     "02_text/scan.json",
     "01_clean/clean.wav",
+    "01_mix/mix.wav",
     "02_text/transcript.json",
     "03_meta/meta.json",
     "04_video/ep01.mp4",
@@ -59,9 +60,11 @@ def states(ep_dir):
 # ---------------------------------------------------------------- 工程の状態
 
 def test_音源が無ければ全部未実行(tmp_path):
+    """`make_episode` は timeline.yml を書かないので、枠でない回になる。
+    ミックスは「未実行」ではなく「不要」（この回は BGM・SE を重ねないため）。"""
     ep_dir = make_episode(tmp_path)
     assert states(ep_dir) == {
-        "source": "未実行", "scan": "未実行", "clean": "未実行",
+        "source": "未実行", "scan": "未実行", "clean": "未実行", "mix": "不要",
         "transcribe": "未実行", "meta": "未実行", "video": "未実行",
     }
 
@@ -72,7 +75,8 @@ def test_音源を置くと下見と整音が実行できるになる(tmp_path):
     assert got["source"] == "完了"
     assert got["scan"] == "実行できる"
     assert got["clean"] == "実行できる"
-    # 整音が済んでいないので、その先はまだ実行できない
+    # 枠でない回なので、ミックスは「不要」（timeline.yml が無い）
+    assert got["mix"] == "不要"
     assert got["transcribe"] == "未実行"
 
 
@@ -81,24 +85,108 @@ def test_全部そろえば全部完了(tmp_path):
     assert set(states(ep_dir).values()) == {"完了"}
 
 
-def test_整音をやり直すと文字起こしと動画が古いになる(tmp_path):
+def test_枠でない回はミックスが無くても全部終われば数がそろう(tmp_path):
+    """mix が「不要」の回は、全体の数からも外す。外さないと、全部終わっても 6/7 のまま（#224）。"""
+    files = [f for f in ALL_FILES if not f.startswith("01_mix/")]
+    ep_dir = make_episode(tmp_path, files=files)
+    data = episodes.summary(ep_dir, episodes.read_config(ep_dir))
+    assert states(ep_dir)["mix"] == "不要"
+    assert data["done"] == data["total"] == 6
+
+
+def timeline_yml(ep_dir, body="version: 1\nlanes: {main: [], bgm: [], se: []}\n"):
+    (ep_dir / "timeline.yml").write_text(body, encoding="utf-8")
+
+
+def test_整音をやり直すとミックスと文字起こしが古いになる_枠でない回(tmp_path):
+    """枠でない回（timeline.yml が無い）は、動画化がミックスを待たない
+    （2026-09-26・ユーザーの判断）。`video` は直接 `clean` から作る」ことになるので、
+    `clean` を触っただけで `video` も「古い」になる。
+    """
     ep_dir = make_episode(tmp_path, files=ALL_FILES)
     clean = ep_dir / "01_clean" / "clean.wav"
     os.utime(clean, (time.time(), time.time()))
 
     got = states(ep_dir)
     assert got["clean"] == "完了"
-    assert got["transcribe"] == "古い"   # 整音から作るので作り直しが要る
-    assert got["video"] == "古い"        # 整音とメタデータから作る
+    assert got["mix"] == "古い"          # ミックスは整音から作る
+    assert got["transcribe"] == "古い"   # 文字起こしも整音から作る（喋りだけの音を使うため）
+    assert got["video"] == "古い"        # 枠でない回は、動画も整音から直接作るため
     assert got["meta"] == "完了"         # メタデータは文字起こしから作るので、直接は影響しない
     assert got["scan"] == "完了"         # 下見は音源から作るので、影響しない
+
+
+def test_整音をやり直すとミックスと文字起こしが古いになる_枠の回(tmp_path):
+    """枠の回（timeline.yml がある）は、動画化はミックスからしか作らない。
+    `clean` を触っただけでは `video` は「古い」にならない
+    （`mix` を作り直すまでは、そちらが「古い」を持つ）。
+    """
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_yml(ep_dir)
+    clean = ep_dir / "01_clean" / "clean.wav"
+    os.utime(clean, (time.time(), time.time()))
+
+    got = states(ep_dir)
+    assert got["clean"] == "完了"
+    assert got["mix"] == "古い"
+    assert got["transcribe"] == "古い"
+    assert got["video"] == "完了"        # 動画はミックスから作る。まだミックスは触っていない
+    assert got["meta"] == "完了"
+    assert got["scan"] == "完了"
+
+
+def test_ミックスをやり直すと動画が古いになる_枠の回(tmp_path):
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_yml(ep_dir)
+    mix = ep_dir / "01_mix" / "mix.wav"
+    os.utime(mix, (time.time(), time.time()))
+
+    got = states(ep_dir)
+    assert got["mix"] == "完了"
+    assert got["video"] == "古い"
+    assert got["clean"] == "完了"        # 整音はミックスの元なので、影響しない
+
+
+def test_ミックスをやり直しても枠でない回の動画は古くならない(tmp_path):
+    """枠でない回は、動画化がミックスを見ない（clean.wav を直接使うため）。"""
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    mix = ep_dir / "01_mix" / "mix.wav"
+    os.utime(mix, (time.time(), time.time()))
+
+    got = states(ep_dir)
+    assert got["mix"] == "完了"
+    assert got["video"] == "完了"
+
+
+def test_枠の回はミックスが不要にならない(tmp_path):
+    """timeline.yml がある回は、実行していなくても「未実行」のまま
+    （「不要」になるのは、timeline.yml が無い回だけ）。"""
+    ep_dir = make_episode(tmp_path, files=["00_raw/rec.wav", "01_clean/clean.wav"])
+    timeline_yml(ep_dir)
+
+    got = states(ep_dir)
+    assert got["mix"] == "実行できる"
+
+
+def test_timelineを変えるとミックスが古いになる(tmp_path):
+    """timeline.yml は工程の成果物ではないので、mtimes には出てこない。別に見る。"""
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    (ep_dir / "timeline.yml").write_text("version: 1\nlanes: {main: [], bgm: [], se: []}\n",
+                                          encoding="utf-8")
+    os.utime(ep_dir / "timeline.yml", (time.time(), time.time()))
+
+    got = states(ep_dir)
+    assert got["mix"] == "古い"
+    assert got["clean"] == "完了"        # 整音は timeline.yml を読まないので、影響しない
 
 
 def test_進み具合は完了の数だけ数える(tmp_path):
     ep_dir = make_episode(tmp_path, files=ALL_FILES)
     os.utime(ep_dir / "01_clean" / "clean.wav", (time.time(), time.time()))
     data = episodes.summary(ep_dir, episodes.read_config(ep_dir))
-    assert (data["done"], data["total"]) == (4, 6)
+    # 枠でない回なので、整音をやり直すと、ミックス・文字起こし・動画の3つが
+    # 「古い」になる（7工程中4つ完了）
+    assert (data["done"], data["total"]) == (4, 7)
 
 
 def test_動画は回の番号のファイル名で探す(tmp_path):

@@ -10,7 +10,7 @@ from web import episodes, media
 @pytest.fixture
 def ep(tmp_path, monkeypatch):
     ep_dir = tmp_path / "ep01"
-    for sub in ["00_raw", "01_clean", "02_text", "03_meta", "04_video"]:
+    for sub in ["00_raw", "01_clean", "01_mix", "02_text", "03_meta", "04_video"]:
         (ep_dir / sub).mkdir(parents=True)
     monkeypatch.setattr(episodes, "resolve", lambda name, root=None: ep_dir)
     return ep_dir
@@ -656,31 +656,36 @@ def test_GUI_で使わない工程のログは断る(ep):
 
 # ---------------------------------------------------------------- 動画の「古い」
 
-def test_整音をやり直すと動画が古いになる(ep, monkeypatch):
+def test_ミックスをやり直すと動画が古いになる_枠の回(ep, monkeypatch):
+    """timeline.yml がある回（枠の回）は、mix.wav を見る。"""
     import os
     import time
     (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "timeline.yml").write_text(
+        "version: 1\nlanes: {main: [], bgm: [], se: []}\n", encoding="utf-8")
     monkeypatch.setattr(media, "duration_of", lambda path: 57.0)
     monkeypatch.setattr(media, "video_size", lambda path: "1920x1080")
 
     (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
-    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")
     later = time.time() + 10
-    os.utime(ep / "01_clean" / "clean.wav", (later, later))
+    os.utime(ep / "01_mix" / "mix.wav", (later, later))
 
     got = media.video_view("ep01")
     assert got["state"] == "古い"
-    assert got["stale_reason"] == "整音をやり直しました"
+    assert got["stale_reason"] == "ミックスをやり直しました"
 
 
-def test_整音より新しければ完了のまま(ep, monkeypatch):
+def test_ミックスより新しければ完了のまま_枠の回(ep, monkeypatch):
     import os
     import time
     (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    (ep / "timeline.yml").write_text(
+        "version: 1\nlanes: {main: [], bgm: [], se: []}\n", encoding="utf-8")
     monkeypatch.setattr(media, "duration_of", lambda path: 57.0)
     monkeypatch.setattr(media, "video_size", lambda path: "")
 
-    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")
     (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
     later = time.time() + 10
     os.utime(ep / "04_video" / "ep01.mp4", (later, later))
@@ -691,12 +696,94 @@ def test_整音より新しければ完了のまま(ep, monkeypatch):
     assert got["at"] > 0           # 作り直したら新しい動画を読ませるための印
 
 
+def test_枠でない回は整音をやり直すと動画が古いになる(ep, monkeypatch):
+    """timeline.yml が無い回（枠でない回）は、mix.wav ではなく clean.wav を見る
+    （2026-09-26・ユーザーの判断。動画化はミックスを待たない）。"""
+    import os
+    import time
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    monkeypatch.setattr(media, "duration_of", lambda path: 57.0)
+    monkeypatch.setattr(media, "video_size", lambda path: "1920x1080")
+
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
+    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")   # 触っても無視されるはず
+    later = time.time() + 10
+    os.utime(ep / "01_clean" / "clean.wav", (later, later))
+
+    got = media.video_view("ep01")
+    assert got["state"] == "古い"
+    assert got["stale_reason"] == "整音をやり直しました"
+
+
+def test_枠でない回はmixを触っても動画は古くならない(ep, monkeypatch):
+    import os
+    import time
+    (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
+    monkeypatch.setattr(media, "duration_of", lambda path: 57.0)
+    monkeypatch.setattr(media, "video_size", lambda path: "1920x1080")
+
+    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")
+    later = time.time() + 10
+    os.utime(ep / "01_mix" / "mix.wav", (later, later))
+
+    got = media.video_view("ep01")
+    assert got["state"] == "完了"
+    assert got["stale_reason"] is None
+
+
 def test_長さが読めなくても完了として出す(ep, monkeypatch):
     (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
     monkeypatch.setattr(media, "duration_of", lambda path: None)
     monkeypatch.setattr(media, "video_size", lambda path: "")
     (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
     assert media.video_view("ep01")["duration"] == ""
+
+
+# ---------------------------------------------------------------- ミックスの結果（#85 レビュー）
+
+def test_ミックス未実行(ep):
+    assert media.mix_result("ep01") == {"state": "未実行"}
+
+
+def test_ミックスの結果を返す(ep):
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")
+    (ep / "01_mix" / "mix.json").write_text(
+        json.dumps({"duration": 12.3, "bgm": 1, "se": 2}), encoding="utf-8")
+    got = media.mix_result("ep01")
+    assert got["state"] == "完了"
+    assert got["stale_reason"] is None
+    assert (got["duration"], got["bgm"], got["se"]) == (12.3, 1, 2)
+
+
+def test_整音をやり直すとミックスの古い理由になる(ep):
+    import os
+    import time
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")
+    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    later = time.time() + 10
+    os.utime(ep / "01_clean" / "clean.wav", (later, later))
+
+    got = media.mix_result("ep01")
+    assert got["state"] == "古い"
+    assert got["stale_reason"] == "整音をやり直しました"
+
+
+def test_timelineを直すとミックスの古い理由になる(ep):
+    """整音と timeline.yml、両方が新しいときは、整音を先に見る（`video_view` と同じ形）。"""
+    import os
+    import time
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")
+    (ep / "timeline.yml").write_text(
+        "version: 1\nlanes: {main: [], bgm: [], se: []}\n", encoding="utf-8")
+    later = time.time() + 10
+    os.utime(ep / "timeline.yml", (later, later))
+
+    got = media.mix_result("ep01")
+    assert got["state"] == "古い"
+    assert got["stale_reason"] == "timeline.yml を直しました"
 
 
 def test_画面のコピー欄にもクレジットが入る(ep):
