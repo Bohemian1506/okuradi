@@ -139,9 +139,42 @@ def _clear_raw(ep_dir):
             found.unlink()
 
 
+def is_framed(ep_dir):
+    """枠の形にする回か。画面とサーバーで、この関数1つに条件をそろえる（#216 のレビュー）。
+
+    - `timeline.yml` がある回は、もう枠の形で書かれているので、そのまま枠として扱う
+      （コーナーを1つに減らしても、当たらないクリップの守りが効くように）。
+    - 無い回は、コーナーが2つ以上あるときだけ枠にする。1つ（または0）の回は、
+      いまの1本の入口のまま（`ep01` のような、`timeline.yml` を持たず `00_raw` に
+      直接置く古い回と衝突しないため）。
+    """
+    if timeline.path(ep_dir).exists():
+        return True
+    try:
+        return len(_frame_ids_of(ep_dir)) >= 2
+    except episodes.EpisodeError:
+        # config.yml が読めない・無いときは、枠かどうか判断できない。
+        # 読めないことは他の画面でも分かるので、ここでは静かに「枠ではない」扱いにする
+        return False
+
+
+def _refuse_if_framed(ep_dir):
+    """枠の回では、いまの「1本だけ」の入口を使わせない（#216 のレビュー）。
+
+    これを通すと `_clear_raw` が 00_raw を全部消してしまい、`timeline.yml` は
+    消えたファイルを指したまま残る。画面は枠の回でこの入口を出さないが、
+    サーバー側でも断る（画面とサーバーがずれても壊れないように）。
+    """
+    if is_framed(ep_dir):
+        raise episodes.EpisodeError(
+            "この回はコーナーの枠で音源を入れます。上の枠から入れてください"
+        )
+
+
 def add_from_upload(name, filename, stream):
     """ドロップされた（選ばれた）ファイルを取り込む。"""
     ep_dir = episodes.resolve(name)
+    _refuse_if_framed(ep_dir)
     _check_name(filename)
     _clear_raw(ep_dir)
     dst = ep_dir / "00_raw" / Path(filename).name
@@ -153,6 +186,7 @@ def add_from_upload(name, filename, stream):
 def add_from_obs(name, filename):
     """OBS のフォルダの録画を取り込む。"""
     ep_dir = episodes.resolve(name)
+    _refuse_if_framed(ep_dir)
     view = obs_view()
     if view["state"] != "ok":
         raise episodes.EpisodeError("OBS のフォルダが使えません")
@@ -215,11 +249,15 @@ def _resolve_frame_source(raw_dir, source):
 
 
 def _frame_source_info(raw_dir, clip):
-    """枠に入っている音源の様子（部品10 収録ファイルカードと同じ形）。"""
+    """枠に入っている音源の様子（部品10 収録ファイルカードと同じ形）。
+
+    `edits`（カットの件数）も付ける。差し替える前に「これも消えます」と言うため（#216 のレビュー）。
+    """
+    edits = len(clip.get("edits") or [])
     found = _resolve_frame_source(raw_dir, clip.get("source"))
     if not found:
         name = Path(clip.get("source") or "").name or clip.get("source")
-        return {"state": "エラー", "error": f"音源がありません: {name}"}
+        return {"state": "エラー", "error": f"音源がありません: {name}", "edits": edits}
     seconds = duration_of(found)
     kind = "OBSの録画" if found.suffix.lower() in build.VIDEO_EXTS else found.suffix.lstrip(".")
     return {
@@ -229,6 +267,7 @@ def _frame_source_info(raw_dir, clip):
         "kind": kind,
         "recorded_at": datetime.fromtimestamp(found.stat().st_mtime).strftime("%Y/%m/%d %H:%M"),
         "from_video": found.suffix.lower() in build.VIDEO_EXTS,
+        "edits": edits,
     }
 
 
@@ -296,16 +335,21 @@ def frames_view(name):
             orphan.update(_frame_source_info(raw_dir, clip))
             orphans.append(orphan)
 
-    return {"frames": frames, "orphans": orphans}
+    # 画面はこの値だけを見て、枠の形にするかを決める（`is_framed` と1つにそろえる。#216 のレビュー）
+    return {"frames": frames, "orphans": orphans, "framed": is_framed(ep_dir)}
 
 
 def _clear_stem(ep_dir, stem):
-    """その名前（拡張子より前）の音源を消す。録画から取り出した `<stem>.trackN.wav` も一緒に消す。"""
+    """その名前（拡張子より前）の音源を消す。録画から取り出した `<stem>.trackN.wav` も一緒に消す。
+
+    **音源として受け付ける拡張子（`ACCEPTED`）だけを見る。** 拡張子を見ずに消すと、
+    たまたま同じ名前の関係ないファイル（`op.txt` など）まで消してしまうため（#216 のレビュー）。
+    """
     raw = ep_dir / "00_raw"
     if not raw.is_dir():
         return
     for found in list(raw.iterdir()):
-        if not found.is_file():
+        if not found.is_file() or found.suffix.lower() not in ACCEPTED:
             continue
         found_stem = found.stem
         if found_stem == stem:
@@ -332,7 +376,9 @@ def _planned_main(ep_dir, frame_id, filename):
     timeline.yml は古いまま」というずれ方をするため（BGM の錨が外れる枠を消したときなど）。
 
     filename: 新しく置くファイル名（00_raw の中の名前）。外すときは None。
-    gap と edits は、前からその枠にあった値を残す。bgm / se の行はそのまま残す。
+    **差し替えたら（前からその枠にクリップがあったら）edits（カット）は空にする**
+    （案A・2026-09-26・ユーザーの判断。前の録音のカットは、新しい録音には合わないため）。
+    gap は残す（並びの間の秒数は音源と関係ないため）。bgm / se の行はそのまま残す。
     """
     ids = _frame_ids_of(ep_dir)
     data = _base_timeline(ep_dir)
@@ -344,6 +390,7 @@ def _planned_main(ep_dir, frame_id, filename):
         made = by_id.get(frame_id, {"id": frame_id})
         made["id"] = frame_id
         made["source"] = filename
+        made["edits"] = []
         by_id[frame_id] = made
 
     new_main = [by_id[fid] for fid in ids if fid in by_id]
@@ -358,6 +405,36 @@ def _planned_main(ep_dir, frame_id, filename):
     return timeline.validate(new_data)
 
 
+def _place_raw(ep_dir, frame_id, dst_name, write):
+    """枠のファイルを、前のファイルを消す前に書き終えてから確定名にする（#216 のレビュー）。
+
+    先に前のファイルを消してから書き込むと、書き込みが途中で切れたときに
+    **前の音源が空ファイルで残ってしまう**（差し替えなのに音が消える）。
+    一時名に書き終えてから、前のファイルを消して確定名に rename する順にする。
+
+    write(tmp_path) が実際の書き込み（コピー）をする。途中で失敗したら、
+    一時ファイルを消し、前のファイルはそのまま残して `EpisodeError` にする。
+    """
+    raw = ep_dir / "00_raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    tmp = raw / f".tmp-{frame_id}-{dst_name}"
+    try:
+        write(tmp)
+    except Exception as exc:
+        tmp.unlink(missing_ok=True)
+        if isinstance(exc, episodes.EpisodeError):
+            raise
+        raise episodes.EpisodeError(f"音源を置けませんでした: {exc}") from exc
+
+    _clear_frame(ep_dir, frame_id)
+    tmp.replace(raw / dst_name)
+
+
+def _write_stream(tmp, stream):
+    with tmp.open("wb") as out:
+        shutil.copyfileobj(stream, out)
+
+
 def add_frame_from_upload(name, frame_id, filename, stream):
     """枠にドロップ（選んだ）ファイルを入れる。"""
     ep_dir = episodes.resolve(name)
@@ -367,10 +444,7 @@ def add_frame_from_upload(name, frame_id, filename, stream):
     dst_name = f"{frame_id}{suffix}"
     planned = _planned_main(ep_dir, frame_id, dst_name)   # ファイルに触る前に検証する
 
-    _clear_frame(ep_dir, frame_id)
-    dst = ep_dir / "00_raw" / dst_name
-    with dst.open("wb") as out:
-        shutil.copyfileobj(stream, out)
+    _place_raw(ep_dir, frame_id, dst_name, lambda tmp: _write_stream(tmp, stream))
     timeline.save(ep_dir, planned)
     return frames_view(name)
 
@@ -390,9 +464,7 @@ def add_frame_from_obs(name, frame_id, filename):
     dst_name = f"{frame_id}{src.suffix.lower()}"
     planned = _planned_main(ep_dir, frame_id, dst_name)   # ファイルに触る前に検証する
 
-    _clear_frame(ep_dir, frame_id)
-    dst = ep_dir / "00_raw" / dst_name
-    shutil.copy2(src, dst)
+    _place_raw(ep_dir, frame_id, dst_name, lambda tmp: shutil.copy2(src, tmp))
     timeline.save(ep_dir, planned)
     return frames_view(name)
 

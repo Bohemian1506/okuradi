@@ -220,7 +220,12 @@ def test_timelineはコーナーの順で書かれる(framed):
     assert [c["id"] for c in data["lanes"]["main"]] == ["op", "imasara"]
 
 
-def test_gapとeditsとbgmとseは残る(framed):
+def test_gapとbgmとseは残るがeditsは差し替えで空になる(framed):
+    """差し替えたら edits（カット）は空にする（案A・2026-09-26・ユーザーの判断・#216 のレビュー）。
+
+    前の録音のカットは、新しい録音には合わない。gap（並びの間の秒数）と
+    bgm / se（出来上がりの時刻が基準）は音源そのものとは関係ないので残す。
+    """
     sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO(b"1"))
     sources.add_frame_from_upload("ep01", "imasara", "録音.wav", io.BytesIO(b"2"))
 
@@ -235,7 +240,7 @@ def test_gapとeditsとbgmとseは残る(framed):
     after = timeline.read(framed)
     imasara = next(c for c in after["lanes"]["main"] if c["id"] == "imasara")
     assert imasara["gap"] == 1.5
-    assert imasara["edits"] == [{"kind": "cut", "start": 1, "end": 2}]
+    assert imasara["edits"] == []                # 差し替えたので空になる
     assert imasara["source"] == "imasara.wav"   # 名前は枠のidに付け替えるので変わらない
     assert after["lanes"]["bgm"][0]["id"] == "bg1"
 
@@ -378,3 +383,121 @@ def test_検証で断られたらファイルもtimelineも変わっていない
     after = timeline.read(framed3)
     assert [c["id"] for c in after["lanes"]["main"]] == ["op"]
     assert after["lanes"]["bgm"][0]["id"] == "bg1"
+
+
+# ---------------------------------------------------------------- PR #216 レビューの直し
+
+class _FlakyStream:
+    """読み出しでいきなり失敗するストリーム（書き込みが途中で切れる状況を再現）。"""
+
+    def read(self, n=-1):
+        raise OSError("接続が切れました")
+
+
+def test_書き込みが失敗すると前のファイルが残り一時ファイルも残らない(framed):
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO("前の音源".encode()))
+    before = (framed / "00_raw" / "op.wav").read_bytes()
+    before_timeline = timeline.read(framed)
+
+    with pytest.raises(episodes.EpisodeError, match="音源を置けませんでした"):
+        sources.add_frame_from_upload("ep01", "op", "op.wav", _FlakyStream())
+
+    # 前のファイルはそのまま（0バイトで残らない）
+    assert (framed / "00_raw" / "op.wav").read_bytes() == before
+    # 一時ファイルも残らない
+    names = [f.name for f in (framed / "00_raw").iterdir()]
+    assert names == ["op.wav"]
+    assert not any(n.startswith(".tmp") for n in names)
+    # timeline.yml も書き換わっていない
+    assert timeline.read(framed) == before_timeline
+
+
+def test_書き込みが失敗するとOBSからの取り込みでも前のファイルが残る(framed, tmp_path):
+    obs = tmp_path / "obs"
+    obs.mkdir()
+    (obs / "録画.mkv").write_bytes("どうが".encode())
+    sources.save_settings({"obs_dir": str(obs)})
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO("前の音源".encode()))
+    before = (framed / "00_raw" / "op.wav").read_bytes()
+
+    def broken_copy(src, dst):
+        raise OSError("コピーに失敗しました")
+
+    import shutil as shutil_module
+    orig = shutil_module.copy2
+    shutil_module.copy2 = broken_copy
+    try:
+        with pytest.raises(episodes.EpisodeError, match="音源を置けませんでした"):
+            sources.add_frame_from_obs("ep01", "op", "録画.mkv")
+    finally:
+        shutil_module.copy2 = orig
+
+    assert (framed / "00_raw" / "op.wav").read_bytes() == before
+    names = [f.name for f in (framed / "00_raw").iterdir()]
+    assert names == ["op.wav"]
+
+
+def test_枠の回では古い1本の入口を断る(framed):
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO(b"1"))
+    with pytest.raises(episodes.EpisodeError, match="コーナーの枠"):
+        sources.add_from_upload("ep01", "old.wav", io.BytesIO(b"2"))
+    # 00_raw は消えていない
+    assert (framed / "00_raw" / "op.wav").exists()
+
+
+def test_枠の回のOBS入口も断る(framed, tmp_path):
+    obs = tmp_path / "obs"
+    obs.mkdir()
+    (obs / "録画.mkv").write_bytes("どうが".encode())
+    sources.save_settings({"obs_dir": str(obs)})
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO(b"1"))
+
+    with pytest.raises(episodes.EpisodeError, match="コーナーの枠"):
+        sources.add_from_obs("ep01", "録画.mkv")
+    assert (framed / "00_raw" / "op.wav").exists()
+
+
+def test_コーナーを1つに減らしてもtimelineがあれば枠のまま(framed):
+    """`is_framed` は timeline.yml があれば true。segments の数だけでは判定しない。"""
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO(b"1"))
+    sources.add_frame_from_upload("ep01", "imasara", "im.wav", io.BytesIO(b"2"))
+    sources.add_frame_from_upload("ep01", "imasara-2", "im2.wav", io.BytesIO(b"3"))
+    _drop_segment_series(framed, keep=["op"])   # コーナーを1つに減らす
+
+    assert sources.is_framed(framed) is True
+    # 当たらないクリップの守りも効く
+    with pytest.raises(episodes.EpisodeError, match="どのコーナーにも当たらない"):
+        sources.remove_frame("ep01", "op")
+    # 古い1本の入口も断られる
+    with pytest.raises(episodes.EpisodeError, match="コーナーの枠"):
+        sources.add_from_upload("ep01", "old.wav", io.BytesIO(b"4"))
+
+
+def test_timelineが無くコーナーが1つなら枠にしない(framed):
+    cfg = yaml.safe_load((framed / "config.yml").read_text(encoding="utf-8"))
+    cfg["segments"] = [{"series": "op", "theme": "OP"}]
+    (framed / "config.yml").write_text(
+        yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    assert sources.is_framed(framed) is False
+    # 古い1本の入口が使える
+    sources.add_from_upload("ep01", "op.wav", io.BytesIO(b"1"))
+    assert (framed / "00_raw" / "op.wav").exists()
+
+
+def _drop_segment_series(ep_dir, keep):
+    cfg = yaml.safe_load((ep_dir / "config.yml").read_text(encoding="utf-8"))
+    cfg["segments"] = [s for s in cfg["segments"] if s["series"] in keep]
+    (ep_dir / "config.yml").write_text(
+        yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def test_関係ない拡張子のファイルは消さない(framed):
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO(b"1"))
+    (framed / "00_raw" / "op.txt").write_text("メモ", encoding="utf-8")
+
+    sources.add_frame_from_upload("ep01", "op", "撮り直し.wav", io.BytesIO(b"2"))
+
+    assert (framed / "00_raw" / "op.txt").exists()
+    names = {f.name for f in (framed / "00_raw").iterdir()}
+    assert names == {"op.wav", "op.txt"}

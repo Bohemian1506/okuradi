@@ -582,6 +582,8 @@ select.field { font-weight: 500; }
   max-width: 420px;
 }
 .frame-dropzone { padding: 14px 10px; }
+.frame-card-wrap { display: flex; flex-direction: column; gap: 8px; }
+.obs-inline:empty { display: none; }
 
 /* ---------------------------------------------------------------- 部品10 収録ファイルカード */
 

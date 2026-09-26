@@ -277,11 +277,9 @@ function stepOf(key) {
 
 function screenRecording() {
   const box = el("div", "sections");
-  // コーナーが2つ以上ある回だけ、枠に分けて入れる形にする（#85 の3段目・仮置き）。
-  // コーナーが1つ（または0）の回は、いまの1本の入口のまま
-  // （ep01 のように timeline.yml を持たず 00_raw に直接置いた回を、
-  // 「空」と誤認させて上書きさせないため。これは実装中に見つけた既存回との衝突を避ける判断）。
-  const framed = state.frames && state.frames.frames && state.frames.frames.length >= 2;
+  // 枠に分けて入れる形にするかは、サーバー（`sources.is_framed`）が決めた値をそのまま使う。
+  // 画面側で条件を作り直すと、サーバーの判定とずれることがある（#216 のレビュー）。
+  const framed = !!(state.frames && state.frames.framed);
 
   if (framed) {
     box.appendChild(section(1, "音源を入れる",
@@ -2275,22 +2273,19 @@ function framesSection() {
   }
 
   // どのコーナーにも当たらないクリップがある間は、枠の出し入れを止める
-  // （案A・2026-09-26・ユーザーの判断。黙って timeline.yml から落とすと edits まで消えるため）
+  // （案A・2026-09-26・ユーザーの判断。黙って timeline.yml から落とすと edits まで消えるため）。
+  // 押せない理由は、OBS の注意と同じく枠の一覧より前に出す（#216 のレビュー）
   const orphans = state.frames.orphans || [];
   const blocked = orphans.length > 0;
+  if (blocked) {
+    box.appendChild(orphansSection(orphans));
+  }
 
   for (const frame of state.frames.frames) {
     box.appendChild(frameRow(frame, blocked));
   }
 
-  if (blocked) {
-    box.appendChild(orphansSection(orphans));
-  }
-  if (state.actionError) {
-    const err = el("div", "source-error");
-    err.append(el("span", "mark", "!"), el("span", null, state.actionError));
-    box.appendChild(err);
-  }
+  // 失敗は上の共通バナー（`errorBanner`）に出るので、ここでは重ねて出さない（#216 のレビュー）
   return box;
 }
 
@@ -2308,24 +2303,29 @@ function orphansSection(orphans) {
   return row;
 }
 
+// 枠と同じバッジ・エラーの見せ方にする（#216 のレビュー）
 function orphanCard(orphan) {
-  const card = el("div", "source-card");
-  const body = el("div", "body");
-  if (orphan.state === "使える") {
-    body.append(el("div", "name", orphan.name));
-    const about = [orphan.duration, orphan.kind, `録った日時 ${orphan.recorded_at}`].join(" · ");
-    body.append(el("div", "about", about));
-  } else {
-    body.append(el("div", "name", orphan.id));
-    body.append(el("div", "about", orphan.error || "音源がありません"));
-  }
   const busy = !!state.frameBusy[orphan.id];
   const remove = el("button", "btn-plain", busy ? "処理中…" : "外す");
   remove.disabled = busy;
   remove.onclick = () => {
     if (confirm(`${orphan.name || orphan.id} を外しますか？（ファイルも消えます）`)) removeOrphan(orphan.id);
   };
-  card.append(body, remove);
+
+  if (orphan.state !== "使える") {
+    const err = el("div", "source-error");
+    err.append(el("span", "mark", "!"), el("span", null, orphan.error || "音源がありません"), remove);
+    return err;
+  }
+
+  const card = el("div", "source-card");
+  const body = el("div", "body");
+  body.append(el("div", "name", orphan.name));
+  const about = [orphan.duration, orphan.kind, `録った日時 ${orphan.recorded_at}`].join(" · ");
+  body.append(el("div", "about", about));
+  const badge = el("span", "badge-ok");
+  badge.append(el("span", "mark"), document.createTextNode("使える"));
+  card.append(body, badge, remove);
   return card;
 }
 
@@ -2346,7 +2346,16 @@ function frameRow(frame, blocked) {
   return row;
 }
 
+// 差し替える前の確認の文。部品10（収録ファイルカード）の差し替えと同じ形に、
+// カットの件数を足す（差し替えると edits は空になるため。案A・2026-09-26・#216 のレビュー）
+function replaceConfirmText(frame) {
+  let msg = `${frame.label} の音源を差し替えますか？（00_raw のファイルを入れ替えます）`;
+  if (frame.edits) msg += `\n前の録音のカットが${frame.edits}件あります。これも消えます。`;
+  return msg;
+}
+
 function frameCard(frame, busy, blocked) {
+  const wrap = el("div", "frame-card-wrap");
   const card = el("div", "source-card");
   const body = el("div", "body");
   body.append(el("div", "name", frame.name));
@@ -2357,6 +2366,7 @@ function frameCard(frame, busy, blocked) {
   badge.append(el("span", "mark"), document.createTextNode("使える"));
 
   const disabled = busy || blocked;
+  const title = blocked ? "どのコーナーにも当たらないクリップを外してください" : "";
   const picker = el("input");
   picker.type = "file";
   picker.accept = ".wav,.m4a,.mkv,.mp4,.mov,.flv";
@@ -2365,22 +2375,29 @@ function frameCard(frame, busy, blocked) {
 
   const replace = el("button", "btn-plain", busy ? "処理中…" : "差し替える");
   replace.disabled = disabled;
-  replace.title = blocked ? "どのコーナーにも当たらないクリップを外してください" : "";
-  replace.onclick = () => picker.click();
+  replace.title = title;
+  replace.onclick = () => {
+    if (confirm(replaceConfirmText(frame))) picker.click();
+  };
 
   const remove = el("button", "btn-plain", "外す");
   remove.disabled = disabled;
-  remove.title = replace.title;
+  remove.title = title;
   remove.onclick = () => {
     if (confirm(`${frame.label} の音源を外しますか？（ファイルも消えます）`)) removeFrame(frame.id);
   };
   card.append(body, badge, replace, remove, picker);
-  return card;
+  wrap.appendChild(card);
+  // 埋まっている枠でも、OBS から選んで差し替えられるようにする（user のレビュー）
+  wrap.appendChild(obsPicker(frame, busy, blocked, (name) => replaceConfirmText(frame)
+    + `\n選ぶ録画: ${name}`));
+  return wrap;
 }
 
 function frameAdd(frame, busy, blocked) {
   const box = el("div", "frame-add");
   const disabled = busy || blocked;
+  const title = blocked ? "どのコーナーにも当たらないクリップを外してください" : "";
 
   const zone = el("div", "dropzone frame-dropzone");
   zone.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -2396,7 +2413,7 @@ function frameAdd(frame, busy, blocked) {
 
   const pick = el("button", "btn-plain", "ファイルを選ぶ");
   pick.disabled = disabled;
-  pick.title = blocked ? "どのコーナーにも当たらないクリップを外してください" : "";
+  pick.title = title;
   pick.onclick = () => picker.click();
   zone.append(pick, picker);
 
@@ -2412,31 +2429,50 @@ function frameAdd(frame, busy, blocked) {
     if (e.dataTransfer.files[0]) uploadFrame(frame.id, e.dataTransfer.files[0]);
   };
   box.appendChild(zone);
+  box.appendChild(obsPicker(frame, busy, blocked, null));
+  return box;
+}
 
+// 枠の OBS からの取り込み（空の枠・埋まっている枠のどちらでも使う。#216 のレビュー）。
+// confirmText(recordingName) を渡すと、選んだときに確認を挟む（差し替えのとき）。
+// 文言は部品9（音源の追加）の「OBSのフォルダから選ぶ」にそろえる。
+function obsPicker(frame, busy, blocked, confirmText) {
+  const box = el("div", "obs-inline");
   const obs = state.obs || { state: "未設定", recordings: [] };
-  if (obs.state === "ok" && obs.recordings.length) {
-    const open = state.frameObsOpen === frame.id;
-    const toggle = el("button", "btn-plain", open ? "OBSの一覧を閉じる" : "OBSから選ぶ");
-    toggle.disabled = disabled;
-    toggle.onclick = () => {
-      state.frameObsOpen = open ? null : frame.id;
-      renderMain();
-    };
-    box.appendChild(toggle);
-    if (open) {
-      const list = el("div", "obs-list");
-      for (const rec of obs.recordings) {
-        const row = el("button", "obs-row");
-        row.disabled = disabled;
-        const rbody = el("div", "body");
-        rbody.append(el("span", "name", rec.name),
-                     el("span", "when", [rec.duration, rec.recorded_at].filter(Boolean).join(" · ")));
-        row.append(el("span", "mark"), rbody);
-        row.onclick = () => frameFromObs(frame.id, rec.name);
-        list.appendChild(row);
-      }
-      box.appendChild(list);
+  if (obs.state !== "ok") return box;
+
+  const open = state.frameObsOpen === frame.id;
+  const toggle = el("button", "btn-plain", open ? "閉じる" : "OBSのフォルダから選ぶ");
+  // 一覧が開いたまま操作が止まっても、閉じるボタンは押せるようにする（user のレビュー）
+  toggle.disabled = open ? false : (busy || blocked);
+  toggle.title = open ? "" : (blocked
+    ? "どのコーナーにも当たらないクリップを外してください" : "");
+  toggle.onclick = () => {
+    state.frameObsOpen = open ? null : frame.id;
+    renderMain();
+  };
+  box.appendChild(toggle);
+  if (!open) return box;
+
+  if (obs.recordings.length) {
+    const list = el("div", "obs-list");
+    for (const rec of obs.recordings) {
+      const row = el("button", "obs-row");
+      row.disabled = busy || blocked;
+      const rbody = el("div", "body");
+      rbody.append(el("span", "name", rec.name),
+                   el("span", "when", [rec.duration, rec.recorded_at].filter(Boolean).join(" · ")));
+      row.append(el("span", "mark"), rbody);
+      row.onclick = () => {
+        if (confirmText && !confirm(confirmText(rec.name))) return;
+        frameFromObs(frame.id, rec.name);
+      };
+      list.appendChild(row);
     }
+    box.appendChild(list);
+  } else {
+    // 録画が0件のときも説明を出す（部品9 と同じ文言。#216 のレビュー）
+    box.appendChild(el("div", "obs-empty", "このフォルダに録画がありません。"));
   }
   return box;
 }
@@ -2807,6 +2843,10 @@ async function saveSegments() {
     resetRows(saved.segments);
     state.save = "saved";
     state.saveError = "";
+    // コーナーを変えると枠（画面2）も変わるので、ここで取り直す
+    // （`reload` は selectEpisode を呼ばないため、放っておくと枠が古いまま。#216 のレビュー）
+    state.frames = await api(`/api/episodes/${saved.name}/frames`).catch(() => state.frames);
+    await loadTimeline(saved.name);
     await reload({ keep: saved.name, keepSelected: true });
   } catch (err) {
     state.save = "error";
