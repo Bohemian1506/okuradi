@@ -488,6 +488,18 @@ def test_録画が並ぶときも指定したトラックを使う(ep):
     assert mean_abs(got) > 500, "source_track: 1 を指定したのに、無音のトラック0が使われている"
 
 
+def test_使ったトラックを毎回ログに出す(ep, capsys):
+    """取り出し直さない2回目も、どのトラックを使ったかを出す（#214 に気づけるように）。"""
+    video_two_tracks(ep["00_raw"] / "rec.mkv", 2)
+    silence(ep["00_raw"] / "b.wav", 2)
+    timeline_yml(ep, TWO_WITH_VIDEO)
+    cfg = {"audio": {"source_track": 1}}
+    build.find_raw(ep, cfg)
+    capsys.readouterr()
+    build.find_raw(ep, cfg)          # 2回目: wav はもうあるので取り出し直さない
+    assert "rec.mkv: トラック 1 を使います" in capsys.readouterr().out
+
+
 def test_録画が並ぶとき既定はトラック0(ep):
     """cfg を渡さなければ、いままでどおりトラック0（この録画では無音）を使う。"""
     video_two_tracks(ep["00_raw"] / "rec.mkv", 2)

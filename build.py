@@ -162,6 +162,9 @@ def _track_wav(video, cfg):
         run(["ffmpeg", "-y", "-i", str(video), "-map", f"0:a:{track}", "-vn",
              "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)])
         print(f"-> {dst}  (録画から音声を取り出しました)")
+    # **取り出し直さないときも、どのトラックを使ったかを毎回出す。** 番号を前の値に戻すと、
+    # 古い wav をそのまま使い、繋ぎ直されないことがある（#214）。ログで気づけるように
+    print(f"   {video.name}: トラック {track} を使います（config.yml の audio.source_track）")
     return dst
 
 
