@@ -12,8 +12,8 @@
 ## 工程
 
 ```
-scan  -> cut -> clean -> transcribe -> meta -> video -> upload
-下見     カット  整音     文字起こし   メタ    動画化   限定公開
+scan  -> cut -> clean -> mix       -> transcribe -> meta -> video -> upload
+下見     カット  整音     曲を重ねる   文字起こし   メタ    動画化   限定公開
 ```
 
 GUIを使う場合:

@@ -11,7 +11,7 @@ tools: Bash, Read, Edit, Write, Grep, Glob
 渡された Issue・指示の範囲だけを実装し、動作を確かめて報告する。
 
 ## 前提
-- 処理の本体は `build.py`。工程は `scan -> clean -> transcribe -> meta -> video`（GUI の流れでは `cut` と `upload` は使わない）
+- 処理の本体は `build.py`。工程は `scan -> clean -> mix -> transcribe -> meta -> video`（GUI の流れでは `cut` と `upload` は使わない。`mix` は #85 の4段目で足した）
 - 動かす場所は WSL。Python の仮想環境は `.venv/`
 - Claude は `build.call_claude()` 経由で `claude -p` を呼ぶ（サブスクの枠。API キーは使わない）
 - 決まっている機能は `docs/features.md`、画面の部品は `docs/components.md`
