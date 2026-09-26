@@ -32,6 +32,20 @@ def silence(path, seconds, rate=48000):
     return path
 
 
+def video_two_tracks(path, seconds=2, rate=48000):
+    """音声トラックを2本持つ「録画」を作る。トラック0は無音、トラック1は音。
+
+    OBS はマイクとデスクトップ音声を別トラックにできる、という状況を再現する。
+    """
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y",
+         "-f", "lavfi", "-i", f"anullsrc=r={rate}:cl=mono:d={seconds}",
+         "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}:sample_rate={rate}",
+         "-map", "0:a", "-map", "1:a", "-ac", "1", "-c:a", "pcm_s16le", str(path)],
+        check=True)
+    return path
+
+
 def mean_abs(path, ms=100, rate=48000):
     """繋いだ wav の先頭 ms ミリ秒の音量（平均振幅）。無音か音かの見分けに使う。"""
     with wave.open(str(path), "rb") as w:
@@ -445,6 +459,56 @@ def test_大文字の拡張子1本だけなら使える(ep):
     """数えるときは見えるのに、使うときは見つからない、というちぐはぐを作らない。"""
     sine(ep["00_raw"] / "ONLY.WAV", 2)
     assert build.find_raw(ep).name == "ONLY.WAV"
+
+
+# ---------------------------------------------------------------- 録画が並ぶときのトラック選択（#85）
+
+TWO_WITH_VIDEO = """version: 1
+lanes:
+  main:
+    - {id: a, source: rec.mkv, gap: 0}
+    - {id: b, source: b.wav, gap: 0}
+  bgm: []
+  se: []
+"""
+
+
+def test_録画が並ぶときも指定したトラックを使う(ep):
+    """`find_raw` が録画1本のときに見る `audio.source_track` を、
+    `join_sources`（2本以上並ぶとき）でも同じ決まりで見る。
+
+    トラック0は無音、トラック1は音にしておき、`source_track: 1` を指定したときに
+    繋いだ音の先頭が「音」（トラック1）になっていることを確かめる。
+    """
+    video_two_tracks(ep["00_raw"] / "rec.mkv", 2)
+    silence(ep["00_raw"] / "b.wav", 2)
+    timeline_yml(ep, TWO_WITH_VIDEO)
+    cfg = {"audio": {"source_track": 1}}
+    got = build.find_raw(ep, cfg)
+    assert mean_abs(got) > 500, "source_track: 1 を指定したのに、無音のトラック0が使われている"
+
+
+def test_録画が並ぶとき既定はトラック0(ep):
+    """cfg を渡さなければ、いままでどおりトラック0（この録画では無音）を使う。"""
+    video_two_tracks(ep["00_raw"] / "rec.mkv", 2)
+    silence(ep["00_raw"] / "b.wav", 2)
+    timeline_yml(ep, TWO_WITH_VIDEO)
+    got = build.find_raw(ep)
+    assert mean_abs(got) < 50, "既定はトラック0（無音）のはず"
+
+
+def test_無いトラックを指定したら理由付きで止まる(ep):
+    """指定したトラックが無い録画のときに、黙って別のトラックを使わない
+    （CLAUDE.md「静かに失敗させない」）。
+    """
+    video_two_tracks(ep["00_raw"] / "rec.mkv", 2)
+    silence(ep["00_raw"] / "b.wav", 2)
+    timeline_yml(ep, TWO_WITH_VIDEO)
+    cfg = {"audio": {"source_track": 5}}
+    with pytest.raises(RuntimeError, match="コマンドが失敗しました"):
+        build.find_raw(ep, cfg)
+    assert not (ep["00_raw"] / build.JOINED).exists(), \
+        "作りかけの joined.wav を残さない"
 
 
 def test_録画から取り出した名前のm4aは音源として数える(ep):
