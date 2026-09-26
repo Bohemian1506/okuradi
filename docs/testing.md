@@ -4,12 +4,26 @@
 **どの道具でも、本物の `ep*/` と `settings.yml` には書かない。** サーバー・`build.py`・古い GUI（`app.py`）・
 ffmpeg や Whisper を直接試すときも、**一時フォルダに向ける**（出力先も一時フォルダにする）。
 
-**Claude が打つコマンドは、hook が止める**（`.claude/hooks/block-real-workspace.py`）:
-- 環境変数 `OKURADI_EPISODES_DIR` を付けずに `build.py`・`uvicorn web.main`・`streamlit run app.py` を起動する
-- 本物のサーバー（8000番）に書き込む（curl の `-X PUT/POST/DELETE/PATCH`・`-d`・`-F`・`-T` など）
+**守りは2段**（#221・案A'・2026-09-26・ユーザーの判断）:
 
-ユーザーが自分の端末で打つコマンドには効かない（番組づくりは今までどおり）。
-本物で動かす必要があるときは、ユーザーに `! <コマンド>` で打ってもらう。
+1. **起動の守りは `build.py` の中**（`build.episodes_root()`）。Claude Code が打つコマンドには環境変数 `CLAUDECODE` が付く
+   （`bash -c`・`nohup`・子のプロセスにも引き継がれる）。それがあって `OKURADI_EPISODES_DIR` が無ければ、
+   `build.py`・GUI のサーバー・`app.py` は**本物を使わずに止まる**。書き方ではすり抜けられない
+2. **hook**（`.claude/hooks/block-real-workspace.py`）が、Claude の打つコマンドの中の次の2つを止める
+   - `OKURADI_REAL`（本物を使う合言葉。下）という語
+   - 本物のサーバー（8000番）への書き込み（curl・wget・Python から）。**完全ではない**（ヘッドレスの Chrome で
+     8000番のボタンを押す、などは止められない）。**8000番は開かない**
+
+**ユーザーの端末には `CLAUDECODE` が付かないので、番組づくりは今までどおり。**
+ユーザーが Claude の画面から `!` で本物を動かすときは、`!` にも `CLAUDECODE` が付くので、**合言葉を付ける**:
+
+```
+! OKURADI_REAL=1 .venv/bin/python build.py ep00 --from clean --to clean
+```
+
+`!` には hook が効かない（2026-09-26 に確かめた）ので、合言葉を使えるのはユーザーだけ。
+GUI を立てる `.claude/scripts/作業ペイン.sh gui` は別のペイン（`CLAUDECODE` が付かない）でサーバーを立てるので、今までどおり使える。
+**`作業ペイン.sh gui` は lead がユーザーの求めで打つもの。担当は打たない。**
 
 ## 使い方
 
