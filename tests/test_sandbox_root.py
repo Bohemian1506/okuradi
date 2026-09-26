@@ -48,6 +48,35 @@ def test_フォルダでない場所も止まる(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------- build.py（CLI）
 
+# ---------------------------------------------------------------- Claude から起動されたとき（#221・案A'）
+
+def test_Claudeから一時フォルダ無しで起動すると止まる(monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.delenv("OKURADI_EPISODES_DIR", raising=False)
+    with pytest.raises(RuntimeError, match="本物の回（リポジトリ直下）は使いません"):
+        build.episodes_root()
+
+
+def test_Claudeからでも一時フォルダを指定すれば通る(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("OKURADI_EPISODES_DIR", str(tmp_path))
+    assert build.episodes_root() == tmp_path.resolve()
+
+
+def test_ユーザーが合言葉を付ければ本物を使える(monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("OKURADI_REAL", "1")
+    monkeypatch.delenv("OKURADI_EPISODES_DIR", raising=False)
+    assert build.episodes_root() == REAL_CODE_ROOT
+
+
+def test_CLIもClaudeから一時フォルダ無しでは止まり本物に触らない():
+    # 回の名前は、無いものにする。守りが壊れていても本物の ep01 で工程が走らないように
+    proc = run_build(["ep99-無い回", "--to", "scan"], {"CLAUDECODE": "1"})
+    assert proc.returncode != 0
+    assert "本物の回（リポジトリ直下）は使いません" in (proc.stdout + proc.stderr)
+
+
 def run_build(args, env_extra):
     import os
     env = dict(os.environ)

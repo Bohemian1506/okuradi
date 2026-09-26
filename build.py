@@ -1243,6 +1243,16 @@ def episodes_root():
     """
     override = os.environ.get("OKURADI_EPISODES_DIR")
     if not override:
+        # **Claude から起動されたのに一時フォルダが指定されていなければ、本物を使わずに止める**（#221・案A'）。
+        # Claude Code が打つコマンドには環境変数 CLAUDECODE が付き、`bash -c`・`nohup`・子のプロセスにも
+        # 引き継がれる。コマンドの文字列を読む hook と違い、書き方ではすり抜けられない。
+        # ユーザーの端末には付かないので、番組づくりは今までどおり。ユーザーが `!` で本物を動かすときは
+        # OKURADI_REAL=1 を付ける（Claude の打つコマンドにこの語があれば hook が止める。`!` には hook が効かない）
+        if os.environ.get("CLAUDECODE") and os.environ.get("OKURADI_REAL") != "1":
+            raise RuntimeError(
+                "Claude から起動されたので、本物の回（リポジトリ直下）は使いません（#221）。"
+                "試すときは OKURADI_EPISODES_DIR を一時フォルダに向けてください（docs/testing.md）。"
+                "本物で動かすときは、ユーザーが自分の端末か `! OKURADI_REAL=1 ...` で打ちます")
         return Path(__file__).parent.resolve()
     root = Path(override).expanduser().resolve()
     if not root.is_dir():
