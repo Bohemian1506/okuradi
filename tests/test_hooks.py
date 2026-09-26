@@ -667,55 +667,58 @@ def test_ペインの一覧が取れなければ触らない(sub, tmp_path):
     assert not [c for c in calls if c.split()[:2] in (["pane", "split"], ["pane", "close"], ["pane", "run"])]
 
 
-# ---------------------------------------------------------------- 本物の作業フォルダ（#221）
+# ---------------------------------------------------------------- 本物の作業フォルダ（#221・案A'）
+# 起動の守りは build.episodes_root() にある（test_sandbox_root.py）。hook が見るのは
+# 「本物を使う合言葉」と「本物のサーバー（8000番）への書き込み」だけ。
 
 REAL = "block-real-workspace.py"
+WORD = "OKURADI_" + "REAL"
 BUILD = ".venv/bin/python " + "build.py"
-SERVER = ".venv/bin/python -m " + "uvicorn web.main:app"
-ENVSET = "OKURADI_EPISODES_DIR=/tmp/x "
 URL = "http://127.0.0.1:" + "8000"
 
 
 @pytest.mark.parametrize("command", [
-    f"{BUILD} ep01 --from clean --to clean",
-    f"python3 {'build.py'} ep01 --to scan",
-    f"cd /home/x && {BUILD} ep01",
-    f"{SERVER} --port 8123",
-    "uvicorn " + "web.main:app --reload",
-    "streamlit " + "run app.py",
-    f"OKURADI_SETTINGS=/tmp/x/s.yml {BUILD} ep01",     # 回の場所を付けていない
-    f"OKURADI_EPISODES_DIR= {BUILD} ep01",              # 空
+    f"{WORD}=1 {BUILD} ep01 --to scan",
+    f"export {WORD}=1 && {BUILD} ep01",
+    f'bash -c "{WORD}=1 {BUILD} ep01"',
+    f"env {WORD}=1 nohup {BUILD} ep01 &",
+    f"echo {WORD}",                                     # 語が出たら止める（隠しようのない形にする）
     f"curl -s -X PUT {URL}/api/settings -d '{{}}'",
+    f"curl -s {URL}/api/settings -sXPUT",               # まとめて書いた指定
+    f"curl -s {URL}/api/settings -sd '{{}}'",
     f"curl -s {URL}/api/episodes/ep01/steps/mix/run -X POST",
     f"curl -sS --data '{{}}' {URL}/api/settings",
     f"curl -s -F f=@a.wav {URL}/api/episodes/ep01/source",
     f"curl -s --request DELETE {URL}/api/episodes/ep01/chat",
+    f"U={URL}/api/settings; curl -s -X PUT $U -d '{{}}'",   # URL を変数に入れる
+    f'bash -c "curl -s -X PUT {URL}/api/settings"',
+    f"timeout 10 curl -s -X PUT {URL}/api/settings",
+    f"wget --method=PUT {URL}/api/settings",
+    f"wget --post-data=x {URL}/api/settings",
+    f"python3 - <<'EOF'\nimport urllib.request as u\nu.urlopen(u.Request('{URL}/api/settings', method='PUT'))\nEOF",
 ])
-def test_本物の作業フォルダで試すのは止める(command):
+def test_本物に届く道は止める(command):
     assert run(REAL, command)
 
 
 @pytest.mark.parametrize("command", [
-    f"{ENVSET}{BUILD} ep01 --from clean --to clean",
-    f"{ENVSET}OKURADI_SETTINGS=/tmp/x/s.yml {SERVER} --port 8123",
-    f'OKURADI_EPISODES_DIR="$TMP" {BUILD} ep01',
-    f"export OKURADI_EPISODES_DIR=/tmp/x && {BUILD} ep01",
-    f"env OKURADI_EPISODES_DIR=/tmp/x {BUILD} ep01",
-    f"git diff {'build.py'}",                          # 読むだけ
-    f"sed -n 1,20p {'build.py'}",
-    f"grep -n step_mix {'build.py'}",
+    f"OKURADI_EPISODES_DIR=/tmp/x {BUILD} ep01 --from clean --to clean",
+    f"{BUILD} ep01 --to scan",                          # 起動そのものは build.py の中で止まる（hook では見ない）
+    f'git commit -m "例: cd web && python3 ../{"build.py"} ep01 は使わない"',   # 引用符の中の文章
+    f'echo "手順: cd web && python3 ../{"build.py"} ep01" >> note.md',
     ".venv/bin/python -m pytest -q",
     f"curl -s {URL}/api/episodes",                      # 読むだけ
-    f"curl -fsS -o /dev/null {URL}/",                   # -f は読むだけ
-    f"curl -s -X PUT http://127.0.0.1:8123/api/settings -d '{{}}'",   # 一時フォルダに向けた別の番号
-    f"git commit -F - <<'EOF'\n{BUILD} ep01 を直す\nEOF",              # 説明文の中の文字列
+    f"curl -fsS -o /dev/null {URL}/",
+    f"curl -s -D - {URL}/",                             # -D はヘッダを書き出すだけ
+    f"curl -s -X PUT http://127.0.0.1:8123/api/settings -d '{{}}'",   # 別の番号（一時フォルダのサーバー）
+    f"git commit -F - <<'EOF'\n{WORD}=1 を足した\nEOF",               # 説明文（Bash が実行しない）
 ])
-def test_一時フォルダに向けたものと読むだけのものは通す(command):
+def test_それ以外は通す(command):
     assert not run(REAL, command)
 
 
-def test_区切り語が来ないヒアドキュメントでも本物の起動は止める():
-    assert run(REAL, f"cat <<EOF\n{BUILD} ep01")
+def test_区切り語が来ないヒアドキュメントでも合言葉は止める():
+    assert run(REAL, f"cat <<EOF\n{WORD}=1 {BUILD} ep01")
 
 
 def test_入力が読めないときは止める():
