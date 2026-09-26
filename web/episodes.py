@@ -5,13 +5,24 @@ build.py の関数をそのまま使う皮。処理の実体は build.py 側に�
 
 import copy
 import shutil
+import sys
 from pathlib import Path
 
 import yaml
 
 import build
 
-ROOT = Path(build.__file__).parent.resolve()
+# コードの場所（build.py がある場所）。`gh`・`claude -p` の cwd や、settings.yml
+# の既定の置き場所はここ。環境変数では変わらない（#221）。
+CODE_ROOT = Path(build.__file__).parent.resolve()
+
+# 回（ep01 など）を置く場所。既定は CODE_ROOT と同じだが、環境変数
+# `OKURADI_EPISODES_DIR` があればそこに変わる（担当が一時フォルダへ試すため。#221）。
+# 存在しない・フォルダでないときは build.episodes_root() が理由を出して止める。
+ROOT = build.episodes_root()
+
+# 本物か一時フォルダかを取り違えないための1行（起動時に出す。#221）。
+print(f"[okuradi] 回の置き場所: {ROOT}", file=sys.stderr)
 
 # GUI で見せる7工程。build.py の cut と upload は GUI では使わない（docs/components.md）
 STEPS = [

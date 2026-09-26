@@ -665,3 +665,79 @@ def test_ペインの一覧が取れなければ触らない(sub, tmp_path):
     assert proc.returncode == 0
     assert "取れなかった" in proc.stdout
     assert not [c for c in calls if c.split()[:2] in (["pane", "split"], ["pane", "close"], ["pane", "run"])]
+
+
+# ---------------------------------------------------------------- 本物の作業フォルダ（#221・案A'）
+# 起動の守りは build.episodes_root() にある（test_sandbox_root.py）。hook が見るのは
+# 「本物を使う合言葉」と「本物のサーバー（8000番）への書き込み」だけ。
+
+REAL = "block-real-workspace.py"
+WORD = "OKURADI_" + "REAL"
+MARK = "CLAUDE" + "CODE"
+BUILD = ".venv/bin/python " + "build.py"
+URL = "http://127.0.0.1:" + "8000"
+
+
+@pytest.mark.parametrize("command", [
+    f"{WORD}=1 {BUILD} ep01 --to scan",
+    f"export {WORD}=1 && {BUILD} ep01",
+    f'bash -c "{WORD}=1 {BUILD} ep01"',
+    f"env {WORD}=1 nohup {BUILD} ep01 &",
+    f"echo {WORD}",                                     # 語が出たら止める（隠しようのない形にする）
+    f"curl -s -X PUT {URL}/api/settings -d '{{}}'",
+    f"curl -s {URL}/api/settings -sXPUT",               # まとめて書いた指定
+    f"curl -s {URL}/api/settings -sd '{{}}'",
+    f"curl -s {URL}/api/episodes/ep01/steps/mix/run -X POST",
+    f"curl -sS --data '{{}}' {URL}/api/settings",
+    f"curl -s -F f=@a.wav {URL}/api/episodes/ep01/source",
+    f"curl -s --request DELETE {URL}/api/episodes/ep01/chat",
+    f"U={URL}/api/settings; curl -s -X PUT $U -d '{{}}'",   # URL を変数に入れる
+    f'bash -c "curl -s -X PUT {URL}/api/settings"',
+    f"timeout 10 curl -s -X PUT {URL}/api/settings",
+    f"wget --method=PUT {URL}/api/settings",
+    f"wget --post-data=x {URL}/api/settings",
+    f"python3 - <<'EOF'\nimport urllib.request as u\nu.urlopen(u.Request('{URL}/api/settings', method='PUT'))\nEOF",
+    # 起動の守りが見る印を外す（#228 の3回目のレビュー）
+    f"env -u {MARK} {BUILD} ep01 --to scan",
+    f"unset {MARK}; {BUILD} ep01",
+    f"bash -c 'unset {MARK}; {BUILD} ep01'",
+    f"env -i PATH=/usr/bin {BUILD} ep01",
+    f"env --ignore-environment {BUILD} ep01",
+    # 8000番の書き方の違い（curl が本当に 8000 番へ繋ぐことは確かめてある）
+    "curl -s -X PUT http://127.0.0.1:0" + "8000/api/settings",
+    "curl -s -X PUT http://127.1:" + "8000/api/settings",
+    "curl -s -X PUT http://2130706433:" + "8000/api/settings",
+    "HOST=127.0.0.1; PORT=" + "8000; curl -s -X PUT http://$HOST:$PORT/api/settings",
+])
+def test_本物に届く道は止める(command):
+    assert run(REAL, command)
+
+
+@pytest.mark.parametrize("command", [
+    f"OKURADI_EPISODES_DIR=/tmp/x {BUILD} ep01 --from clean --to clean",
+    f"{BUILD} ep01 --to scan",                          # 起動そのものは build.py の中で止まる（hook では見ない）
+    f'git commit -m "例: cd web && python3 ../{"build.py"} ep01 は使わない"',   # 引用符の中の文章
+    f'echo "手順: cd web && python3 ../{"build.py"} ep01" >> note.md',
+    ".venv/bin/python -m pytest -q",
+    f"curl -s {URL}/api/episodes",                      # 読むだけ
+    f"curl -fsS -o /dev/null {URL}/",
+    f"curl -s -D - {URL}/",                             # -D はヘッダを書き出すだけ
+    f"curl -s -X PUT http://127.0.0.1:8123/api/settings -d '{{}}'",   # 別の番号（一時フォルダのサーバー）
+    f"git commit -F - <<'EOF'\n{WORD}=1 を足した\nEOF",               # 説明文（Bash が実行しない）
+    f"git commit -F - <<'EOF'\n{MARK} を見る守り\nEOF",
+    "curl -s http://127.1:" + "8000/api/episodes",       # 別表記でも、読むだけは通す
+    "HOST=x; PORT=" + "8123; curl -s -X PUT http://$HOST:$PORT/api/settings",
+    "env PATH=/usr/bin ls",                               # env -i でない env
+])
+def test_それ以外は通す(command):
+    assert not run(REAL, command)
+
+
+def test_区切り語が来ないヒアドキュメントでも合言葉は止める():
+    assert run(REAL, f"cat <<EOF\n{WORD}=1 {BUILD} ep01")
+
+
+def test_入力が読めないときは止める():
+    proc = subprocess.run([str(HOOKS / REAL)], input="{壊れた", capture_output=True, text=True,
+                          env={"PATH": "/usr/bin:/bin"})
+    assert proc.returncode != 0

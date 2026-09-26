@@ -1230,6 +1230,38 @@ HANDLERS = {
 }
 
 
+def episodes_root():
+    """回（ep01 など）を置く場所。
+
+    既定はこのファイル（build.py）と同じ場所。環境変数 `OKURADI_EPISODES_DIR` が
+    あれば、そこを使う（担当が一時フォルダに向けて試すため。#221）。
+    **`claude -p` や `gh` の cwd（コードの場所）はこれと別**で、そちらは変えない
+    （`call_claude` の `cwd=Path(__file__).parent` を見よ）。
+
+    指定された場所が無い・フォルダでないときは、黙って直下に戻さず理由を出して
+    止める（本物のつもりで一時フォルダの綴りを間違えたときに気づけるように）。
+    """
+    override = os.environ.get("OKURADI_EPISODES_DIR")
+    if not override:
+        # **Claude から起動されたのに一時フォルダが指定されていなければ、本物を使わずに止める**（#221・案A'）。
+        # Claude Code が打つコマンドには環境変数 CLAUDECODE が付き、`bash -c`・`nohup`・子のプロセスにも
+        # 引き継がれる。コマンドの文字列を読む hook と違い、書き方ではすり抜けられない。
+        # ユーザーの端末には付かないので、番組づくりは今までどおり。ユーザーが `!` で本物を動かすときは
+        # OKURADI_REAL=1 を付ける（Claude の打つコマンドにこの語があれば hook が止める。`!` には hook が効かない）
+        if os.environ.get("CLAUDECODE") and os.environ.get("OKURADI_REAL") != "1":
+            raise RuntimeError(
+                "Claude から起動されたので、本物の回（リポジトリ直下）は使いません（#221）。"
+                "試すときは OKURADI_EPISODES_DIR を一時フォルダに向けてください（docs/testing.md）。"
+                "本物で動かすときは、ユーザーが自分の端末か `! OKURADI_REAL=1 ...` で打ちます")
+        return Path(__file__).parent.resolve()
+    root = Path(override).expanduser().resolve()
+    if not root.is_dir():
+        raise RuntimeError(
+            f"OKURADI_EPISODES_DIR がフォルダではありません: {root}"
+        )
+    return root
+
+
 def main():
     p = argparse.ArgumentParser(description="30分ラジオ 自動制作パイプライン")
     p.add_argument("episode")
@@ -1237,7 +1269,12 @@ def main():
     p.add_argument("--to", dest="end", choices=STEPS, default=STEPS[-1])
     args = p.parse_args()
 
-    root = Path(__file__).parent.resolve()
+    try:
+        root = episodes_root()
+    except RuntimeError as exc:
+        sys.exit(str(exc))
+    print(f"[okuradi] 回の置き場所: {root}")
+
     if not (root / args.episode).exists():
         sys.exit(f"{root / args.episode} がありません")
 

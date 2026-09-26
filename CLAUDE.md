@@ -31,6 +31,7 @@ clone し直したら `git config core.hooksPath .githooks` を実行する（`.
   - 無音の自動カットはしない（喋りの「間」を残す）
   - Claude は `claude -p` から呼ぶ（サブスクの枠で動かし、API キーの従量課金にしない）
   - **GUI が完成するまでも、コマンド（`python build.py ep01 ...`）で番組を作れる状態を保つ**。GUI で使わない `cut`・`upload` の工程も消さない
+  - **試すときは一時フォルダに向ける。本物の `ep*/` と `settings.yml` に書かない**（lead・Herdr で増やした Claude も。やり方は `docs/testing.md`。Claude から起動すると build.py が止まる。#221）
   - 将来の拡張（表情差分・BGM・コーナー制）を塞がない。画像の並びや `segments` は配列のまま扱う（README の設計メモ）
 - **決まっていること**: `docs/features.md`（機能）、`docs/components.md`（部品・画面）、Issue
 

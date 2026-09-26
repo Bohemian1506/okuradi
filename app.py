@@ -20,7 +20,8 @@ import streamlit as st
 
 import build
 
-ROOT = Path(__file__).parent.resolve()
+# 回を置く場所。環境変数 OKURADI_EPISODES_DIR で一時フォルダに向けられる（#221。build.py・新しい GUI とそろえる）
+ROOT = build.episodes_root()
 
 st.set_page_config(page_title="ラジオ制作", layout="wide")
 

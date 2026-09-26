@@ -26,7 +26,9 @@ import build
 
 from web import episodes
 
-ROOT = episodes.ROOT
+# build.py 自身の場所（コードの場所）。回を置く場所（episodes.ROOT）とは別
+# （#221）。子プロセスの cwd も、これまでどおりコードの場所にする
+ROOT = episodes.CODE_ROOT
 
 # GUI から動かせる工程。build.py の cut と upload は GUI では使わない。
 RUNNABLE = ["scan", "clean", "mix", "transcribe", "meta", "video"]
@@ -143,10 +145,13 @@ def _run(job):
            "--from", job.step, "--to", job.step]
     job.add_line(f"$ {' '.join(cmd[1:])}")
     try:
-        # 自分のプロセスグループにしておくと、子の子（ffmpeg）ごと止められる
+        # 自分のプロセスグループにしておくと、子の子（ffmpeg）ごと止められる。
+        # env=os.environ のまま渡す（環境変数をそのまま引き継ぐ）。build.py が
+        # OKURADI_EPISODES_DIR を見て「回を置く場所」を決めるので、GUI と CLI で
+        # ずれないようにするため（#221）
         job.proc = subprocess.Popen(
             cmd, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, start_new_session=True,
+            text=True, bufsize=1, start_new_session=True, env=dict(os.environ),
         )
     except OSError as exc:
         job.add_line(f"工程を始められませんでした: {exc}")

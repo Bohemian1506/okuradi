@@ -155,6 +155,11 @@ claude auth status   # authMethod が claude.ai になっていること
 初回の `upload` でブラウザが開くので許可する。以降は `token.json` が
 自動更新されるので、認証作業はもう出てこない。
 
+### 試すとき（担当向け）
+
+`build.py` や GUI を試しに動かすときは、本物の `ep*/`・`settings.yml` に触らず
+一時フォルダに向ける。やり方は [docs/testing.md](docs/testing.md)。
+
 ## 使い方
 
 ```
