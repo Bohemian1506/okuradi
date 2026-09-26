@@ -570,6 +570,19 @@ select.field { font-weight: 500; }
   font: 700 10px/14px sans-serif; text-align: center;
 }
 
+/* ---------------------------------------------------------------- コーナーの枠（#85 の3段目・仮置き） */
+
+.frames-list { display: flex; flex-direction: column; gap: 16px; }
+.frame-row { display: flex; flex-direction: column; gap: 6px; }
+.frame-row-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.frame-add {
+  background: var(--cream); border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--rule);
+  padding: 14px; display: flex; flex-direction: column; gap: 10px;
+  max-width: 420px;
+}
+.frame-dropzone { padding: 14px 10px; }
+
 /* ---------------------------------------------------------------- 部品10 収録ファイルカード */
 
 .source-card {

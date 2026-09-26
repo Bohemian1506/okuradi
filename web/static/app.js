@@ -61,10 +61,14 @@ const state = {
   chatError: "",
   detailLog: null,
   stream: null,
-  source: null,      // いま入っている収録ファイル
+  source: null,      // いま入っている収録ファイル（コーナーの枠が無い回だけ使う。#85 の3段目）
   obs: null,         // OBS のフォルダの様子
   sourceBusy: false,
   sourceError: "",
+  frames: null,      // コーナーの枠の一覧（#85 の3段目）
+  framesError: "",
+  frameBusy: {},     // 枠ごとの取り込み中・削除中（枠のid -> true）
+  frameObsOpen: null, // OBSの一覧を開いている枠のid
   scan: null,        // 下見の文字起こし
   at: 0,             // 再生位置（秒）
   playing: false,
@@ -273,11 +277,22 @@ function stepOf(key) {
 
 function screenRecording() {
   const box = el("div", "sections");
-  const has = state.source && state.source.state === "使える";
+  // コーナーが2つ以上ある回だけ、枠に分けて入れる形にする（#85 の3段目・仮置き）。
+  // コーナーが1つ（または0）の回は、いまの1本の入口のまま
+  // （ep01 のように timeline.yml を持たず 00_raw に直接置いた回を、
+  // 「空」と誤認させて上書きさせないため。これは実装中に見つけた既存回との衝突を避ける判断）。
+  const framed = state.frames && state.frames.frames && state.frames.frames.length >= 2;
 
-  box.appendChild(section(1, "音源を入れる",
-    "収録ファイルを1本置く。OBSの録画なら、工程を動かすときに音声を取り出します。",
-    has ? sourceCard() : sourceAdd()));
+  if (framed) {
+    box.appendChild(section(1, "音源を入れる",
+      "コーナーごとの枠に、収録ファイルを入れます。OBSの録画なら、工程を動かすときに音声を取り出します。",
+      framesSection()));
+  } else {
+    const has = state.source && state.source.state === "使える";
+    box.appendChild(section(1, "音源を入れる",
+      "収録ファイルを1本置く。OBSの録画なら、工程を動かすときに音声を取り出します。",
+      has ? sourceCard() : sourceAdd()));
+  }
 
   box.appendChild(section(2, "下見を読む",
     "ざっくりの文字起こし。行を押すとそこから再生。読むだけで直せません（カット点を探す用）。",
@@ -2241,6 +2256,269 @@ async function takeFromObs(name) {
   renderMain();
 }
 
+// ---------------------------------------------------------------- コーナーの枠に音源を入れる（#85 の3段目）
+// config.yml の segments（コーナーの並び）から枠を先に並べ、各枠に音源を入れる（案B）。
+// segments が空の回は、いまの1本の入口（sourceCard / sourceAdd）のまま（仮置き）。
+
+function framesSection() {
+  const box = el("div", "frames-list");
+  const obs = state.obs || { state: "未設定" };
+  if (obs.state !== "ok") {
+    const head = el("div", "obs-head");
+    head.appendChild(el("span", "title", obs.state === "見つかりません"
+      ? `OBSのフォルダが見つかりません: ${obs.dir}`
+      : "OBSの録画フォルダが未設定です"));
+    const set = el("button", "btn-plain", "フォルダを指定");
+    set.onclick = () => openObsDialog();
+    head.appendChild(set);
+    box.appendChild(head);
+  }
+
+  // どのコーナーにも当たらないクリップがある間は、枠の出し入れを止める
+  // （案A・2026-09-26・ユーザーの判断。黙って timeline.yml から落とすと edits まで消えるため）
+  const orphans = state.frames.orphans || [];
+  const blocked = orphans.length > 0;
+
+  for (const frame of state.frames.frames) {
+    box.appendChild(frameRow(frame, blocked));
+  }
+
+  if (blocked) {
+    box.appendChild(orphansSection(orphans));
+  }
+  if (state.actionError) {
+    const err = el("div", "source-error");
+    err.append(el("span", "mark", "!"), el("span", null, state.actionError));
+    box.appendChild(err);
+  }
+  return box;
+}
+
+function orphansSection(orphans) {
+  const row = el("div", "frame-row");
+  row.appendChild(el("div", "frame-row-label", "どのコーナーにも当たらないクリップ"));
+  const note = el("div", "wave-note is-caution");
+  note.append(el("span", "mark", "!"), el("span", null,
+    "コーナーを削除・並べ替えたときに残ったクリップです。ファイルは消していません。"
+    + "このクリップがある間は、枠に入れる・外すができません。外すか、コーナーを戻してください。"));
+  row.appendChild(note);
+  for (const orphan of orphans) {
+    row.appendChild(orphanCard(orphan));
+  }
+  return row;
+}
+
+function orphanCard(orphan) {
+  const card = el("div", "source-card");
+  const body = el("div", "body");
+  if (orphan.state === "使える") {
+    body.append(el("div", "name", orphan.name));
+    const about = [orphan.duration, orphan.kind, `録った日時 ${orphan.recorded_at}`].join(" · ");
+    body.append(el("div", "about", about));
+  } else {
+    body.append(el("div", "name", orphan.id));
+    body.append(el("div", "about", orphan.error || "音源がありません"));
+  }
+  const busy = !!state.frameBusy[orphan.id];
+  const remove = el("button", "btn-plain", busy ? "処理中…" : "外す");
+  remove.disabled = busy;
+  remove.onclick = () => {
+    if (confirm(`${orphan.name || orphan.id} を外しますか？（ファイルも消えます）`)) removeOrphan(orphan.id);
+  };
+  card.append(body, remove);
+  return card;
+}
+
+function frameRow(frame, blocked) {
+  const row = el("div", "frame-row");
+  row.appendChild(el("div", "frame-row-label", frame.label));
+  const busy = !!state.frameBusy[frame.id];
+  if (frame.state === "使える") {
+    row.appendChild(frameCard(frame, busy, blocked));
+  } else if (frame.state === "エラー") {
+    const err = el("div", "source-error");
+    err.append(el("span", "mark", "!"), el("span", null, frame.error || "音源がありません"));
+    row.appendChild(err);
+    row.appendChild(frameAdd(frame, busy, blocked));
+  } else {
+    row.appendChild(frameAdd(frame, busy, blocked));
+  }
+  return row;
+}
+
+function frameCard(frame, busy, blocked) {
+  const card = el("div", "source-card");
+  const body = el("div", "body");
+  body.append(el("div", "name", frame.name));
+  const about = [frame.duration, frame.kind, `録った日時 ${frame.recorded_at}`].join(" · ");
+  body.append(el("div", "about", about));
+
+  const badge = el("span", "badge-ok");
+  badge.append(el("span", "mark"), document.createTextNode("使える"));
+
+  const disabled = busy || blocked;
+  const picker = el("input");
+  picker.type = "file";
+  picker.accept = ".wav,.m4a,.mkv,.mp4,.mov,.flv";
+  picker.hidden = true;
+  picker.onchange = () => { if (picker.files[0]) uploadFrame(frame.id, picker.files[0]); };
+
+  const replace = el("button", "btn-plain", busy ? "処理中…" : "差し替える");
+  replace.disabled = disabled;
+  replace.title = blocked ? "どのコーナーにも当たらないクリップを外してください" : "";
+  replace.onclick = () => picker.click();
+
+  const remove = el("button", "btn-plain", "外す");
+  remove.disabled = disabled;
+  remove.title = replace.title;
+  remove.onclick = () => {
+    if (confirm(`${frame.label} の音源を外しますか？（ファイルも消えます）`)) removeFrame(frame.id);
+  };
+  card.append(body, badge, replace, remove, picker);
+  return card;
+}
+
+function frameAdd(frame, busy, blocked) {
+  const box = el("div", "frame-add");
+  const disabled = busy || blocked;
+
+  const zone = el("div", "dropzone frame-dropzone");
+  zone.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.8">${SVG.upload}</svg>`;
+  zone.append(el("div", "lead", busy ? "取り込んでいます…" : "ファイルをドロップ"),
+              el("div", "kinds", ACCEPTED_TEXT));
+
+  const picker = el("input");
+  picker.type = "file";
+  picker.accept = ".wav,.m4a,.mkv,.mp4,.mov,.flv";
+  picker.hidden = true;
+  picker.onchange = () => { if (picker.files[0]) uploadFrame(frame.id, picker.files[0]); };
+
+  const pick = el("button", "btn-plain", "ファイルを選ぶ");
+  pick.disabled = disabled;
+  pick.title = blocked ? "どのコーナーにも当たらないクリップを外してください" : "";
+  pick.onclick = () => picker.click();
+  zone.append(pick, picker);
+
+  zone.ondragover = (e) => {
+    e.preventDefault();
+    if (!blocked) zone.classList.add("is-over");
+  };
+  zone.ondragleave = () => zone.classList.remove("is-over");
+  zone.ondrop = (e) => {
+    e.preventDefault();
+    zone.classList.remove("is-over");
+    if (blocked) return;
+    if (e.dataTransfer.files[0]) uploadFrame(frame.id, e.dataTransfer.files[0]);
+  };
+  box.appendChild(zone);
+
+  const obs = state.obs || { state: "未設定", recordings: [] };
+  if (obs.state === "ok" && obs.recordings.length) {
+    const open = state.frameObsOpen === frame.id;
+    const toggle = el("button", "btn-plain", open ? "OBSの一覧を閉じる" : "OBSから選ぶ");
+    toggle.disabled = disabled;
+    toggle.onclick = () => {
+      state.frameObsOpen = open ? null : frame.id;
+      renderMain();
+    };
+    box.appendChild(toggle);
+    if (open) {
+      const list = el("div", "obs-list");
+      for (const rec of obs.recordings) {
+        const row = el("button", "obs-row");
+        row.disabled = disabled;
+        const rbody = el("div", "body");
+        rbody.append(el("span", "name", rec.name),
+                     el("span", "when", [rec.duration, rec.recorded_at].filter(Boolean).join(" · ")));
+        row.append(el("span", "mark"), rbody);
+        row.onclick = () => frameFromObs(frame.id, rec.name);
+        list.appendChild(row);
+      }
+      box.appendChild(list);
+    }
+  }
+  return box;
+}
+
+async function uploadFrame(frameId, file) {
+  state.frameBusy = { ...state.frameBusy, [frameId]: true };
+  state.actionError = "";
+  renderMain();
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const res = await fetch(
+      `/api/episodes/${state.selected.name}/frames/${encodeURIComponent(frameId)}`,
+      { method: "POST", body: form },
+    );
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || `${res.status}`);
+    state.frames = body;
+    await loadTimeline(state.selected.name);
+  } catch (err) {
+    state.actionError = err.message;
+  }
+  state.frameBusy = { ...state.frameBusy, [frameId]: false };
+  await reload({ keep: state.selected.name, keepSelected: true });
+  renderMain();
+}
+
+async function frameFromObs(frameId, name) {
+  state.frameBusy = { ...state.frameBusy, [frameId]: true };
+  state.actionError = "";
+  state.frameObsOpen = null;
+  renderMain();
+  try {
+    state.frames = await api(
+      `/api/episodes/${state.selected.name}/frames/${encodeURIComponent(frameId)}/from-obs`,
+      { method: "POST", body: JSON.stringify({ file: name }) },
+    );
+    await loadTimeline(state.selected.name);
+  } catch (err) {
+    state.actionError = err.message;
+  }
+  state.frameBusy = { ...state.frameBusy, [frameId]: false };
+  await reload({ keep: state.selected.name, keepSelected: true });
+  renderMain();
+}
+
+async function removeFrame(frameId) {
+  state.frameBusy = { ...state.frameBusy, [frameId]: true };
+  state.actionError = "";
+  renderMain();
+  try {
+    state.frames = await api(
+      `/api/episodes/${state.selected.name}/frames/${encodeURIComponent(frameId)}`,
+      { method: "DELETE" },
+    );
+    await loadTimeline(state.selected.name);
+  } catch (err) {
+    state.actionError = err.message;
+  }
+  state.frameBusy = { ...state.frameBusy, [frameId]: false };
+  await reload({ keep: state.selected.name, keepSelected: true });
+  renderMain();
+}
+
+async function removeOrphan(orphanId) {
+  state.frameBusy = { ...state.frameBusy, [orphanId]: true };
+  state.actionError = "";
+  renderMain();
+  try {
+    state.frames = await api(
+      `/api/episodes/${state.selected.name}/orphans/${encodeURIComponent(orphanId)}`,
+      { method: "DELETE" },
+    );
+    await loadTimeline(state.selected.name);
+  } catch (err) {
+    state.actionError = err.message;
+  }
+  state.frameBusy = { ...state.frameBusy, [orphanId]: false };
+  await reload({ keep: state.selected.name, keepSelected: true });
+  renderMain();
+}
+
 // ---------------------------------------------------------------- 部品4 工程実行ボタン
 
 function jobOf(step) {
@@ -3152,14 +3430,7 @@ async function selectEpisode(name) {
   state.playing = false;
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
   state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
-  // timeline.yml が壊れているときは EpisodeError の文が来るので、無い回（null）と分けて残す
-  state.timeline = null;
-  state.timelineError = "";
-  try {
-    state.timeline = await api(`/api/episodes/${name}/timeline`);
-  } catch (err) {
-    state.timelineError = err.message;
-  }
+  await loadTimeline(name);
   const echoes = await api(`/api/episodes/${name}/echoes`).catch(() => ({ echoes: [] }));
   state.echoes = echoes.echoes;
   state.echoesSaved = JSON.stringify(echoes.echoes);
@@ -3172,16 +3443,32 @@ async function selectEpisode(name) {
   state.chat = null;
   state.chatDraft = "";
   if (state.chatOpen) await loadChat();
-  [state.source, state.obs] = await Promise.all([
+  [state.source, state.obs, state.frames] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),
+    api(`/api/episodes/${name}/frames`).catch(() => ({ frames: [], orphans: [] })),
   ]);
+  state.framesError = "";
+  state.frameBusy = {};
+  state.frameObsOpen = null;
   state.save = "saved";
   state.saveError = "";
   renderEpisodes();
   renderSteps();
   renderMain();
   renderStatus();
+}
+
+// timeline.yml の並び（部品5・#85 の2段目）を読み直す。枠に音源を入れる・外すたびにも呼ぶ
+async function loadTimeline(name) {
+  // timeline.yml が壊れているときは EpisodeError の文が来るので、無い回（null）と分けて残す
+  state.timeline = null;
+  state.timelineError = "";
+  try {
+    state.timeline = await api(`/api/episodes/${name}/timeline`);
+  } catch (err) {
+    state.timelineError = err.message;
+  }
 }
 
 async function reload({ keep, keepSelected } = {}) {
