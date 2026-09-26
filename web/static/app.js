@@ -1805,7 +1805,14 @@ function buildTimelineMultitrack(sig, tracks) {
     overlapLaneRows(timelineView.mt, tracks);
     waitForTimelineReady(sig, timelineView.mt);
   });
-  // 読み込みが終わったことを知らせるイベントが来ないまま固まったら、待ち続けない
+  armTimelineTimeout(sig);
+}
+
+// 読み込みが終わったことを知らせるイベントが来ないまま固まったら、待ち続けない。
+// **段ごとに数え直す**（canplay まで / 全トラックの ready まで）。1つの15秒で2段をまかなうと、
+// 長い回で実際には読めているのに「失敗」と出る（#212 のレビュー）
+function armTimelineTimeout(sig) {
+  if (timelineView.timeoutId) clearTimeout(timelineView.timeoutId);
   timelineView.timeoutId = setTimeout(() => {
     if (timelineView.sig !== sig || timelineView.phase !== "読み込み中") return;
     timelineView.phase = "失敗";
@@ -1825,6 +1832,7 @@ function waitForTimelineReady(sig, mt) {
     finishTimelineLoad(sig);
     return;
   }
+  armTimelineTimeout(sig);
   let remaining = wavesurfers.length;
   wavesurfers.forEach((ws) => {
     const done = () => {
