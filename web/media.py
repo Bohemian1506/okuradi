@@ -129,28 +129,40 @@ def waveform(name):
 
 # ---------------------------------------------------------------- タイムライン（見るだけ・#85 の2段目）
 
-def timeline_source_path(name, filename):
-    """タイムラインのクリップが指す音源を配る。
+def _resolve_raw_source(raw_dir, source):
+    """`timeline.yml` の `source` を、`00_raw` の中の実在するファイルにだけ解決する。
 
-    `timeline.yml` の `source` をそのまま経路に使わない。`Path().name` で
-    基底名だけに削り、`00_raw` の外を指せないようにする
+    `Path().name` で基底名だけに削り、`00_raw` の外を指せないようにする
     （`web/timeline.py` の `_timeline_sources` / `build.join_sources` と同じ置き場所）。
+    **ファイルかどうかまで見る。** `..` は基底名にすると空文字になり、素通しすると
+    `00_raw` 自身（フォルダ）を指してしまう。`exists()` だけだとフォルダを
+    「見つかった」として通してしまい、後段の `ffprobe` がフォルダを渡されて
+    分かりにくい失敗をする（`timeline_source_path` と `_clip_duration` の
+    どちらも通る道なので、ここ1か所にまとめる）。
+    見つからなければ None（呼び出し側が理由の文言を書く）。
     """
-    ep_dir = episodes.resolve(name)
-    safe_name = Path(filename).name
-    found = ep_dir / "00_raw" / safe_name if safe_name else None
-    # **ファイルかどうかまで見る。** `..` や `.` は基底名にしても残り、`00_raw` の親（回のフォルダ）や
-    # `00_raw` 自身を指す。`exists()` だけだとフォルダを「見つかった」として返してしまう
+    safe_name = Path(source).name
+    found = raw_dir / safe_name if safe_name else None
     if not found or not found.is_file():
-        raise episodes.EpisodeError(f"音源がありません: {safe_name or filename}")
+        return None
+    return found
+
+
+def timeline_source_path(name, filename):
+    """タイムラインのクリップが指す音源を配る。"""
+    ep_dir = episodes.resolve(name)
+    found = _resolve_raw_source(ep_dir / "00_raw", filename)
+    if not found:
+        raise episodes.EpisodeError(f"音源がありません: {Path(filename).name or filename}")
     return found
 
 
 def _clip_duration(raw_dir, clip):
     """生音の長さ。読めなければ (None, 理由) を返す（止めずに、そのクリップにだけ付ける）。"""
-    found = raw_dir / Path(clip["source"]).name
-    if not found.exists():
-        return None, f"音源がありません: {found.name}"
+    found = _resolve_raw_source(raw_dir, clip["source"])
+    if not found:
+        name = Path(clip["source"]).name or clip["source"]
+        return None, f"音源がありません: {name}"
     try:
         return build.audio_duration(found), None
     except (OSError, ValueError, subprocess.SubprocessError) as exc:

@@ -292,15 +292,19 @@ function screenRecording() {
     cleanCard(), stepOf("clean")));
 
   // timeline.yml がある回だけ出す（#85 の2段目。いまは見るだけ）
+  const timelineNote = "timeline.yml に書いた音源の並び（見るだけ）。"
+    + "位置はカット前（生音）の長さで出しています。カット（edits）を書くと下見が失敗します"
+    + "（まだ工程に繋がっていません）。";
   if (state.timelineError) {
+    destroyTimelineMultitrack();
+    const card = el("div", "panel-card");
     const note = el("div", "wave-note is-error");
-    note.append(el("span", "mark", "!"), el("span", null, `timeline.yml: ${state.timelineError}`));
-    box.appendChild(section(5, "タイムラインの並びを確かめる",
-      "timeline.yml に書いた音源の並び。見るだけで、ここではまだ動かせません。", note));
+    note.append(el("span", "mark", "!"),
+                el("span", null, `タイムラインを読み込めませんでした: ${state.timelineError}`));
+    card.appendChild(note);
+    box.appendChild(section(5, "タイムラインの並びを確かめる", timelineNote, card));
   } else if (state.timeline && state.timeline.timeline) {
-    box.appendChild(section(5, "タイムラインの並びを確かめる",
-      "timeline.yml に書いた音源の並び。見るだけで、ここではまだ動かせません。",
-      timelineCard()));
+    box.appendChild(section(5, "タイムラインの並びを確かめる", timelineNote, timelineCard()));
   }
   return box;
 }
@@ -1699,10 +1703,19 @@ function timelineTracks(lanes) {
 // SE のクリップには最低幅を付ける（#86。全体表示だと1px未満になって掴めなくなるため）
 function overlapLaneRows(mt, tracks) {
   const containers = (mt.rendering && mt.rendering.containers) || [];
+  if (!tracks.length) return;
+  if (containers.length < tracks.length) {
+    // 静かに諦めない（CLAUDE.md）。トラックの箱が足りないと、以降は全部ずれて重ならない
+    console.warn("タイムライン: multitrack のトラックの箱が足りません。重ねずに並びます",
+                 { containers: containers.length, tracks: tracks.length });
+  }
   let prevLane = null;
   tracks.forEach((track, index) => {
     const box = containers[index];
-    if (!box) return;
+    if (!box) {
+      console.warn(`タイムライン: ${track.id} の箱が見つかりません`);
+      return;
+    }
     if (track.lane === "se") box.classList.add("timeline-clip-se");
     if (track.lane === prevLane) {
       const height = box.getBoundingClientRect().height || TRACK_HEIGHT;
@@ -1722,6 +1735,16 @@ function laneOverlaps(clips) {
     if (usable[i].start < usable[i - 1].start + usable[i - 1].duration - 0.001) return true;
   }
   return false;
+}
+
+// 回を移る・タイムラインの無い回に移ったときに片付ける（AudioContext などを残さない）
+function destroyTimelineMultitrack() {
+  if (timelineView.timeoutId) { clearTimeout(timelineView.timeoutId); timelineView.timeoutId = null; }
+  if (timelineView.mt) { timelineView.mt.destroy(); timelineView.mt = null; }
+  timelineView.box.innerHTML = "";
+  timelineView.phase = "空";
+  timelineView.error = "";
+  timelineView.sig = null;
 }
 
 function ensureTimelineMultitrack(lanes) {
@@ -1780,9 +1803,7 @@ function buildTimelineMultitrack(sig, tracks) {
   timelineView.mt.once("canplay", () => {
     if (timelineView.sig !== sig) return;
     overlapLaneRows(timelineView.mt, tracks);
-    timelineView.phase = "表示";
-    if (timelineView.timeoutId) { clearTimeout(timelineView.timeoutId); timelineView.timeoutId = null; }
-    renderMain();
+    waitForTimelineReady(sig, timelineView.mt);
   });
   // 読み込みが終わったことを知らせるイベントが来ないまま固まったら、待ち続けない
   timelineView.timeoutId = setTimeout(() => {
@@ -1791,6 +1812,55 @@ function buildTimelineMultitrack(sig, tracks) {
     timelineView.error = "音の読み込みに時間がかかっています。画面を開き直してください";
     renderMain();
   }, 15000);
+}
+
+// canplay はメタデータが読めた合図でしかなく、波形を描き終わった合図ではない
+// （実尺に近い7本・最大45MBで確かめたところ、canplay の0.35秒後では7本中1本しか
+// 描けていなかった。そろうまで8秒）。個々のトラックの内部 wavesurfer が出す
+// "ready"（波形を描き終えた合図）が全部そろうまで、読み込み中の帯を残す
+function waitForTimelineReady(sig, mt) {
+  const wavesurfers = mt.wavesurfers || [];
+  if (!wavesurfers.length) {
+    console.warn("タイムライン: 個々の波形が見つかりません。描き終わりを待たずに表示します");
+    finishTimelineLoad(sig);
+    return;
+  }
+  let remaining = wavesurfers.length;
+  wavesurfers.forEach((ws) => {
+    const done = () => {
+      if (timelineView.sig !== sig) return;
+      remaining -= 1;
+      if (remaining <= 0) finishTimelineLoad(sig);
+    };
+    ws.once("ready", done);
+    // 個別に失敗しても、ほかが描けているならそこまでは見せる（待ち続けない）
+    ws.once("error", () => {
+      console.warn("タイムライン: 波形を1つ描けませんでした");
+      done();
+    });
+  });
+}
+
+function finishTimelineLoad(sig) {
+  if (timelineView.sig !== sig) return;
+  timelineView.phase = "表示";
+  if (timelineView.timeoutId) { clearTimeout(timelineView.timeoutId); timelineView.timeoutId = null; }
+  renderMain();
+}
+
+// 読み込み中は、波形の箱の中に重ねて出す（部品13 の syncWaveCover と同じ作り。#59）。
+// 描き終わるまで消えないよう、waitForTimelineReady がそろうまで phase は「読み込み中」のまま
+function syncTimelineCover() {
+  const have = timelineView.box.querySelector(".wave-cover");
+  if (timelineView.phase !== "読み込み中") {
+    if (have) have.remove();
+    return;
+  }
+  const text = "音を読み込んでいます…";
+  if (have) return;
+  const cover = el("div", "wave-cover");
+  cover.append(el("span", "wave-cover-mark"), el("span", "wave-cover-text", text));
+  timelineView.box.appendChild(cover);
 }
 
 function timelineCard() {
@@ -1820,6 +1890,15 @@ function timelineCard() {
     card.appendChild(note);
   }
 
+  // クリップが1件も無い timeline.yml は、失敗ではなく空の状態として見せる
+  // （部品13 の .wave-empty と同じ扱い）
+  const totalClips = LANES.reduce((n, lane) => n + (lanes[lane] || []).length, 0);
+  if (!totalClips) {
+    destroyTimelineMultitrack();
+    card.appendChild(el("div", "wave-empty", "まだクリップがありません"));
+    return card;
+  }
+
   // 行の見出し（本編 / BGM / SE）。#86 の決定で同じレーンは1行に重ねるので、
   // クリップが1件でもあるレーンの分だけ、その順で並べる（仮置きの見た目）
   const laneRow = el("div", "timeline-row");
@@ -1835,14 +1914,10 @@ function timelineCard() {
   }
 
   ensureTimelineMultitrack(lanes);
+  syncTimelineCover();
   laneRow.appendChild(timelineView.box);
   card.appendChild(laneRow);
 
-  if (timelineView.phase === "読み込み中") {
-    const bar = el("div", "timeline-loading");
-    bar.append(el("span", null, "音を読み込んでいます…"), el("div", "running-bar"));
-    card.appendChild(bar);
-  }
   if (timelineView.phase === "失敗") {
     const note = el("div", "wave-note is-error");
     note.append(el("span", "mark", "!"), el("span", null, timelineView.error));
@@ -3063,6 +3138,8 @@ async function selectEpisode(name) {
   // 見えない場所で前の回の音が鳴り続ける
   stopWaves();
   stopVideo();
+  // 前の回のタイムライン（AudioContext を持つ）も片付ける。次に必要なら作り直す
+  destroyTimelineMultitrack();
   state.at = 0;
   state.playing = false;
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);

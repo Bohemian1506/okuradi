@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from web import episodes, media
+from web import episodes, media, timeline
 
 
 def sine(path, seconds, rate=48000):
@@ -128,3 +128,41 @@ def test_フォルダを指す名前は断る(ep, name):
     # 基底名にしても `..` と `.` は残り、回のフォルダや 00_raw 自身を指す。ファイルでなければ断る
     with pytest.raises(episodes.EpisodeError, match="音源がありません"):
         media.timeline_source_path("ep01", name)
+
+
+def test_sourceがフォルダを指していても止まらず理由を返す(ep):
+    # timeline_source_path と同じ守りを通っているか（直す前は 00_raw 自身を指して
+    # ffprobe に渡り、「could not convert string to float」という分かりにくい失敗をしていた）
+    write_timeline(ep, """version: 1
+lanes:
+  main:
+    - {id: op, source: '..', gap: 0}
+  bgm: []
+  se: []
+""")
+    got = media.timeline_view("ep01")["timeline"]
+    op = got["lanes"]["main"][0]
+    assert "音源がありません" in op["error"]
+    assert "could not convert" not in op["error"]
+    assert op["start"] is None
+
+
+# ---------------------------------------------------------------- web/timeline.py との整合性
+
+def test_位置の計算はtimeline_positionsと一致する(ep):
+    """timeline_view は positions() を直接使わず（長さが読めなくても止めないため）、
+    同じ式を別に書いている。durations が全部そろっているときは、答えが一致するはず。"""
+    sine(ep / "00_raw" / "op.wav", 2)
+    sine(ep / "00_raw" / "zunda.wav", 3)
+    sine(ep / "00_raw" / "bg1.wav", 1)
+    write_timeline(ep, TWO_WITH_BGM)
+
+    got = media.timeline_view("ep01")["timeline"]
+    durations = {c["id"]: c["duration"] for lane in got["lanes"].values() for c in lane}
+
+    data = timeline.read(ep)
+    expected = timeline.positions(data, durations)
+
+    for lane in got["lanes"].values():
+        for clip in lane:
+            assert clip["start"] == pytest.approx(expected[clip["id"]], abs=0.001), clip["id"]
