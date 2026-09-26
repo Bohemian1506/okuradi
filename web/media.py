@@ -5,11 +5,12 @@ import shutil
 import subprocess
 import wave
 from pathlib import Path
+from urllib.parse import quote
 
 
 import build
 
-from web import episodes
+from web import episodes, timeline
 
 # 試聴のとき、区間の前後にこれだけ余白を付ける（響きの尾まで聴けるように）
 PREVIEW_PAD = 0.4
@@ -123,6 +124,111 @@ def waveform(name):
         "url": f"/api/episodes/{name}/audio/trimmed",
         # 作り直したら読み直させる（ブラウザが古い音を使い回さないように）
         "at": int(path.stat().st_mtime),
+    }
+
+
+# ---------------------------------------------------------------- タイムライン（見るだけ・#85 の2段目）
+
+def timeline_source_path(name, filename):
+    """タイムラインのクリップが指す音源を配る。
+
+    `timeline.yml` の `source` をそのまま経路に使わない。`Path().name` で
+    基底名だけに削り、`00_raw` の外を指せないようにする
+    （`web/timeline.py` の `_timeline_sources` / `build.join_sources` と同じ置き場所）。
+    """
+    ep_dir = episodes.resolve(name)
+    safe_name = Path(filename).name
+    found = ep_dir / "00_raw" / safe_name if safe_name else None
+    # **ファイルかどうかまで見る。** `..` や `.` は基底名にしても残り、`00_raw` の親（回のフォルダ）や
+    # `00_raw` 自身を指す。`exists()` だけだとフォルダを「見つかった」として返してしまう
+    if not found or not found.is_file():
+        raise episodes.EpisodeError(f"音源がありません: {safe_name or filename}")
+    return found
+
+
+def _clip_duration(raw_dir, clip):
+    """生音の長さ。読めなければ (None, 理由) を返す（止めずに、そのクリップにだけ付ける）。"""
+    found = raw_dir / Path(clip["source"]).name
+    if not found.exists():
+        return None, f"音源がありません: {found.name}"
+    try:
+        return build.audio_duration(found), None
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return None, f"長さが読めません: {str(exc).splitlines()[0][:80]}"
+
+
+def timeline_view(name):
+    """`timeline.yml` の並びを、見るだけの形にする（部品はまだ無いので #85 の2段目で決める）。
+
+    **編集点（カット）はまだ工程に繋がっていない**（`web/timeline.py` の docstring・#144）。
+    そのため、いまは生音の長さをそのまま出来上がりの長さとして扱う。**これは仮置き**。
+    カットを工程に当てるようになったら（#85 の6段目）、ここも出来上がりの長さに直す必要がある。
+
+    `web/timeline.py` の `positions()` は長さが読めないと `EpisodeError` で止まる
+    （保存前の検証で使う分にはそれでよい）。ここは見るだけの画面なので、
+    音源が無い・長さが読めないクリップがあっても止めずに、そのクリップに理由を付けて返す。
+    """
+    ep_dir = episodes.resolve(name)
+    data = timeline.read(ep_dir)
+    if not data:
+        return {"timeline": None}
+
+    raw_dir = ep_dir / "00_raw"
+
+    def source_url(clip):
+        return f"/api/episodes/{name}/timeline-source/{quote(Path(clip['source']).name)}"
+
+    main_out = []
+    positions = {}
+    at = 0.0
+    broken = False   # 前のクリップの長さが分からないと、後ろの位置はもう出せない
+    for clip in data["lanes"]["main"]:
+        length, error = _clip_duration(raw_dir, clip)
+        entry = {
+            "id": clip["id"], "source": Path(clip["source"]).name,
+            "url": source_url(clip), "gap": clip["gap"],
+            "duration": round(length, 3) if length is not None else None,
+            "start": None, "error": None,
+        }
+        if error:
+            entry["error"] = error
+            broken = True
+        elif broken:
+            entry["error"] = "前のクリップの長さが分からないため、位置を計算できません"
+        else:
+            at = round(at + clip["gap"], 3)
+            entry["start"] = at
+            positions[clip["id"]] = at
+            at = round(at + length, 3)
+        main_out.append(entry)
+
+    def side_lane(lane):
+        out = []
+        for clip in data["lanes"][lane]:
+            length, error = _clip_duration(raw_dir, clip)
+            entry = {
+                "id": clip["id"], "source": Path(clip["source"]).name,
+                "url": source_url(clip), "anchor": clip["anchor"], "at": clip["at"],
+                "duration": round(length, 3) if length is not None else None,
+                "start": None, "error": None,
+            }
+            if error:
+                entry["error"] = error
+            elif clip["anchor"] not in positions:
+                entry["error"] = f"錨（{clip['anchor']}）の位置が分からないため計算できません"
+            else:
+                entry["start"] = round(positions[clip["anchor"]] + clip["at"], 3)
+            out.append(entry)
+        return out
+
+    return {
+        "timeline": {
+            "lanes": {
+                "main": main_out,
+                "bgm": side_lane("bgm"),
+                "se": side_lane("se"),
+            },
+        },
     }
 
 
