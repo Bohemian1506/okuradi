@@ -281,7 +281,14 @@ function screenRecording() {
   // 画面側で条件を作り直すと、サーバーの判定とずれることがある（#216 のレビュー）。
   const framed = !!(state.frames && state.frames.framed);
 
-  if (framed) {
+  if (state.framesError) {
+    // 取得に失敗したときは、黙って「1本だけの回」の形に戻さない（#216 のレビュー）
+    const card = el("div", "source-error");
+    card.append(el("span", "mark", "!"), el("span", null,
+      `音源の枠を読み込めませんでした: ${state.framesError}`));
+    box.appendChild(section(1, "音源を入れる",
+      "コーナーごとの枠に、収録ファイルを入れます。", card));
+  } else if (framed) {
     box.appendChild(section(1, "音源を入れる",
       "コーナーごとの枠に、収録ファイルを入れます。OBSの録画なら、工程を動かすときに音声を取り出します。",
       framesSection()));
@@ -2103,7 +2110,7 @@ function sourceCard() {
 
   const replace = el("button", "btn-plain", "差し替える");
   replace.onclick = () => {
-    if (confirm("いまの音源を差し替えますか？（00_raw のファイルを入れ替えます）")) {
+    if (confirm("いまの音源を差し替えますか？前の音源のファイルは消えます。")) {
       state.source = { state: "空" };
       state.actionError = "";
       renderMain();
@@ -2306,18 +2313,24 @@ function orphansSection(orphans) {
 // 枠と同じバッジ・エラーの見せ方にする（#216 のレビュー）
 function orphanCard(orphan) {
   const busy = !!state.frameBusy[orphan.id];
-  const remove = el("button", "btn-plain", busy ? "処理中…" : "外す");
-  remove.disabled = busy;
-  remove.onclick = () => {
+  const onRemove = () => {
     if (confirm(`${orphan.name || orphan.id} を外しますか？（ファイルも消えます）`)) removeOrphan(orphan.id);
   };
 
   if (orphan.state !== "使える") {
+    // エラー帯（.source-error）の中のボタンは、既存の作法（.save-error の中の
+    // .btn-tiny.is-plain）にそろえる（#216 のレビュー）
+    const remove = el("button", "btn-tiny is-plain", busy ? "処理中…" : "外す");
+    remove.disabled = busy;
+    remove.onclick = onRemove;
     const err = el("div", "source-error");
     err.append(el("span", "mark", "!"), el("span", null, orphan.error || "音源がありません"), remove);
     return err;
   }
 
+  const remove = el("button", "btn-plain", busy ? "処理中…" : "外す");
+  remove.disabled = busy;
+  remove.onclick = onRemove;
   const card = el("div", "source-card");
   const body = el("div", "body");
   body.append(el("div", "name", orphan.name));
@@ -2349,9 +2362,18 @@ function frameRow(frame, blocked) {
 // 差し替える前の確認の文。部品10（収録ファイルカード）の差し替えと同じ形に、
 // カットの件数を足す（差し替えると edits は空になるため。案A・2026-09-26・#216 のレビュー）
 function replaceConfirmText(frame) {
-  let msg = `${frame.label} の音源を差し替えますか？（00_raw のファイルを入れ替えます）`;
+  let msg = `${frame.label} の音源を差し替えますか？前の音源のファイルは消えます。`;
   if (frame.edits) msg += `\n前の録音のカットが${frame.edits}件あります。これも消えます。`;
   return msg;
+}
+
+// 空の枠・エラーの枠に入れる前の確認。**カットが残っている枠だけ**確認を挟む
+// （「エラー」＝音源ファイルが見つからない枠でも、クリップ自体にカットが
+// 残っていることがある。黙って入れ替えると気づかず消える。design・code のレビュー・#216）
+function placeConfirmText(frame) {
+  if (!frame.edits) return null;
+  return `${frame.label} に音源を入れますか？`
+    + `\n前の録音のカットが${frame.edits}件あります。これも消えます。`;
 }
 
 function frameCard(frame, busy, blocked) {
@@ -2405,11 +2427,20 @@ function frameAdd(frame, busy, blocked) {
   zone.append(el("div", "lead", busy ? "取り込んでいます…" : "ファイルをドロップ"),
               el("div", "kinds", ACCEPTED_TEXT));
 
+  // カットが残っている枠（音源ファイルが見つからない「エラー」の状態でも起こる）は、
+  // 差し替えと同じ確認を挟む。無ければ確認なしでそのまま入れる（#216 のレビュー）
+  const confirmPlace = () => {
+    const msg = placeConfirmText(frame);
+    return !msg || confirm(msg);
+  };
+
   const picker = el("input");
   picker.type = "file";
   picker.accept = ".wav,.m4a,.mkv,.mp4,.mov,.flv";
   picker.hidden = true;
-  picker.onchange = () => { if (picker.files[0]) uploadFrame(frame.id, picker.files[0]); };
+  picker.onchange = () => {
+    if (picker.files[0] && confirmPlace()) uploadFrame(frame.id, picker.files[0]);
+  };
 
   const pick = el("button", "btn-plain", "ファイルを選ぶ");
   pick.disabled = disabled;
@@ -2426,10 +2457,13 @@ function frameAdd(frame, busy, blocked) {
     e.preventDefault();
     zone.classList.remove("is-over");
     if (blocked) return;
-    if (e.dataTransfer.files[0]) uploadFrame(frame.id, e.dataTransfer.files[0]);
+    if (e.dataTransfer.files[0] && confirmPlace()) uploadFrame(frame.id, e.dataTransfer.files[0]);
   };
   box.appendChild(zone);
-  box.appendChild(obsPicker(frame, busy, blocked, null));
+  box.appendChild(obsPicker(frame, busy, blocked, (name) => {
+    const msg = placeConfirmText(frame);
+    return msg && `${msg}\n選ぶ録画: ${name}`;
+  }));
   return box;
 }
 
@@ -2464,7 +2498,9 @@ function obsPicker(frame, busy, blocked, confirmText) {
                    el("span", "when", [rec.duration, rec.recorded_at].filter(Boolean).join(" · ")));
       row.append(el("span", "mark"), rbody);
       row.onclick = () => {
-        if (confirmText && !confirm(confirmText(rec.name))) return;
+        // confirmText はカットが無ければ falsy を返す。そのときは確認しない（#216 のレビュー）
+        const msg = confirmText && confirmText(rec.name);
+        if (msg && !confirm(msg)) return;
         frameFromObs(frame.id, rec.name);
       };
       list.appendChild(row);
@@ -2845,7 +2881,7 @@ async function saveSegments() {
     state.saveError = "";
     // コーナーを変えると枠（画面2）も変わるので、ここで取り直す
     // （`reload` は selectEpisode を呼ばないため、放っておくと枠が古いまま。#216 のレビュー）
-    state.frames = await api(`/api/episodes/${saved.name}/frames`).catch(() => state.frames);
+    await loadFrames(saved.name);
     await loadTimeline(saved.name);
     await reload({ keep: saved.name, keepSelected: true });
   } catch (err) {
@@ -3450,6 +3486,19 @@ window.addEventListener("beforeunload", (event) => {
 
 // ---------------------------------------------------------------- 読み込み
 
+// 枠の一覧を取り直す。**読めないときは、黙って古い一覧や「1本だけの回」の形に戻さない**
+// （#216 のレビュー）。戻すと、枠の回なのに古い入口を出したり、消したコーナーの枠を出し続けたりする。
+// 回を選んだとき（selectEpisode）と、コーナーを保存したとき（saveSegments）の両方から呼ぶ
+async function loadFrames(name) {
+  state.frames = null;
+  state.framesError = "";
+  try {
+    state.frames = await api(`/api/episodes/${name}/frames`);
+  } catch (err) {
+    state.framesError = err.message;
+  }
+}
+
 async function selectEpisode(name) {
   const unsaved = unsavedThings();
   if (unsaved.length && state.selected && state.selected.name !== name) {
@@ -3483,12 +3532,11 @@ async function selectEpisode(name) {
   state.chat = null;
   state.chatDraft = "";
   if (state.chatOpen) await loadChat();
-  [state.source, state.obs, state.frames] = await Promise.all([
+  [state.source, state.obs] = await Promise.all([
     api(`/api/episodes/${name}/source`).catch(() => ({ state: "空" })),
     api("/api/obs").catch(() => ({ state: "未設定", recordings: [] })),
-    api(`/api/episodes/${name}/frames`).catch(() => ({ frames: [], orphans: [] })),
   ]);
-  state.framesError = "";
+  await loadFrames(name);
   state.frameBusy = {};
   state.frameObsOpen = null;
   state.save = "saved";

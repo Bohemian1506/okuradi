@@ -380,6 +380,22 @@ def test_1本だけなら今までどおり通る(ep):
     assert build.find_raw(ep).name == "a.wav"
 
 
+def test_仮のファイルは音源として数えない(ep):
+    """`.` で始まる名前（`web/sources.py` の `_place_raw` が使う一時ファイル）が残っていても、
+    枠が1つしか埋まっていない間は止まらない（#216 のレビュー）。
+    """
+    sine(ep["00_raw"] / "a.wav", 2)
+    (ep["00_raw"] / ".tmp-op-a.wav").write_bytes(b"")
+    assert [f.name for f in build.source_candidates(ep["00_raw"])] == ["a.wav"]
+    assert build.find_raw(ep).name == "a.wav"
+
+
+def test_仮の録画ファイルも数えない(ep):
+    (ep["00_raw"] / "収録.mkv").write_bytes(b"")
+    (ep["00_raw"] / ".tmp-op-収録.mkv").write_bytes(b"")
+    assert [f.name for f in build.source_candidates(ep["00_raw"])] == ["収録.mkv"]
+
+
 def test_録画から取り出したwavは音源として数えない(ep):
     """`録画名.trackN.wav` は `find_raw` 自身が作る。
 

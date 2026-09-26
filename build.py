@@ -122,6 +122,18 @@ AUDIO_EXTS = [".wav", ".m4a"]
 JOINED = "joined.wav"
 
 
+def _raw_listing(raw_dir):
+    """00_raw の中の、仮のファイル（`.` で始まる名前）を除いたファイル一覧。
+
+    `web/sources.py` の `_place_raw` が書き込み中に使う一時ファイル（`.tmp-...`）が
+    ここに混ざると、枠が1つしか埋まっていない間でも `_refuse_ambiguous` が
+    「音源が2本あります」と誤って断ってしまう（#216 のレビュー）。
+    """
+    if not raw_dir.is_dir():
+        return []
+    return [f for f in raw_dir.iterdir() if f.is_file() and not f.name.startswith(".")]
+
+
 def _timeline_sources(ep):
     """timeline.yml が並べている本編の音源を返す。無ければ None。
 
@@ -249,7 +261,7 @@ def find_raw(ep, cfg=None):
 
     raw_dir = ep["00_raw"]
     _refuse_ambiguous(raw_dir)
-    videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
+    videos = sorted(f for f in _raw_listing(raw_dir) if f.suffix.lower() in VIDEO_EXTS)
     if videos:
         return _track_wav(videos[0], cfg)
 
@@ -266,10 +278,7 @@ def audio_files(raw_dir):
     録画側は `suffix.lower()` で吸収しているのに、音声側だけ吸収していなかった。
     そのせいで **2本あるのに1本しか見えない**ことがあった（2026-09-22 のレビューで再現）。
     """
-    if not raw_dir.is_dir():
-        return []
-    return sorted((f for f in raw_dir.iterdir()
-                   if f.is_file() and f.suffix.lower() in AUDIO_EXTS),
+    return sorted((f for f in _raw_listing(raw_dir) if f.suffix.lower() in AUDIO_EXTS),
                   key=lambda f: f.name)
 
 
@@ -280,9 +289,7 @@ def source_candidates(raw_dir):
       - `録画名.trackN.wav`（録画から取り出したもの。`find_raw` が作る）
       - `joined.wav`（繋いだもの）
     """
-    if not raw_dir.is_dir():
-        return []
-    videos = sorted(f for f in raw_dir.iterdir() if f.suffix.lower() in VIDEO_EXTS)
+    videos = sorted(f for f in _raw_listing(raw_dir) if f.suffix.lower() in VIDEO_EXTS)
     stems = {v.stem for v in videos}
     others = []
     for found in audio_files(raw_dir):

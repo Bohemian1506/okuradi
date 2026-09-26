@@ -4,6 +4,7 @@
 """
 
 import io
+from pathlib import Path
 
 import pytest
 import yaml
@@ -501,3 +502,67 @@ def test_関係ない拡張子のファイルは消さない(framed):
     assert (framed / "00_raw" / "op.txt").exists()
     names = {f.name for f in (framed / "00_raw").iterdir()}
     assert names == {"op.wav", "op.txt"}
+
+
+# ---------------------------------------------------------------- PR #216 の2回目のレビューの直し
+
+def test_前回の仮ファイルの残骸を片付けてから書き込む(framed):
+    """`.tmp-<枠のid>-*` が残っていても、次に入れるときに片付けてから書く（#216 のレビュー）。
+
+    片付けないと `build.find_raw` が「音源が2本あります」と誤って断ってしまう。
+    """
+    (framed / "00_raw" / ".tmp-op-古い残骸.wav").write_bytes(b"stale")
+
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO(b"1"))
+
+    names = {f.name for f in (framed / "00_raw").iterdir()}
+    assert names == {"op.wav"}
+
+
+def test_replaceが失敗すると前のファイルが残り一時ファイルも片付く(framed, monkeypatch):
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO("前の音源".encode()))
+    before = (framed / "00_raw" / "op.wav").read_bytes()
+    before_timeline = timeline.read(framed)
+
+    def broken_replace(self, target):
+        raise OSError("rename に失敗しました")
+
+    monkeypatch.setattr(Path, "replace", broken_replace)
+
+    with pytest.raises(episodes.EpisodeError, match="音源を置けませんでした"):
+        sources.add_frame_from_upload("ep01", "op", "撮り直し.wav", io.BytesIO("あたらしい".encode()))
+
+    # 前のファイルはそのまま
+    assert (framed / "00_raw" / "op.wav").read_bytes() == before
+    # 一時ファイルも残らない
+    names = [f.name for f in (framed / "00_raw").iterdir()]
+    assert names == ["op.wav"]
+    assert not any(n.startswith(".tmp") for n in names)
+    # timeline.yml も書き換わっていない
+    assert timeline.read(framed) == before_timeline
+
+
+def test_拡張子が変わる差し替えでreplaceが失敗しても前のファイルが残る(framed, monkeypatch):
+    """拡張子が変わる差し替え（wav→mkv）でも、rename が失敗したら前の wav は残る。"""
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO("前の音源".encode()))
+
+    def broken_replace(self, target):
+        raise OSError("rename に失敗しました")
+
+    monkeypatch.setattr(Path, "replace", broken_replace)
+
+    with pytest.raises(episodes.EpisodeError, match="音源を置けませんでした"):
+        sources.add_frame_from_upload("ep01", "op", "撮り直し.mkv", io.BytesIO(b"1"))
+
+    assert (framed / "00_raw" / "op.wav").exists()
+    names = [f.name for f in (framed / "00_raw").iterdir()]
+    assert names == ["op.wav"]
+
+
+def test_仮のファイルは枠の音源として解決しない(framed):
+    """timeline.yml の source が仮のファイル名（`.` 始まり）を指していても、音源として扱わない。
+
+    実在していても（＝ファイルが無いから None なのではなく）解決しないことを確かめる。
+    """
+    (framed / "00_raw" / ".tmp-op-x.wav").write_bytes(b"1")
+    assert sources._resolve_frame_source(framed / "00_raw", ".tmp-op-x.wav") is None

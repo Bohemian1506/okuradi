@@ -240,10 +240,14 @@ def _resolve_frame_source(raw_dir, source):
     """`timeline.yml` の source を、00_raw の中の実在するファイルにだけ解決する。
 
     `web/media.py` の `_resolve_raw_source` と同じ考え方（外は指せない）。
+    **仮のファイル（`.` で始まる名前）は解決しない**（`_place_raw` の一時ファイルを
+    誤って枠の音源として拾わないため。#216 のレビュー）。
     """
     safe_name = Path(source or "").name
-    found = raw_dir / safe_name if safe_name else None
-    if not found or not found.is_file():
+    if not safe_name or safe_name.startswith("."):
+        return None
+    found = raw_dir / safe_name
+    if not found.is_file():
         return None
     return found
 
@@ -339,17 +343,23 @@ def frames_view(name):
     return {"frames": frames, "orphans": orphans, "framed": is_framed(ep_dir)}
 
 
-def _clear_stem(ep_dir, stem):
+def _clear_stem(ep_dir, stem, keep=None):
     """その名前（拡張子より前）の音源を消す。録画から取り出した `<stem>.trackN.wav` も一緒に消す。
 
     **音源として受け付ける拡張子（`ACCEPTED`）だけを見る。** 拡張子を見ずに消すと、
     たまたま同じ名前の関係ないファイル（`op.txt` など）まで消してしまうため（#216 のレビュー）。
+    **仮のファイル（`.` で始まる名前）は対象にしない。** `_place_raw` の一時ファイルを
+    誤って拾わないようにする（#216 のレビュー）。
+    `keep` を渡すと、そのファイルだけは消さない（置き換えた直後の新しいファイル自身など）。
     """
     raw = ep_dir / "00_raw"
     if not raw.is_dir():
         return
     for found in list(raw.iterdir()):
-        if not found.is_file() or found.suffix.lower() not in ACCEPTED:
+        if (not found.is_file() or found.name.startswith(".")
+                or found.suffix.lower() not in ACCEPTED):
+            continue
+        if keep is not None and found == keep:
             continue
         found_stem = found.stem
         if found_stem == stem:
@@ -360,12 +370,12 @@ def _clear_stem(ep_dir, stem):
             found.unlink()
 
 
-def _clear_frame(ep_dir, frame_id):
+def _clear_frame(ep_dir, frame_id, keep=None):
     """その枠に前からある音源だけを消す（他の枠のファイルは残す）。
 
     枠のファイル名は `<枠のid><拡張子>` に固定している（仮置き）ので、そこから見つける。
     """
-    _clear_stem(ep_dir, frame_id)
+    _clear_stem(ep_dir, frame_id, keep=keep)
 
 
 def _planned_main(ep_dir, frame_id, filename):
@@ -410,13 +420,25 @@ def _place_raw(ep_dir, frame_id, dst_name, write):
 
     先に前のファイルを消してから書き込むと、書き込みが途中で切れたときに
     **前の音源が空ファイルで残ってしまう**（差し替えなのに音が消える）。
-    一時名に書き終えてから、前のファイルを消して確定名に rename する順にする。
+    一時名に書き終えてから確定名に rename し、拡張子が変わった前のファイルや
+    `trackN.wav` の片付けは、そのあとにする。
+
+    - `rename`（`Path.replace`）は同じ名前を上書きできるので、**同じ名前に置き換える
+      ときは前を先に消す必要が無い**。rename が失敗したら、前のファイルは触らないまま
+      一時ファイルだけ片付けて `EpisodeError` にする（拡張子が変わる差し替えでも、
+      前のファイルは rename が成功するまで残っている）。
+    - 前回の書き込みが残した仮のファイル（`.tmp-<枠のid>-*`）は、
+      始める前に片付ける。残ったままだと `find_raw` が「音源が2本あります」と
+      誤って断ってしまう（#216 のレビュー）。
 
     write(tmp_path) が実際の書き込み（コピー）をする。途中で失敗したら、
     一時ファイルを消し、前のファイルはそのまま残して `EpisodeError` にする。
     """
     raw = ep_dir / "00_raw"
     raw.mkdir(parents=True, exist_ok=True)
+    for stale in raw.glob(f".tmp-{frame_id}-*"):
+        stale.unlink(missing_ok=True)
+
     tmp = raw / f".tmp-{frame_id}-{dst_name}"
     try:
         write(tmp)
@@ -426,8 +448,21 @@ def _place_raw(ep_dir, frame_id, dst_name, write):
             raise
         raise episodes.EpisodeError(f"音源を置けませんでした: {exc}") from exc
 
-    _clear_frame(ep_dir, frame_id)
-    tmp.replace(raw / dst_name)
+    dst = raw / dst_name
+    try:
+        tmp.replace(dst)
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        raise episodes.EpisodeError(f"音源を置けませんでした: {exc}") from exc
+
+    # 拡張子が変わった前のファイルや track の wav は、置き換えたあとに片付ける。
+    # 新しく置いたファイル自身（dst）は消さない
+    try:
+        _clear_frame(ep_dir, frame_id, keep=dst)
+    except OSError as exc:
+        raise episodes.EpisodeError(
+            f"音源は置き換わりましたが、前のファイルを片付けられませんでした: {exc}"
+        ) from exc
 
 
 def _write_stream(tmp, stream):
