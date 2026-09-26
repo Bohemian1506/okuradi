@@ -109,19 +109,24 @@ find_idle_pane() {
   return 1
 }
 
-# lead（claude）に渡す引数を出す（1行に1つ）。**最初の一言として `/始め` を渡す**（#194）。
-#   新しく起動      → /始め
-#   続きから（-c）  → --continue。/作業終了 の印があるときだけ /始め も
-# 続きからで印が無いのは「作業の途中で開き直した」ときなので、渡さない。
-# 渡さなくても、起動の hook の促しは残る（人の最初の一言を待つ形）。
+# lead（claude）に渡す引数を出す（1行に1つ）。続きから（-c）のときだけ --continue。
+#
+# **`/始め` はここで渡さない**（#205）。`herdr agent start` は「起動して入力待ちになった」ことを
+# 確かめてから名前を付ける。`/始め` を渡すと Claude がすぐ作業を始めて入力待ちにならず、
+# 30秒で失敗扱いになり、lead に名前が付かなかった（2回目の F12 で Claude が2つ立った）。
+# 起動して名前が付いたあとで、`herdr agent prompt` で送る（wants_hajime を見る）。
 lead_args() {
-  if [[ "$CONTINUE" == "on" ]]; then
-    echo "--continue"
-    [[ -e "$ROOT/.claude/state/作業終了" ]] && echo "/始め"
-  else
-    echo "/始め"
-  fi
+  [[ "$CONTINUE" == "on" ]] && echo "--continue"
   return 0
+}
+
+# 起動したあとで `/始め` を送るか（#194）。
+#   新しく起動      → 送る
+#   続きから（-c）  → /作業終了 の印があるときだけ送る
+# 続きからで印が無いのは「作業の途中で開き直した」ときなので、送らない。
+# 送らなくても、起動の hook の促しは残る（人の最初の一言を待つ形）。
+wants_hajime() {
+  [[ "$CONTINUE" != "on" || -e "$ROOT/.claude/state/作業終了" ]]
 }
 
 # ラベルでワークスペースを探す
@@ -289,7 +294,6 @@ else
   else
     say "$LEAD を起動します"
   fi
-  [[ " ${args[*]} " == *" /始め "* ]] && say "（最初に /始め を渡します）"
   # シェルがまだ入力を受け付けない（agent_pane_busy）ときだけ、少し待ってやり直す
   for _ in $(seq 1 10); do
     out=$(herdr agent start "$LEAD" --kind claude --pane "$pane" "${args[@]}" 2>&1)
@@ -298,9 +302,20 @@ else
     sleep 0.5
   done
   case "$code" in
-    "") say "$LEAD を起動しました" ;;
+    "")
+      say "$LEAD を起動しました"
+      # 名前が付いて入力待ちになったので、最初の一言を送る（#205）
+      if wants_hajime; then
+        out=$(herdr agent prompt "$LEAD" "/始め" 2>&1)
+        if jq -e '.error' >/dev/null 2>&1 <<<"$out" || ! jq -e '.result' >/dev/null 2>&1 <<<"$out"; then
+          say "（/始め を送れませんでした: $(error_of "$out")。$LEAD の画面で /始め を打ってください）"
+        else
+          say "（最初に /始め を送りました）"
+        fi
+      fi ;;
     agent_not_ready)
-      say "$LEAD は起動しましたが、確認の画面で止まっています。Herdr の画面で答えてください" ;;
+      say "$LEAD は起動しましたが、確認の画面で止まっています。Herdr の画面で答えてください"
+      wants_hajime && say "（答えたあと、/始め を打ってください）" ;;
     *) fail "$LEAD を起動できませんでした（$(error_of "$out")）。
 もう一度実行してください。続けて失敗するときは、Herdr の画面の okuradi の main タブで claude を手で起動し、
 Claude に「Herdr での自分の名前を $LEAD にして」と頼んでください" ;;
