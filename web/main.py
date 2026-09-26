@@ -164,6 +164,18 @@ def get_waveform(name: str):
     return _guard(media.waveform, name)
 
 
+@app.get("/api/episodes/{name}/timeline")
+def get_timeline(name: str):
+    """`timeline.yml` の並びを見るだけの形にして返す（#85 の2段目）。無い回は {"timeline": null}。"""
+    return _guard(media.timeline_view, name)
+
+
+@app.get("/api/episodes/{name}/timeline-source/{filename}")
+def get_timeline_source(name: str, filename: str):
+    path = _guard(media.timeline_source_path, name, filename)
+    return FileResponse(path, headers={"Accept-Ranges": "bytes"})
+
+
 @app.get("/api/episodes/{name}/echoes")
 def get_echoes(name: str):
     return {"echoes": _guard(episodes.read_echoes, name)}

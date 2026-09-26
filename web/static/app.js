@@ -69,6 +69,8 @@ const state = {
   at: 0,             // 再生位置（秒）
   playing: false,
   wave: null,        // 波形に使う音（trimmed.wav）の在りかと長さ
+  timeline: null,    // timeline.yml の並び（#85 の2段目。無い回は null のまま）
+  timelineError: "", // timeline.yml が壊れているときの理由（黙って隠さない）
   echoes: [],        // エコー区間
   echoesSaved: "",   // 保存されている中身（未保存かを見分ける）
   picked: -1,        // 選んでいる区間
@@ -288,6 +290,22 @@ function screenRecording() {
   box.appendChild(section(4, "整音して聴く",
     "前後の無音を切り、音量をそろえ、エコーをかける。聴いて確かめる1つ目の確認ポイント。",
     cleanCard(), stepOf("clean")));
+
+  // timeline.yml がある回だけ出す（#85 の2段目。いまは見るだけ）
+  const timelineNote = "timeline.yml に書いた音源の並び（見るだけ）。"
+    + "位置はカット前（生音）の長さで出しています。カット（edits）を書くと下見が失敗します"
+    + "（まだ工程に繋がっていません）。";
+  if (state.timelineError) {
+    destroyTimelineMultitrack();
+    const card = el("div", "panel-card");
+    const note = el("div", "wave-note is-error");
+    note.append(el("span", "mark", "!"),
+                el("span", null, `タイムラインを読み込めませんでした: ${state.timelineError}`));
+    card.appendChild(note);
+    box.appendChild(section(5, "タイムラインの並びを確かめる", timelineNote, card));
+  } else if (state.timeline && state.timeline.timeline) {
+    box.appendChild(section(5, "タイムラインの並びを確かめる", timelineNote, timelineCard()));
+  }
   return box;
 }
 
@@ -1638,6 +1656,284 @@ async function saveEchoes() {
   renderMain();
 }
 
+// ---------------------------------------------------------------- タイムライン（見るだけ・#85 の2段目）
+// timeline.yml がある回だけ、収録〜整音の画面に「並びを確かめる」欄を足す。
+// wavesurfer-multitrack（vendor/README.md）で本編・BGM・SEのクリップを1行ずつ並べる。
+// **見るだけ**（ドラッグでの移動・保存は次の段）。再生ボタンも置かない
+// （lib 側の初期化は音を鳴らさないので、静かなプレビューのまま）。
+const timelineView = {
+  box: el("div", "timeline-multitrack"),
+  mt: null, phase: "空", error: "", sig: null, timeoutId: null,
+};
+
+const LANE_LABEL = { main: "本編", bgm: "BGM", se: "SE" };
+const LANE_COLOR = { main: "#8a6f5c", bgm: "#5c7a8a", se: "#7a8a5c" };
+const LANES = ["main", "bgm", "se"];
+
+// 1トラック（wavesurfer-multitrack の1行）の高さ。CSS 側（.timeline-lane-label）
+// にも同じ数を書かず、ここから値渡しする（#86 で決めた「同じレーンは1行へ重ねる」の
+// 重ね幅と、見出しの高さを合わせるため。数を2か所に書き写すと片方だけ直っておかしくなる）
+const TRACK_HEIGHT = 40;
+
+function timelineTracks(lanes) {
+  const tracks = [];
+  for (const lane of LANES) {
+    for (const clip of lanes[lane] || []) {
+      // 位置が出せないクリップ（音源が無い・長さが読めない）は widget に混ぜず、
+      // 上の理由のバナーだけで見せる（止めずに、そのクリップにだけ理由を付ける）
+      if (clip.error || clip.start == null) continue;
+      tracks.push({
+        id: `${lane}-${clip.id}`,
+        lane,
+        url: clip.url,
+        startPosition: clip.start,
+        draggable: false,
+        options: { waveColor: LANE_COLOR[lane], progressColor: LANE_COLOR[lane], height: TRACK_HEIGHT },
+        markers: [{ time: 0, label: `${LANE_LABEL[lane]}: ${clip.id}`, color: "rgba(0,0,0,.35)" }],
+      });
+    }
+  }
+  return tracks;
+}
+
+// 同じレーンのクリップを1行へ重ねる（#86 の決定）。
+// ライブラリの描画は書き換えず、トラックの箱に負の margin-top を足すだけ
+// （#86 で実機確認済みの方法）。高さは決め打ちにせず、実際に描かれた箱の高さを測る
+// （TRACK_HEIGHT はあくまで指定値。ライブラリが余白などを足していないかは測って確かめる）。
+// SE のクリップには最低幅を付ける（#86。全体表示だと1px未満になって掴めなくなるため）
+function overlapLaneRows(mt, tracks) {
+  const containers = (mt.rendering && mt.rendering.containers) || [];
+  if (!tracks.length) return;
+  if (containers.length < tracks.length) {
+    // 静かに諦めない（CLAUDE.md）。トラックの箱が足りないと、以降は全部ずれて重ならない
+    console.warn("タイムライン: multitrack のトラックの箱が足りません。重ねずに並びます",
+                 { containers: containers.length, tracks: tracks.length });
+  }
+  let prevLane = null;
+  tracks.forEach((track, index) => {
+    const box = containers[index];
+    if (!box) {
+      console.warn(`タイムライン: ${track.id} の箱が見つかりません`);
+      return;
+    }
+    if (track.lane === "se") box.classList.add("timeline-clip-se");
+    if (track.lane === prevLane) {
+      const height = box.getBoundingClientRect().height || TRACK_HEIGHT;
+      box.style.marginTop = `-${height}px`;
+    }
+    prevLane = track.lane;
+  });
+}
+
+// レーンの中でクリップの時間が重なっていないか（#86「重なりは止めずに注意を出す」）。
+// 見た目でまったく分からなくなる（#86 で実機確認済み）ので、気づけるようにする
+function laneOverlaps(clips) {
+  const usable = (clips || [])
+    .filter((c) => c.start != null && c.duration != null)
+    .sort((a, b) => a.start - b.start);
+  for (let i = 1; i < usable.length; i++) {
+    if (usable[i].start < usable[i - 1].start + usable[i - 1].duration - 0.001) return true;
+  }
+  return false;
+}
+
+// 回を移る・タイムラインの無い回に移ったときに片付ける（AudioContext などを残さない）
+function destroyTimelineMultitrack() {
+  if (timelineView.timeoutId) { clearTimeout(timelineView.timeoutId); timelineView.timeoutId = null; }
+  if (timelineView.mt) { timelineView.mt.destroy(); timelineView.mt = null; }
+  timelineView.box.innerHTML = "";
+  timelineView.phase = "空";
+  timelineView.error = "";
+  timelineView.sig = null;
+}
+
+function ensureTimelineMultitrack(lanes) {
+  const tracks = timelineTracks(lanes);
+  const sig = JSON.stringify(tracks.map((t) => [t.id, t.url, t.startPosition]));
+  if (timelineView.sig === sig) return;
+  timelineView.sig = sig;
+
+  if (timelineView.mt) { timelineView.mt.destroy(); timelineView.mt = null; }
+  if (timelineView.timeoutId) { clearTimeout(timelineView.timeoutId); timelineView.timeoutId = null; }
+  timelineView.box.innerHTML = "";
+  timelineView.phase = "読み込み中";
+  timelineView.error = "";
+
+  if (!tracks.length) {
+    timelineView.phase = "失敗";
+    timelineView.error = "位置が出せるクリップがありません";
+    return;
+  }
+
+  // multitrack は作るときに器の横幅（clientWidth）を1度だけ測って以後使い回す。
+  // ここはまだ renderMain() が組み立てている途中で、器は画面に付いていない
+  // （clientWidth が 0）ので、いま作ると波形の幅が0のまま固定される。
+  // 1コマ待って、画面に付いてから作る
+  setTimeout(() => buildTimelineMultitrack(sig, tracks), 0);
+}
+
+function buildTimelineMultitrack(sig, tracks) {
+  if (timelineView.sig !== sig) return;   // 待っている間に並びが変わっていたら作らない
+
+  // 部品が読めていないことを黙って隠さない（部品13 と同じ考え方）
+  const lib = window.Multitrack;
+  if (!lib || typeof lib.create !== "function") {
+    timelineView.phase = "失敗";
+    timelineView.error = "タイムラインの部品（multitrack.min.js）が読み込めませんでした。"
+                        + "web/static/vendor/ にファイルがあるか確かめてください";
+    renderMain();
+    return;
+  }
+
+  try {
+    timelineView.mt = lib.create(tracks, {
+      container: timelineView.box,
+      cursorWidth: 2,
+      cursorColor: "#e8c39e",
+      // trackBorderColor は付けない。ライブラリはトラックの間に2pxの仕切りを挟むので、
+      // 同じレーンで重ねた分だけ隙間が積み重なってずれる（レーンの境目は左の見出しで示す）
+    });
+  } catch (err) {
+    timelineView.phase = "失敗";
+    timelineView.error = `タイムラインを作れませんでした: ${err.message}`;
+    renderMain();
+    return;
+  }
+
+  timelineView.mt.once("canplay", () => {
+    if (timelineView.sig !== sig) return;
+    overlapLaneRows(timelineView.mt, tracks);
+    waitForTimelineReady(sig, timelineView.mt);
+  });
+  armTimelineTimeout(sig);
+}
+
+// 読み込みが終わったことを知らせるイベントが来ないまま固まったら、待ち続けない。
+// **段ごとに数え直す**（canplay まで / 全トラックの ready まで）。1つの15秒で2段をまかなうと、
+// 長い回で実際には読めているのに「失敗」と出る（#212 のレビュー）
+function armTimelineTimeout(sig) {
+  if (timelineView.timeoutId) clearTimeout(timelineView.timeoutId);
+  timelineView.timeoutId = setTimeout(() => {
+    if (timelineView.sig !== sig || timelineView.phase !== "読み込み中") return;
+    timelineView.phase = "失敗";
+    timelineView.error = "音の読み込みに時間がかかっています。画面を開き直してください";
+    renderMain();
+  }, 15000);
+}
+
+// canplay はメタデータが読めた合図でしかなく、波形を描き終わった合図ではない
+// （実尺に近い7本・最大45MBで確かめたところ、canplay の0.35秒後では7本中1本しか
+// 描けていなかった。そろうまで8秒）。個々のトラックの内部 wavesurfer が出す
+// "ready"（波形を描き終えた合図）が全部そろうまで、読み込み中の帯を残す
+function waitForTimelineReady(sig, mt) {
+  const wavesurfers = mt.wavesurfers || [];
+  if (!wavesurfers.length) {
+    console.warn("タイムライン: 個々の波形が見つかりません。描き終わりを待たずに表示します");
+    finishTimelineLoad(sig);
+    return;
+  }
+  armTimelineTimeout(sig);
+  let remaining = wavesurfers.length;
+  wavesurfers.forEach((ws) => {
+    const done = () => {
+      if (timelineView.sig !== sig) return;
+      remaining -= 1;
+      if (remaining <= 0) finishTimelineLoad(sig);
+    };
+    ws.once("ready", done);
+    // 個別に失敗しても、ほかが描けているならそこまでは見せる（待ち続けない）
+    ws.once("error", () => {
+      console.warn("タイムライン: 波形を1つ描けませんでした");
+      done();
+    });
+  });
+}
+
+function finishTimelineLoad(sig) {
+  if (timelineView.sig !== sig) return;
+  timelineView.phase = "表示";
+  if (timelineView.timeoutId) { clearTimeout(timelineView.timeoutId); timelineView.timeoutId = null; }
+  renderMain();
+}
+
+// 読み込み中は、波形の箱の中に重ねて出す（部品13 の syncWaveCover と同じ作り。#59）。
+// 描き終わるまで消えないよう、waitForTimelineReady がそろうまで phase は「読み込み中」のまま
+function syncTimelineCover() {
+  const have = timelineView.box.querySelector(".wave-cover");
+  if (timelineView.phase !== "読み込み中") {
+    if (have) have.remove();
+    return;
+  }
+  const text = "音を読み込んでいます…";
+  if (have) return;
+  const cover = el("div", "wave-cover");
+  cover.append(el("span", "wave-cover-mark"), el("span", "wave-cover-text", text));
+  timelineView.box.appendChild(cover);
+}
+
+function timelineCard() {
+  const tl = state.timeline;
+  if (!tl || !tl.timeline) return null;   // timeline.yml が無い回では出さない
+
+  const card = el("div", "panel-card");
+  const lanes = tl.timeline.lanes;
+
+  for (const lane of LANES) {
+    for (const clip of lanes[lane] || []) {
+      if (!clip.error) continue;
+      const note = el("div", "wave-note is-error");
+      note.append(el("span", "mark", "!"),
+                  el("span", null, `${LANE_LABEL[lane]} ${clip.id}: ${clip.error}`));
+      card.appendChild(note);
+    }
+  }
+
+  // レーンの中で時間が重なっていたら注意を出す（止めない。#86 の仮置き）
+  const overlapping = LANES.filter((lane) => laneOverlaps(lanes[lane]));
+  if (overlapping.length) {
+    const note = el("div", "wave-note is-caution");
+    note.append(el("span", "mark", "!"), el("span", null,
+      `${overlapping.map((l) => LANE_LABEL[l]).join("・")}のクリップの時間が重なっています`
+      + "（重なった下のクリップは掴めません。見た目でも判別できません）"));
+    card.appendChild(note);
+  }
+
+  // クリップが1件も無い timeline.yml は、失敗ではなく空の状態として見せる
+  // （部品13 の .wave-empty と同じ扱い）
+  const totalClips = LANES.reduce((n, lane) => n + (lanes[lane] || []).length, 0);
+  if (!totalClips) {
+    destroyTimelineMultitrack();
+    card.appendChild(el("div", "wave-empty", "まだクリップがありません"));
+    return card;
+  }
+
+  // 行の見出し（本編 / BGM / SE）。#86 の決定で同じレーンは1行に重ねるので、
+  // クリップが1件でもあるレーンの分だけ、その順で並べる（仮置きの見た目）
+  const laneRow = el("div", "timeline-row");
+  const shown = LANES.filter((lane) => (lanes[lane] || []).some((c) => c.start != null));
+  if (shown.length) {
+    const labels = el("div", "timeline-lane-labels");
+    shown.forEach((lane) => {
+      const label = el("div", "timeline-lane-label", LANE_LABEL[lane]);
+      label.style.height = `${TRACK_HEIGHT}px`;
+      labels.appendChild(label);
+    });
+    laneRow.appendChild(labels);
+  }
+
+  ensureTimelineMultitrack(lanes);
+  syncTimelineCover();
+  laneRow.appendChild(timelineView.box);
+  card.appendChild(laneRow);
+
+  if (timelineView.phase === "失敗") {
+    const note = el("div", "wave-note is-error");
+    note.append(el("span", "mark", "!"), el("span", null, timelineView.error));
+    card.appendChild(note);
+  }
+  return card;
+}
+
 // ---------------------------------------------------------------- 部品11・12 下見
 
 function scanCard() {
@@ -2850,10 +3146,20 @@ async function selectEpisode(name) {
   // 見えない場所で前の回の音が鳴り続ける
   stopWaves();
   stopVideo();
+  // 前の回のタイムライン（AudioContext を持つ）も片付ける。次に必要なら作り直す
+  destroyTimelineMultitrack();
   state.at = 0;
   state.playing = false;
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
   state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
+  // timeline.yml が壊れているときは EpisodeError の文が来るので、無い回（null）と分けて残す
+  state.timeline = null;
+  state.timelineError = "";
+  try {
+    state.timeline = await api(`/api/episodes/${name}/timeline`);
+  } catch (err) {
+    state.timelineError = err.message;
+  }
   const echoes = await api(`/api/episodes/${name}/echoes`).catch(() => ({ echoes: [] }));
   state.echoes = echoes.echoes;
   state.echoesSaved = JSON.stringify(echoes.echoes);
