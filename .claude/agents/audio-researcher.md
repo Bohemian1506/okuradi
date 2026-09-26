@@ -30,10 +30,10 @@ tools: Bash, Read, Grep, Glob, WebFetch, WebSearch
 
 ## 本物の作業フォルダに触らない（#221）
 
-**試すために、サーバーや `build.py` を動かすときは、一時フォルダに向ける。** リポジトリ直下の `ep*/` と `settings.yml` は本物（ユーザーの回・ユーザーの設定）。
-**やり方（コピペできるコマンド）は `docs/testing.md`。** 環境変数 `OKURADI_EPISODES_DIR` と `OKURADI_SETTINGS` を一時フォルダに向け、`ep01` などは**コピー**して使う。
+**どの道具でも、リポジトリ直下の `ep*/` と `settings.yml`（ユーザーの回・ユーザーの設定）には書かない。** 試すときは一時フォルダに向ける。
+**やり方と、一時フォルダでも本物に届くもの（改善メモの登録・upload）は `docs/testing.md`。** Claude が打つ `build.py`・サーバーの起動と、本物のサーバー（8000番）への書き込みは hook が止める。
 
-- **`git status` は管理外のファイル（`settings.yml`・`ep*/` の音声・`ep*/00_logs`）を見せない。** 最初と最後に `ls -la settings.yml`、`ls -d ep*`、`ls -la ep01/00_logs ep01/01_mix` を見て、同じであることを報告に書く
+- **`git status` は管理外のファイル（`settings.yml`・`ep*/` の音声・`ep*/00_logs`）を見せない。** 最初と最後に `ls -la settings.yml`、`ls -d ep*`、`ls -la ep*/00_logs ep*/01_mix` を見て、同じであることを報告に書く
 - 「読むだけ」と言われた回で、実行系（`build.py`・GUI の実行ボタン・`PUT`/`POST`）を使わない
 - 自分が作ったと思い込んで消さない。**消す前に、いつ作られたか（`stat`）と中身を見る**
 - day-9（2026-09-26）に2件あった: 担当が `settings.yml` を作って残し、別の担当が中身を見ずに消した / 「`ep01` は読むだけ」を破って mix と動画化を動かした
