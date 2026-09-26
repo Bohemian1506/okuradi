@@ -12,7 +12,7 @@ const STATE_CLASS = {
 
 // 工程がどの画面にあるか（docs/components.md の画面の割り当て）
 const TAB_OF_STEP = {
-  source: "2", scan: "2", clean: "2",
+  source: "2", scan: "2", clean: "2", mix: "2",
   transcribe: "3", meta: "3", video: "3",
 };
 
@@ -38,7 +38,7 @@ const SVG = {
 const ACCEPTED_TEXT = "wav / m4a / mkv / mp4 / mov / flv";
 
 // どの画面にどの工程があるか（TAB_OF_STEP の裏返し）
-const STEPS_OF_TAB = { "1": [], "2": ["source", "scan", "clean"], "3": ["transcribe", "meta", "video"] };
+const STEPS_OF_TAB = { "1": [], "2": ["source", "scan", "clean", "mix"], "3": ["transcribe", "meta", "video"] };
 
 const state = {
   episodes: [],
@@ -80,7 +80,8 @@ const state = {
   picked: -1,        // 選んでいる区間
   previewing: -1,    // 試聴中の区間
   clean: null,       // 整音の結果
-  listening: "scan", // いま鳴らしているもの（scan / clean / preview）
+  mix: null,         // ミックスの結果
+  listening: "scan", // いま鳴らしているもの（scan / clean / mix / preview）
   transcript: null,  // 確定版の文字起こし
   texts: [],         // 画面で直している文字（行ごと）
   textsSaved: "",    // 保存されている中身
@@ -311,6 +312,11 @@ function screenRecording() {
     "前後の無音を切り、音量をそろえ、エコーをかける。聴いて確かめる1つ目の確認ポイント。",
     cleanCard(), stepOf("clean")));
 
+  box.appendChild(section(5, "ミックスして聴く",
+    "整音した喋りに、timeline.yml の BGM・SE を重ねる。無ければ喋りだけの音のまま。"
+    + "BGM・SE を画面で置く・音量カーブを描く部品はこのあと足す（いまは timeline.yml を直に書く）。",
+    mixCard(), stepOf("mix")));
+
   // timeline.yml がある回だけ出す（#85 の2段目。いまは見るだけ）
   const timelineNote = "timeline.yml に書いた音源の並び（見るだけ）。"
     + "位置はカット前（生音）の長さで出しています。カット（edits）を書くと下見が失敗します"
@@ -322,9 +328,9 @@ function screenRecording() {
     note.append(el("span", "mark", "!"),
                 el("span", null, `タイムラインを読み込めませんでした: ${state.timelineError}`));
     card.appendChild(note);
-    box.appendChild(section(5, "タイムラインの並びを確かめる", timelineNote, card));
+    box.appendChild(section(6, "タイムラインの並びを確かめる", timelineNote, card));
   } else if (state.timeline && state.timeline.timeline) {
-    box.appendChild(section(5, "タイムラインの並びを確かめる", timelineNote, timelineCard()));
+    box.appendChild(section(6, "タイムラインの並びを確かめる", timelineNote, timelineCard()));
   }
   return box;
 }
@@ -1156,6 +1162,59 @@ function cleanPlayer(result) {
       listenTo("clean", now ? state.at : 0);
     },
     onSeek: (to) => listenTo("clean", to),
+  });
+}
+
+// ---------------------------------------------------------------- ミックス結果パネル（#85 の4段目）
+// 見た目は最低限（BGM・SE を画面で編集する部品は次の段。いまはコマンド／timeline.yml で置く）。
+
+function mixCard() {
+  const card = el("div", "panel-card");
+  const result = state.mix || { state: "未実行" };
+
+  const banner = jobBanner("mix", "ミックス");
+  if (banner) { card.appendChild(banner); if (result.state === "未実行") return card; }
+
+  if (result.state === "未実行") {
+    card.appendChild(el("div", "result-empty",
+      "ミックスを実行すると、ここで聴いて確かめられます"));
+    return card;
+  }
+
+  const step = stepOf("mix");
+  const stale = !!(step && step.state === "古い");
+  if (stale) card.classList.add("is-stale");
+
+  const box = el("div", "result");
+  const top = el("div", "result-top");
+  const badge = el("span", stale ? "badge-stale" : "badge-done");
+  badge.append(document.createTextNode(stale ? "古い" : "完了"));
+  const about = ["mix.wav", clock(result.duration || 0),
+                 `BGM ${result.bgm || 0}本`, `SE ${result.se || 0}本`];
+  top.append(badge, el("span", "result-about", about.join(" · ")), el("span", "spacer"));
+  if (stale) {
+    const redo = el("button", "btn-primary");
+    redo.innerHTML = icon(SVG.redo, 14) + "ミックスをやり直す";
+    redo.onclick = () => runStep("mix");
+    top.appendChild(redo);
+  }
+  box.appendChild(top);
+  box.appendChild(mixPlayer(result));
+  card.appendChild(box);
+  return card;
+}
+
+function mixPlayer(result) {
+  const total = result.duration || 0;
+  const now = state.listening === "mix";
+  return playerRow({
+    total, at: now ? state.at : 0, playing: now && state.playing,
+    label: "ミックス結果",
+    onToggle: () => {
+      if (now && state.playing) { audio.pause(); return; }
+      listenTo("mix", now ? state.at : 0);
+    },
+    onSeek: (to) => listenTo("mix", to),
   });
 }
 
@@ -3337,6 +3396,9 @@ async function finishJob() {
       state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
       state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
     }
+    if (state.job.step === "mix") {
+      state.mix = await api(`/api/episodes/${name}/mix`).catch(() => null);
+    }
     if (state.job.step === "transcribe") {
       await loadTranscript(name);
     }
@@ -3526,6 +3588,7 @@ async function selectEpisode(name) {
   state.picked = -1;
   state.listening = "scan";
   state.clean = await api(`/api/episodes/${name}/clean`).catch(() => null);
+  state.mix = await api(`/api/episodes/${name}/mix`).catch(() => null);
   await loadTranscript(name);
   await loadMeta(name);
   await loadVideo(name);

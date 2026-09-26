@@ -223,6 +223,64 @@ def test_はみ出しの検証に渡すのは生音の長さ():
     assert timeline.total_seconds(data, {"op": 600.0}) == 600.0
 
 
+# ---------------------------------------------------------------- 音量カーブ（#85）
+
+def test_音量カーブを持てる():
+    data = tl(bgm=[{"id": "b1", "source": "a.wav", "anchor": "op", "at": 0,
+                    "volume": [{"time": 0, "volume": 1}, {"time": 10, "volume": 0.25}]}])
+    got = timeline.validate(data)["lanes"]["bgm"][0]["volume"]
+    assert got == [{"time": 0.0, "volume": 1.0}, {"time": 10.0, "volume": 0.25}]
+
+
+def test_音量カーブが無くても通る():
+    data = tl(bgm=[{"id": "b1", "source": "a.wav", "anchor": "op", "at": 0}])
+    got = timeline.validate(data)["lanes"]["bgm"][0]
+    assert "volume" not in got
+
+
+def test_音量が0から1の範囲でなければ断る():
+    data = tl(bgm=[{"id": "b1", "source": "a.wav", "anchor": "op", "at": 0,
+                    "volume": [{"time": 0, "volume": 1.5}]}])
+    with pytest.raises(episodes.EpisodeError, match="0〜1"):
+        timeline.validate(data)
+
+
+def test_timeが昇順でなければ断る():
+    data = tl(bgm=[{"id": "b1", "source": "a.wav", "anchor": "op", "at": 0,
+                    "volume": [{"time": 10, "volume": 1}, {"time": 5, "volume": 0.2}]}])
+    with pytest.raises(episodes.EpisodeError, match="昇順"):
+        timeline.validate(data)
+
+
+def test_timeが同着でも断る():
+    """直線で結ぶので、同じ time が2つあると傾きが決まらない。"""
+    data = tl(bgm=[{"id": "b1", "source": "a.wav", "anchor": "op", "at": 0,
+                    "volume": [{"time": 5, "volume": 1}, {"time": 5, "volume": 0.2}]}])
+    with pytest.raises(episodes.EpisodeError, match="昇順"):
+        timeline.validate(data)
+
+
+def test_timeが負なら断る():
+    data = tl(bgm=[{"id": "b1", "source": "a.wav", "anchor": "op", "at": 0,
+                    "volume": [{"time": -1, "volume": 1}]}])
+    with pytest.raises(episodes.EpisodeError, match="0より小さい"):
+        timeline.validate(data)
+
+
+def test_volumeが数字でなければ断る():
+    data = tl(bgm=[{"id": "b1", "source": "a.wav", "anchor": "op", "at": 0,
+                    "volume": [{"time": 0, "volume": "おおきい"}]}])
+    with pytest.raises(episodes.EpisodeError, match="数字"):
+        timeline.validate(data)
+
+
+def test_volumeの形が並びでなければ断る():
+    data = tl(bgm=[{"id": "b1", "source": "a.wav", "anchor": "op", "at": 0,
+                    "volume": "壊れた文字列"}])
+    with pytest.raises(episodes.EpisodeError, match="形が違います"):
+        timeline.validate(data)
+
+
 def test_本編以外に編集点は書けない():
     """黙って残すと、値の形すら確かめないまま通っていた（レビューで見つかった）。"""
     data = tl(bgm=[{"id": "b1", "source": "b.wav", "anchor": "op", "at": 0,

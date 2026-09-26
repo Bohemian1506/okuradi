@@ -10,7 +10,7 @@ from web import episodes, media
 @pytest.fixture
 def ep(tmp_path, monkeypatch):
     ep_dir = tmp_path / "ep01"
-    for sub in ["00_raw", "01_clean", "02_text", "03_meta", "04_video"]:
+    for sub in ["00_raw", "01_clean", "01_mix", "02_text", "03_meta", "04_video"]:
         (ep_dir / sub).mkdir(parents=True)
     monkeypatch.setattr(episodes, "resolve", lambda name, root=None: ep_dir)
     return ep_dir
@@ -656,7 +656,7 @@ def test_GUI_で使わない工程のログは断る(ep):
 
 # ---------------------------------------------------------------- 動画の「古い」
 
-def test_整音をやり直すと動画が古いになる(ep, monkeypatch):
+def test_ミックスをやり直すと動画が古いになる(ep, monkeypatch):
     import os
     import time
     (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
@@ -664,23 +664,23 @@ def test_整音をやり直すと動画が古いになる(ep, monkeypatch):
     monkeypatch.setattr(media, "video_size", lambda path: "1920x1080")
 
     (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
-    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")
     later = time.time() + 10
-    os.utime(ep / "01_clean" / "clean.wav", (later, later))
+    os.utime(ep / "01_mix" / "mix.wav", (later, later))
 
     got = media.video_view("ep01")
     assert got["state"] == "古い"
-    assert got["stale_reason"] == "整音をやり直しました"
+    assert got["stale_reason"] == "ミックスをやり直しました"
 
 
-def test_整音より新しければ完了のまま(ep, monkeypatch):
+def test_ミックスより新しければ完了のまま(ep, monkeypatch):
     import os
     import time
     (ep / "config.yml").write_text("episode: 1\n", encoding="utf-8")
     monkeypatch.setattr(media, "duration_of", lambda path: 57.0)
     monkeypatch.setattr(media, "video_size", lambda path: "")
 
-    (ep / "01_clean" / "clean.wav").write_bytes(b"x")
+    (ep / "01_mix" / "mix.wav").write_bytes(b"x")
     (ep / "04_video" / "ep01.mp4").write_bytes(b"x")
     later = time.time() + 10
     os.utime(ep / "04_video" / "ep01.mp4", (later, later))

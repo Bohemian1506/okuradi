@@ -128,7 +128,41 @@ def _clip(row, lane, index):
                 f"{where}（{clip_id}）に錨がありません。どのクリップに付くかを書いてください")
         made["anchor"] = anchor
         made["at"] = _number(row.get("at", 0), f"{where}（{clip_id}）の位置")
+        if row.get("volume") is not None:
+            made["volume"] = _volume(row["volume"], f"{where}（{clip_id}）の volume")
     return made
+
+
+def _volume(rows, where):
+    """音量カーブ（点の並び）を整える。
+
+    `wavesurfer-multitrack` の `envelope` と同じ形（#82・5段目で画面から書く）。
+    点の間は直線で結ぶので、**time は0以上で昇順**（同着も認めない。同じ time が
+    2つあると、直線の傾きが決まらない）。volume は 0〜1（倍率。dB ではない）。
+    """
+    if not isinstance(rows, list):
+        raise episodes.EpisodeError(f"{where} の形が違います（並びで書いてください）")
+    out = []
+    prev_time = None
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise episodes.EpisodeError(f"{where} の{i + 1}番目の形が違います")
+        time = _number(row.get("time", 0), f"{where} の{i + 1}番目の time")
+        try:
+            volume = float(row.get("volume"))
+        except (TypeError, ValueError):
+            raise episodes.EpisodeError(
+                f"{where} の{i + 1}番目の volume は数字で書いてください") from None
+        if not 0 <= volume <= 1:
+            raise episodes.EpisodeError(
+                f"{where} の{i + 1}番目の volume は0〜1にしてください（{volume}）")
+        if prev_time is not None and time <= prev_time:
+            raise episodes.EpisodeError(
+                f"{where} の time は0以上で昇順にしてください"
+                f"（{prev_time} の次に {time} が来ています）")
+        prev_time = time
+        out.append({"time": time, "volume": round(volume, 3)})
+    return out
 
 
 def validate(data):

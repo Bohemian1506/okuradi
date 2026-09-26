@@ -52,12 +52,19 @@ def audio_path(name, kind):
     scan    … 下見をかけた音そのもの（scan.json の source）。行の時刻と合う
     trimmed … 前後のトリムまで済ませたもの。波形とエコー区間の時刻の基準
     clean   … 整音後
+    mix     … BGM・SE を重ねた後（#85）。動画化はこの音を使う
     """
     ep_dir = episodes.resolve(name)
     if kind == "clean":
         found = ep_dir / "01_clean" / "clean.wav"
         if not found.exists():
             raise episodes.EpisodeError("整音後の音声がありません")
+        return found
+
+    if kind == "mix":
+        found = ep_dir / "01_mix" / "mix.wav"
+        if not found.exists():
+            raise episodes.EpisodeError("まだミックスを実行していません")
         return found
 
     if kind == "trimmed":
@@ -399,6 +406,35 @@ def confirm_clean(name):
     return clean_result(name)
 
 
+# ---------------------------------------------------------------- ミックスの結果
+
+def mix_result(name):
+    """ミックス（BGM・SE を重ねる）の結果。見た目は最低限（#85 の4段目）。
+
+    「古い」かどうかは `episodes.step_states` がすでに持っている
+    （画面は `stepOf("mix")` を見る）。ここでは事実（長さ・本数）だけを返す。
+    """
+    ep_dir = episodes.resolve(name)
+    mix = ep_dir / "01_mix" / "mix.wav"
+    if not mix.exists():
+        return {"state": "未実行"}
+
+    detail = {}
+    info = ep_dir / "01_mix" / "mix.json"
+    if info.exists():
+        try:
+            detail = json.loads(info.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            detail = {}
+    return {
+        "state": "表示",
+        "duration": detail.get("duration"),
+        "bgm": detail.get("bgm", 0),
+        "se": detail.get("se", 0),
+        "at": int(mix.stat().st_mtime),   # 作り直したら波形/音を読み直させる
+    }
+
+
 # ---------------------------------------------------------------- 確定版の文字起こし
 
 def transcript_path(ep_dir):
@@ -683,11 +719,11 @@ def video_view(name):
     if not path.exists():
         return {"state": "未実行"}
     seconds = duration_of(path)
-    # 整音をやり直したら動画も作り直し（step_video は clean.wav から作る）
-    clean = ep_dir / "01_clean" / "clean.wav"
+    # ミックスをやり直したら動画も作り直し（step_video は mix.wav から作る。#85）
+    mix = ep_dir / "01_mix" / "mix.wav"
     stale = None
-    if clean.exists() and clean.stat().st_mtime > path.stat().st_mtime:
-        stale = "整音をやり直しました"
+    if mix.exists() and mix.stat().st_mtime > path.stat().st_mtime:
+        stale = "ミックスをやり直しました"
     poster, poster_error = make_poster(ep_dir)
     return {
         "state": "古い" if stale else "完了",

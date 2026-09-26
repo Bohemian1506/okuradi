@@ -26,7 +26,7 @@ CONFIG = {
 def make_episode(root, number=1, files=(), config=None):
     """回のディレクトリを作る。files は新しい順ではなく、渡した順に古い→新しいで作る。"""
     ep_dir = root / f"ep{number:02d}"
-    for sub in ["00_raw", "01_cut", "01_clean", "02_text", "03_meta", "04_video"]:
+    for sub in ["00_raw", "01_cut", "01_clean", "01_mix", "02_text", "03_meta", "04_video"]:
         (ep_dir / sub).mkdir(parents=True, exist_ok=True)
     cfg = dict(config or CONFIG)
     cfg["episode"] = number
@@ -45,6 +45,7 @@ ALL_FILES = [
     "00_raw/rec.wav",
     "02_text/scan.json",
     "01_clean/clean.wav",
+    "01_mix/mix.wav",
     "02_text/transcript.json",
     "03_meta/meta.json",
     "04_video/ep01.mp4",
@@ -61,7 +62,7 @@ def states(ep_dir):
 def test_音源が無ければ全部未実行(tmp_path):
     ep_dir = make_episode(tmp_path)
     assert states(ep_dir) == {
-        "source": "未実行", "scan": "未実行", "clean": "未実行",
+        "source": "未実行", "scan": "未実行", "clean": "未実行", "mix": "未実行",
         "transcribe": "未実行", "meta": "未実行", "video": "未実行",
     }
 
@@ -73,6 +74,7 @@ def test_音源を置くと下見と整音が実行できるになる(tmp_path):
     assert got["scan"] == "実行できる"
     assert got["clean"] == "実行できる"
     # 整音が済んでいないので、その先はまだ実行できない
+    assert got["mix"] == "未実行"
     assert got["transcribe"] == "未実行"
 
 
@@ -81,24 +83,54 @@ def test_全部そろえば全部完了(tmp_path):
     assert set(states(ep_dir).values()) == {"完了"}
 
 
-def test_整音をやり直すと文字起こしと動画が古いになる(tmp_path):
+def test_整音をやり直すとミックスと文字起こしが古いになる(tmp_path):
+    """作り直しの判定は1段だけ見る（直接の依存だけ）。
+
+    `video` はいまは `mix` からしか作らないので、`clean` を触っただけでは
+    「古い」にならない（`mix` を作り直すまでは、そちらが「古い」を持つ）。
+    """
     ep_dir = make_episode(tmp_path, files=ALL_FILES)
     clean = ep_dir / "01_clean" / "clean.wav"
     os.utime(clean, (time.time(), time.time()))
 
     got = states(ep_dir)
     assert got["clean"] == "完了"
-    assert got["transcribe"] == "古い"   # 整音から作るので作り直しが要る
-    assert got["video"] == "古い"        # 整音とメタデータから作る
+    assert got["mix"] == "古い"          # ミックスは整音から作る
+    assert got["transcribe"] == "古い"   # 文字起こしも整音から作る（喋りだけの音を使うため）
+    assert got["video"] == "完了"        # 動画はミックスから作る。まだミックスは触っていない
     assert got["meta"] == "完了"         # メタデータは文字起こしから作るので、直接は影響しない
     assert got["scan"] == "完了"         # 下見は音源から作るので、影響しない
+
+
+def test_ミックスをやり直すと動画が古いになる(tmp_path):
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    mix = ep_dir / "01_mix" / "mix.wav"
+    os.utime(mix, (time.time(), time.time()))
+
+    got = states(ep_dir)
+    assert got["mix"] == "完了"
+    assert got["video"] == "古い"
+    assert got["clean"] == "完了"        # 整音はミックスの元なので、影響しない
+
+
+def test_timelineを変えるとミックスが古いになる(tmp_path):
+    """timeline.yml は工程の成果物ではないので、mtimes には出てこない。別に見る。"""
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    (ep_dir / "timeline.yml").write_text("version: 1\nlanes: {main: [], bgm: [], se: []}\n",
+                                          encoding="utf-8")
+    os.utime(ep_dir / "timeline.yml", (time.time(), time.time()))
+
+    got = states(ep_dir)
+    assert got["mix"] == "古い"
+    assert got["clean"] == "完了"        # 整音は timeline.yml を読まないので、影響しない
 
 
 def test_進み具合は完了の数だけ数える(tmp_path):
     ep_dir = make_episode(tmp_path, files=ALL_FILES)
     os.utime(ep_dir / "01_clean" / "clean.wav", (time.time(), time.time()))
     data = episodes.summary(ep_dir, episodes.read_config(ep_dir))
-    assert (data["done"], data["total"]) == (4, 6)
+    # 整音をやり直したので、ミックスと文字起こしの2つが「古い」になる（7工程中5つ完了）
+    assert (data["done"], data["total"]) == (5, 7)
 
 
 def test_動画は回の番号のファイル名で探す(tmp_path):

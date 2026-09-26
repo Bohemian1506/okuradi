@@ -13,11 +13,12 @@ import build
 
 ROOT = Path(build.__file__).parent.resolve()
 
-# GUI で見せる6工程。build.py の cut と upload は GUI では使わない（docs/components.md）
+# GUI で見せる7工程。build.py の cut と upload は GUI では使わない（docs/components.md）
 STEPS = [
     {"key": "source", "label": "音源"},
     {"key": "scan", "label": "下見"},
     {"key": "clean", "label": "整音"},
+    {"key": "mix", "label": "ミックス"},
     {"key": "transcribe", "label": "文字起こし"},
     {"key": "meta", "label": "メタデータ"},
     {"key": "video", "label": "動画"},
@@ -28,11 +29,15 @@ DEPS = {
     "source": [],
     "scan": ["source"],
     "clean": ["source"],
+    # mix は clean.wav に BGM・SE を重ねる（#85）。timeline.yml を変えたときも
+    # 作り直しが要るが、timeline.yml は STEPS の成果物ではないので、
+    # ここには出せない（`step_states` が別に見ている）
+    "mix": ["clean"],
     "transcribe": ["clean"],
     "meta": ["transcribe"],
-    # build.py の step_video は clean.wav と config.yml の images しか読まない。
+    # build.py の step_video は mix.wav と config.yml の images しか読まない。
     # meta.json は使わないので、タイトルを直しても動画は作り直しにならない。
-    "video": ["clean"],
+    "video": ["mix"],
 }
 
 # build.py の cut 工程は GUI では使わない（docs/components.md）。
@@ -115,6 +120,7 @@ def artifact(ep_dir, key, cfg):
     paths = {
         "scan": ep_dir / "02_text" / "scan.json",
         "clean": ep_dir / "01_clean" / "clean.wav",
+        "mix": ep_dir / "01_mix" / "mix.wav",
         "transcribe": ep_dir / "02_text" / "transcript.json",
         "meta": ep_dir / "03_meta" / "meta.json",
         "video": ep_dir / "04_video" / f"ep{episode_number(cfg, ep_dir):02d}.mp4",
@@ -124,7 +130,7 @@ def artifact(ep_dir, key, cfg):
 
 
 def step_states(ep_dir, cfg):
-    """6工程の状態を返す。
+    """7工程の状態を返す。
 
     未実行 / 実行できる / 完了 / 古い の4つ。
     処理中・エラー・中止は工程を実行したときに決まるので、ここでは出ない（#8）。
@@ -133,6 +139,13 @@ def step_states(ep_dir, cfg):
     for step in STEPS:
         found = artifact(ep_dir, step["key"], cfg)
         mtimes[step["key"]] = found.stat().st_mtime if found else None
+
+    # timeline.yml は STEPS の成果物ではないので、上の mtimes には出てこない。
+    # 変えたら mix が作り直しになる（BGM・SE の並びが変わるため）ので、ここだけ別に見る
+    # （`web/timeline.py` は `episodes` を読むので、輪にならないよう関数の中で読む）
+    from web import timeline          # noqa: PLC0415
+    timeline_path = timeline.path(ep_dir)
+    timeline_mtime = timeline_path.stat().st_mtime if timeline_path.exists() else None
 
     states = []
     for step in STEPS:
@@ -147,6 +160,8 @@ def step_states(ep_dir, cfg):
                 row["reason"] = _why_not(missing)
         else:
             stale = any(mtimes[d] is not None and mtimes[d] > mine for d in deps)
+            if key == "mix" and timeline_mtime is not None and timeline_mtime > mine:
+                stale = True
             row["state"] = "古い" if stale else "完了"
         states.append(row)
     return states

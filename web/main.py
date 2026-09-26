@@ -295,6 +295,11 @@ def post_clean_confirm(name: str):
     return _guard(media.confirm_clean, name)
 
 
+@app.get("/api/episodes/{name}/mix")
+def get_mix(name: str):
+    return _guard(media.mix_result, name)
+
+
 @app.get("/api/episodes/{name}/audio/{kind}")
 def get_audio(name: str, kind: str):
     path = _guard(media.audio_path, name, kind)

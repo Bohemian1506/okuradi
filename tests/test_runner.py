@@ -18,6 +18,10 @@ def test_GUI_から動かせない工程は断る():
         runner.start("ep01", "upload")
 
 
+def test_mixはGUIから動かせる():
+    assert "mix" in runner.RUNNABLE
+
+
 def test_無い回は断る():
     with pytest.raises(episodes.EpisodeError, match="がありません"):
         runner.start("ありません", "scan")

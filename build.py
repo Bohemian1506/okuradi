@@ -6,9 +6,10 @@
     scan       00_raw   -> 02_text/scan.json        下見の文字起こし（カット点を探す用）
     cut        00_raw   -> 01_cut/cut.wav           config の cuts に従って区間を削除
     clean      01_cut   -> 01_clean/clean.wav       ノイズ除去・前後トリム・音量正規化
-    transcribe 01_clean -> 02_text/transcript.json  確定版の文字起こし
+    mix        01_clean -> 01_mix/mix.wav           timeline.yml の bgm/se を重ねる（#85）
+    transcribe 01_clean -> 02_text/transcript.json  確定版の文字起こし（喋りだけの音を使う）
     meta       02_text  -> 03_meta/meta.json        タイトル・概要欄・チャプター
-    video      01_clean -> 04_video/epNN.mp4        静止画と合成
+    video      01_mix   -> 04_video/epNN.mp4        静止画と合成
     upload     04_video -> YouTube（限定公開）
 
 CLI:
@@ -29,12 +30,13 @@ from pathlib import Path
 
 import yaml
 
-STEPS = ["scan", "cut", "clean", "transcribe", "meta", "video", "upload"]
+STEPS = ["scan", "cut", "clean", "mix", "transcribe", "meta", "video", "upload"]
 
 STEP_LABELS = {
     "scan": "下見の文字起こし",
     "cut": "カット",
     "clean": "整音",
+    "mix": "ミックス",
     "transcribe": "文字起こし（確定）",
     "meta": "メタデータ生成",
     "video": "動画化",
@@ -160,6 +162,16 @@ def _timeline_sources(ep):
     return main
 
 
+def _has_timeline(ep):
+    """timeline.yml がある回か（枠の回）。
+
+    `step_clean` が頭の無音を削るかどうかの分かれ目（#85 の4段目）。
+    `_timeline_sources` と同じ理由で、関数の中で読む。
+    """
+    from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
+    return timeline.path(ep["dir"]).exists()
+
+
 def _track_wav(video, cfg):
     """録画から音声トラックを取り出した wav を返す。無ければ作る。
 
@@ -180,6 +192,22 @@ def _track_wav(video, cfg):
     return dst
 
 
+def _clip_source_path(ep, clip, cfg=None):
+    """timeline.yml のクリップ1つが指す音源ファイルを返す。
+
+    録画（`VIDEO_EXTS`）なら、音声トラックを取り出した wav に差し替える
+    （`find_raw` と同じ決まり。`_track_wav` 参照）。`join_sources`（本編）と
+    `step_mix`（BGM・SE）の両方から使う。置き場所は仮置きで本編と同じ
+    `00_raw/<Path(source).name>`（#85）。
+    """
+    found = ep["00_raw"] / Path(clip["source"]).name
+    if not found.exists():
+        raise FileNotFoundError(f"{clip['id']} の音源がありません: {found}")
+    if found.suffix.lower() in VIDEO_EXTS:
+        found = _track_wav(found, cfg)
+    return found
+
+
 def join_sources(ep, clips, cfg=None):
     """timeline.yml の並びどおりに音源を繋いで1本にする。
 
@@ -193,14 +221,7 @@ def join_sources(ep, clips, cfg=None):
     """
     raw_dir = ep["00_raw"]
     dst = raw_dir / JOINED
-    parts = []
-    for clip in clips:
-        found = raw_dir / Path(clip["source"]).name
-        if not found.exists():
-            raise FileNotFoundError(f"{clip['id']} の音源がありません: {found}")
-        if found.suffix.lower() in VIDEO_EXTS:
-            found = _track_wav(found, cfg)
-        parts.append(found)
+    parts = [_clip_source_path(ep, clip, cfg) for clip in clips]
 
     # **timeline.yml 自身の更新日時も見る。** 音源のファイルだけ見ていると、
     # 並びを入れ替えたときと、行を1つ消したときに繋ぎ直されない
@@ -327,7 +348,7 @@ def load_episode(root, name):
     ep_dir = Path(root) / name
     cfg = yaml.safe_load((ep_dir / "config.yml").read_text(encoding="utf-8"))
     ep = {"root": Path(root), "dir": ep_dir, "name": name}
-    for sub in ["00_raw", "01_cut", "01_clean", "02_text", "03_meta", "04_video"]:
+    for sub in ["00_raw", "01_cut", "01_clean", "01_mix", "02_text", "03_meta", "04_video"]:
         ep[sub] = ep_dir / sub
         ep[sub].mkdir(parents=True, exist_ok=True)
     return ep, cfg
@@ -608,27 +629,44 @@ def step_clean(ep, cfg):
     if not src.exists():
         src = find_raw(ep, cfg)
         print("(カット未実行のため 00_raw をそのまま使います)")
+    head = ep["01_clean"] / "head.wav"
     trimmed = ep["01_clean"] / "trimmed.wav"
     dst = ep["01_clean"] / "clean.wav"
 
     a = cfg.get("audio", {})
+    # **枠の回（timeline.yml がある回）は、頭の無音を削らない。** OP は 0:00〜0:15 が
+    # 曲だけで、喋り手はヘッドホンで曲を聞きながら黙っている。頭を削ると、曲と喋りの
+    # 位置が録音の外では取り戻せない（#85 の4段目・2026-09-26 の決定）。
+    # timeline.yml が無い回（ep01 など）は今までどおり前後を削る。
+    framed = _has_timeline(ep)
 
-    # 1回目: ノイズ低減と前後のトリムまで。
-    # エコー区間の時刻はこの音が基準なので、途中のファイルとして必ず残す。
-    filters = []
+    # 1回目: ノイズ低減と、頭のトリム（枠の回では飛ばす）。
+    trim = "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB"
+    head_filters = []
     if a.get("denoise", True):
-        filters.append("afftdn=nf=-25")
-    if a.get("trim_silence", True):
-        trim = "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB"
-        filters += [trim, "areverse", trim, "areverse"]
+        head_filters.append("afftdn=nf=-25")
+    if a.get("trim_silence", True) and not framed:
+        head_filters.append(trim)
     before = audio_duration(src)
-    run(["ffmpeg", "-y", "-i", str(src), "-af", ",".join(filters) or "anull",
+    run(["ffmpeg", "-y", "-i", str(src), "-af", ",".join(head_filters) or "anull",
+         "-ar", "48000", "-ac", "1", str(head)])
+    after_head = audio_duration(head)
+
+    # 2回目: 尻のトリム（reverse-trim-reverse。こちらは枠の回でもかける）。
+    # エコー区間の時刻はここまでの音（trimmed.wav）が基準なので、途中のファイルとして必ず残す。
+    tail_filters = [trim] if a.get("trim_silence", True) else []
+    run(["ffmpeg", "-y", "-i", str(head), "-af",
+         ("areverse," + ",".join(tail_filters) + ",areverse") if tail_filters else "anull",
          "-ar", "48000", "-ac", "1", str(trimmed)])
     total = audio_duration(trimmed)
-    print(f"-> {trimmed}  ({hhmmss(total)})  前後のトリムまで"
-          f"（前後で {before - total:.1f}秒を削除）")
 
-    # 2回目: エコーをかけてから正規化。
+    head_removed = round(before - after_head, 2)
+    tail_removed = round(after_head - total, 2)
+    note = "（枠の回のため頭は削っていません）" if framed else ""
+    print(f"-> {trimmed}  ({hhmmss(total)})  前後のトリムまで"
+          f"（頭 {head_removed:.1f}秒・尻 {tail_removed:.1f}秒を削除{note}）")
+
+    # 3回目: エコーをかけてから正規化。
     # 正規化は必ず最後。エコーで足した分も、ここで天井に収まる。
     loudnorm = f"loudnorm=I={a.get('target_lufs', -14)}:TP=-1.5:LRA=11"
     regions = normalize_echoes(cfg.get("echoes"), total)
@@ -652,12 +690,157 @@ def step_clean(ep, cfg):
         "trimmed_duration": round(total, 2),
         "duration": round(audio_duration(dst), 2),
         "removed": round(before - total, 2),
+        "head_removed": head_removed,
+        "tail_removed": tail_removed,
+        "framed": framed,
         "target_lufs": a.get("target_lufs", -14),
         "echoes": [{"start": s, "end": e, "preset": p} for s, e, p in regions],
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-# ---------------------------------------------------------------- 04. 文字起こし（確定）
+# ---------------------------------------------------------------- 04. ミックス（BGM・SE を重ねる）
+
+MIX_LOUDNORM = "loudnorm=I={target}:TP=-1.5:LRA=11"
+
+
+def volume_expr(points):
+    """音量カーブ（{time, volume} の折れ線）から、ffmpeg `volume` フィルタの式を組む。
+
+    `eval=frame` にすると、区間を切って繋ぎ直す（いまのエコーと同じやり方）よりも
+    尺が変わらない（#82 で実測）。点の間は直線で結ぶ。最初の点より前・最後の点より後は、
+    その端の値のまま（外側までは動かさない）。
+    """
+    if not points:
+        return None
+    pts = sorted(points, key=lambda p: p["time"])
+    expr = str(pts[-1]["volume"])
+    for i in range(len(pts) - 1, 0, -1):
+        t0, v0 = pts[i - 1]["time"], pts[i - 1]["volume"]
+        t1, v1 = pts[i]["time"], pts[i]["volume"]
+        seg = f"({v0}+({v1}-{v0})*(t-{t0})/({t1}-{t0}))"
+        expr = f"if(between(t,{t0},{t1}),{seg},{expr})"
+    expr = f"if(lt(t,{pts[0]['time']}),{pts[0]['volume']},{expr})"
+    return f"volume=eval=frame:volume='{expr}'"
+
+
+def _mix_overlay_chain(clip, lane, cfg):
+    """1本の BGM・SE クリップを、重ねる前にどう加工するか（フィルタの並び）。
+
+    - **曲（bgm）は、重ねる前に喋りと同じラウドネスにそろえる**（喋り＝clean.wav は触らない）。
+      SE（ピンポーン・ブッブーなど）は短く、`loudnorm` は数秒未満の音には向かないので、
+      仮置きでかけない（#85 のコメントに無い判断。報告に書く）
+    - **音量カーブ（`volume`）は、クリップの先頭からの秒（`eval=frame` の `t`）で当てる。**
+      まだ位置をずらす前（`adelay` の前）にかけないと、原点がずれる
+    """
+    filters = []
+    if lane == "bgm":
+        target = (cfg.get("audio") or {}).get("target_lufs", -14)
+        filters.append(MIX_LOUDNORM.format(target=target))
+    expr = volume_expr(clip.get("volume"))
+    if expr:
+        filters.append(expr)
+    return filters
+
+
+def step_mix(ep, cfg):
+    """整音した喋り（clean.wav）に、timeline.yml の bgm・se を重ねる。
+
+    - **bgm・se が1つも無い回でも mix.wav を作る**（clean.wav と同じ音）。
+      `video` がいつも mix.wav を読めるようにするため
+    - 重ねるのは `amix=duration=first:normalize=0`（#79 で実測。どちらも既定値だと
+      危ない。既定だと尺が伸びる／喋りに被っていない所まで音量が下がる）
+    - 位置は `web/timeline.py` の `positions`（錨のクリップの先頭 + `at`）。渡す長さは
+      **clean.wav の時間軸に合う長さ**（`step_clean` は頭を削らないので、本編クリップの
+      生の長さ + gap でそのまま出る。尻を削った分は最後のクリップの末尾だけに効く）
+    """
+    src = ep["01_clean"] / "clean.wav"
+    if not src.exists():
+        raise FileNotFoundError(f"{src} がありません。先に整音（clean）を実行してください")
+    dst = ep["01_mix"] / "mix.wav"
+    clean_total = audio_duration(src)
+
+    from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
+    data = timeline.read(ep["dir"])
+
+    overlays = []           # (lane, clip) の並び。bgm を先に、se を後に重ねる
+    if data:
+        overlays += [("bgm", c) for c in data["lanes"]["bgm"]]
+        overlays += [("se", c) for c in data["lanes"]["se"]]
+
+    if not overlays:
+        run(["ffmpeg", "-y", "-i", str(src), "-ar", "48000", "-ac", "1",
+             "-c:a", "pcm_s16le", str(dst)])
+        print(f"-> {dst}  ({hhmmss(clean_total)})  重ねる BGM・SE はありません"
+              "（clean.wav と同じ音です）")
+        _write_mix_json(ep, src, dst, clean_total, [])
+        return
+
+    # **カット（01_cut/cut.wav）を使った回で bgm/se があると、位置がずれる。**
+    # positions は本編クリップの「生の長さ」を積み上げて出すが、カットした回は
+    # clean.wav の中でその長さが詰まっている。黙って進むと聞こえる位置がずれるので断る
+    if (ep["01_cut"] / "cut.wav").exists():
+        raise ValueError(
+            "この回はカット（cut）を使っています。カットと BGM・SE の組み合わせは、"
+            "いまの実装では位置がずれるので対応していません（#85）。"
+        )
+
+    main = data["lanes"]["main"]
+    durations = {clip["id"]: audio_duration(_clip_source_path(ep, clip, cfg))
+                 for clip in main}
+    positions = timeline.positions(data, durations)
+
+    cmd = ["ffmpeg", "-y", "-i", str(src)]
+    chains = []
+    labels = ["[0:a]"]
+    for index, (lane, clip) in enumerate(overlays, start=1):
+        found = _clip_source_path(ep, clip, cfg)
+        clip_total = audio_duration(found)
+        at = positions[clip["id"]]
+
+        if at > clean_total + 0.01:
+            raise ValueError(
+                f"{clip['id']} の位置（{hhmmss(at)}）が番組の長さ（{hhmmss(clean_total)}）"
+                "を超えています。timeline.yml の at を見直してください")
+        anchor_total = durations.get(clip.get("anchor"))
+        if anchor_total is not None and clip_total < anchor_total:
+            # 止めない。番組の仕様は「曲の長さ ＞ コーナーの尺」だが、
+            # ここで止めると曲を差し替えるまで何も進められなくなる（#82・仮置き）
+            print(f"({clip['id']}: 曲（{hhmmss(clip_total)}）が錨のコーナー"
+                  f"（{hhmmss(anchor_total)}）より短いです。曲が先に終わります)", flush=True)
+
+        cmd += ["-i", str(found)]
+        filters = _mix_overlay_chain(clip, lane, cfg) + [
+            f"adelay=delays={round(at * 1000)}:all=1"]
+        chains.append(f"[{index}:a]{','.join(filters)}[m{index}]")
+        labels.append(f"[m{index}]")
+
+    graph = ";".join(chains) + f";{''.join(labels)}" \
+        f"amix=inputs={len(labels)}:duration=first:normalize=0[out]"
+    cmd += ["-filter_complex", graph, "-map", "[out]",
+            "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)]
+    run(cmd)
+
+    mix_total = audio_duration(dst)
+    if abs(mix_total - clean_total) > 0.02:
+        # amix は duration=first で尺を保つはずなので、ここに来たら組み方がおかしい
+        print(f"!! mix.wav の長さ（{mix_total:.3f}秒）が clean.wav（{clean_total:.3f}秒）"
+              "と合っていません", flush=True)
+    print(f"-> {dst}  ({hhmmss(mix_total)})  BGM {len(data['lanes']['bgm'])}本・"
+          f"SE {len(data['lanes']['se'])}本を重ねました")
+    _write_mix_json(ep, src, dst, mix_total, overlays)
+
+
+def _write_mix_json(ep, src, dst, duration, overlays):
+    """ミックスの結果を残す。GUI が読んで「古い」判定や表示に使う想定。"""
+    (ep["01_mix"] / "mix.json").write_text(json.dumps({
+        "source": src.name,
+        "duration": round(duration, 2),
+        "bgm": sum(1 for lane, _ in overlays if lane == "bgm"),
+        "se": sum(1 for lane, _ in overlays if lane == "se"),
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------- 05. 文字起こし（確定）
 
 def step_transcribe(ep, cfg):
     src = ep["01_clean"] / "clean.wav"
@@ -670,7 +853,7 @@ def step_transcribe(ep, cfg):
     print(f"-> {dst}  ({len(data['segments'])}セグメント / {len(data['full_text'])}文字)")
 
 
-# ---------------------------------------------------------------- 05. メタデータ生成
+# ---------------------------------------------------------------- 06. メタデータ生成
 
 META_INSTRUCTION = """\
 あなたはこのラジオ番組の編集担当です。文字起こしを読んで、YouTubeの公開情報を作ってください。
@@ -867,10 +1050,15 @@ def step_meta(ep, cfg):
     print(f"-> {dst}\n   タイトル: {meta['title']}")
 
 
-# ---------------------------------------------------------------- 06. 動画化
+# ---------------------------------------------------------------- 07. 動画化
 
 def step_video(ep, cfg):
-    wav = ep["01_clean"] / "clean.wav"
+    wav = ep["01_mix"] / "mix.wav"
+    if not wav.exists():
+        # **clean.wav を黙って使わない。** mix はいつも作られる工程なので、
+        # 無いのは「まだ実行していない」だけ（CLAUDE.md「静かに失敗させない」）
+        raise FileNotFoundError(
+            f"{wav} がありません。先にミックス（mix）を実行してください")
     dst = ep["04_video"] / f"ep{cfg['episode']:02d}.mp4"
     total = audio_duration(wav)
 
@@ -899,7 +1087,7 @@ def step_video(ep, cfg):
     print(f"-> {dst}")
 
 
-# ---------------------------------------------------------------- 07. アップロード
+# ---------------------------------------------------------------- 08. アップロード
 
 def step_upload(ep, cfg):
     from google.auth.transport.requests import Request
@@ -960,7 +1148,7 @@ def step_upload(ep, cfg):
 # ---------------------------------------------------------------- 実行
 
 HANDLERS = {
-    "scan": step_scan, "cut": step_cut, "clean": step_clean,
+    "scan": step_scan, "cut": step_cut, "clean": step_clean, "mix": step_mix,
     "transcribe": step_transcribe, "meta": step_meta,
     "video": step_video, "upload": step_upload,
 }

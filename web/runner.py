@@ -29,7 +29,7 @@ from web import episodes
 ROOT = episodes.ROOT
 
 # GUI から動かせる工程。build.py の cut と upload は GUI では使わない。
-RUNNABLE = ["scan", "clean", "transcribe", "meta", "video"]
+RUNNABLE = ["scan", "clean", "mix", "transcribe", "meta", "video"]
 
 
 class Job:
@@ -127,6 +127,7 @@ def start(name, step):
     job.target = {
         "scan": ep_dir / "02_text" / "scan.json",
         "clean": ep_dir / "01_clean" / "clean.wav",
+        "mix": ep_dir / "01_mix" / "mix.wav",
         "transcribe": ep_dir / "02_text" / "transcript.json",
         "meta": ep_dir / "03_meta" / "meta.json",
         "video": ep_dir / "04_video" / f"ep{episodes.episode_number(cfg, ep_dir):02d}.mp4",
