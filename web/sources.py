@@ -5,6 +5,7 @@
 OBS の録画から音声を取り出すのは、工程を動かすときに `find_raw` がやる。
 """
 
+import os
 import shutil
 import time
 from datetime import datetime
@@ -16,8 +17,18 @@ import build
 
 from web import episodes, timeline
 
-ROOT = episodes.ROOT
-SETTINGS = ROOT / "settings.yml"
+# アプリ全体の設定の置き場所。既定はコードの場所（CODE_ROOT）の settings.yml。
+# 環境変数 `OKURADI_SETTINGS` があれば、そこに変わる（担当が一時フォルダへ試す
+# ため。#221）。「回を置く場所」（OKURADI_EPISODES_DIR）とは別に切り替えられる。
+_settings_override = os.environ.get("OKURADI_SETTINGS")
+SETTINGS = Path(_settings_override).expanduser().resolve() if _settings_override \
+    else episodes.CODE_ROOT / "settings.yml"
+# 回を置く場所（build.episodes_root）と同じく、**置き場所のフォルダが無いときは起動の時点で止める。**
+# 黙って進むと、設定を保存した瞬間に素の FileNotFoundError で落ちる（#221 のレビュー前に気づいた）
+if _settings_override and not SETTINGS.parent.is_dir():
+    raise RuntimeError(
+        f"OKURADI_SETTINGS の置き場所のフォルダがありません: {SETTINGS.parent}"
+        "（先にフォルダを作るか、環境変数を外してください）")
 
 # 受け付ける収録ファイル（見本の「wav / m4a / mkv / mp4 / mov / flv」）
 AUDIO_EXTS = [".wav", ".m4a"]

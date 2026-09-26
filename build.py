@@ -1230,6 +1230,28 @@ HANDLERS = {
 }
 
 
+def episodes_root():
+    """回（ep01 など）を置く場所。
+
+    既定はこのファイル（build.py）と同じ場所。環境変数 `OKURADI_EPISODES_DIR` が
+    あれば、そこを使う（担当が一時フォルダに向けて試すため。#221）。
+    **`claude -p` や `gh` の cwd（コードの場所）はこれと別**で、そちらは変えない
+    （`call_claude` の `cwd=Path(__file__).parent` を見よ）。
+
+    指定された場所が無い・フォルダでないときは、黙って直下に戻さず理由を出して
+    止める（本物のつもりで一時フォルダの綴りを間違えたときに気づけるように）。
+    """
+    override = os.environ.get("OKURADI_EPISODES_DIR")
+    if not override:
+        return Path(__file__).parent.resolve()
+    root = Path(override).expanduser().resolve()
+    if not root.is_dir():
+        raise RuntimeError(
+            f"OKURADI_EPISODES_DIR がフォルダではありません: {root}"
+        )
+    return root
+
+
 def main():
     p = argparse.ArgumentParser(description="30分ラジオ 自動制作パイプライン")
     p.add_argument("episode")
@@ -1237,7 +1259,12 @@ def main():
     p.add_argument("--to", dest="end", choices=STEPS, default=STEPS[-1])
     args = p.parse_args()
 
-    root = Path(__file__).parent.resolve()
+    try:
+        root = episodes_root()
+    except RuntimeError as exc:
+        sys.exit(str(exc))
+    print(f"[okuradi] 回の置き場所: {root}")
+
     if not (root / args.episode).exists():
         sys.exit(f"{root / args.episode} がありません")
 

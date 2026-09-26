@@ -61,10 +61,12 @@ def draft(name):
 def has_label():
     """ラベルがあるか。無いまま登録すると gh が失敗する。"""
     # --limit の既定は30件。ラベルが増えたときに取りこぼさないようにする。
-    # cwd も create() とそろえる（別のリポジトリを見てしまわないように）
+    # cwd も create() とそろえる（別のリポジトリを見てしまわないように）。
+    # gh はリポジトリの中で打つ必要があるので、コードの場所（CODE_ROOT）を使う。
+    # 「回を置く場所」（episodes.ROOT）とは別（#221）
     out = subprocess.run(
         ["gh", "label", "list", "--json", "name", "--limit", "200"],
-        capture_output=True, text=True, timeout=30, cwd=str(episodes.ROOT))
+        capture_output=True, text=True, timeout=30, cwd=str(episodes.CODE_ROOT))
     if out.returncode != 0:
         return False
     try:
@@ -93,7 +95,7 @@ def create(name, title, body):
         out = subprocess.run(
             ["gh", "issue", "create", "--title", title, "--body", full,
              "--label", LABEL],
-            capture_output=True, text=True, timeout=60, cwd=str(episodes.ROOT),
+            capture_output=True, text=True, timeout=60, cwd=str(episodes.CODE_ROOT),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise episodes.EpisodeError(f"登録できませんでした: {exc}") from exc
