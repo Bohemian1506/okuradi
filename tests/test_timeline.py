@@ -287,3 +287,34 @@ def test_本編以外に編集点は書けない():
                     "edits": "完全に壊れた文字列"}])
     with pytest.raises(episodes.EpisodeError, match="書けません"):
         timeline.validate(data)
+
+
+# ---------------------------------------------------------------- assets/ の外を指せない（#85 の5段目）
+
+@pytest.mark.parametrize("bad", ["../secret.wav", "/etc/passwd", "..", "a/../../b.wav"])
+def test_bgmのsourceがassetsの外を指すと断る(bad):
+    data = tl(bgm=[{"id": "b1", "source": bad, "anchor": "op", "at": 0}])
+    with pytest.raises(episodes.EpisodeError, match="assets の外"):
+        timeline.validate(data)
+
+
+@pytest.mark.parametrize("bad", ["../secret.wav", "/etc/passwd"])
+def test_seのsourceがassetsの外を指すと断る(bad):
+    data = tl(se=[{"id": "s1", "source": bad, "anchor": "op", "at": 0}])
+    with pytest.raises(episodes.EpisodeError, match="assets の外"):
+        timeline.validate(data)
+
+
+def test_bgmのsourceは正規化されて保存される():
+    """`music/./a.wav` のような書き方も、正規化した形に整える。"""
+    data = tl(bgm=[{"id": "b1", "source": "music/./a.wav", "anchor": "op", "at": 0}])
+    got = timeline.validate(data)["lanes"]["bgm"][0]
+    assert got["source"] == "music/a.wav"
+
+
+def test_本編のsourceはassetsの外を指しても断らない():
+    """main は 00_raw をファイル名だけで探すので、assets の決まりは関係ない
+    （`build._clip_source_path` が基底名だけを見る。#85 の5段目の決定は bgm・se だけ）。"""
+    data = tl(main=[{"id": "op", "source": "../weird/../name.wav", "gap": 0}])
+    got = timeline.validate(data)["lanes"]["main"][0]
+    assert got["source"] == "../weird/../name.wav"

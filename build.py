@@ -192,15 +192,57 @@ def _track_wav(video, cfg):
     return dst
 
 
-def _clip_source_path(ep, clip, cfg=None):
+def assets_root(root):
+    """BGM・SE の曲・音の置き場所。回をまたいで共有するので、回のフォルダの外、
+    回を置く場所（`episodes_root()`）の直下にある（2026-09-26・ユーザーの判断。#79 の論点5）。
+
+    画像（`config.yml` の `images`）は、いまも `ep["root"] / img["file"]`
+    （`step_video`）で別に解決している。ここでは触らない（#85 の5段目のスコープ外）。
+    """
+    return Path(root) / "assets"
+
+
+def safe_asset_relpath(source, where):
+    """bgm・se の `source` が、`assets/` から下の場所として安全かを確かめる。
+
+    **`..` や絶対パスで `assets/` の外を指すものは断る**（静かに無視しない。CLAUDE.md）。
+    `build.py`（工程を動かすとき。`_clip_source_path`）と `web/timeline.py`（保存するときの
+    検証）の両方がここを呼び、決まりを1か所にまとめる（#85 の5段目）。
+
+    返すのは正規化した posix 形式の相対パス（例: `music/a.wav`）。
+    """
+    text = str(source or "").strip()
+    if not text:
+        raise ValueError(f"{where}に音源がありません")
+    posix = text.replace("\\", "/")
+    if posix.startswith("/") or (len(posix) > 1 and posix[1] == ":"):
+        raise ValueError(f"{where}は assets の外を指しています（絶対パス）: {text}")
+    normalized = os.path.normpath(posix).replace("\\", "/")
+    if normalized == "." or normalized == ".." or normalized.startswith("../"):
+        raise ValueError(f"{where}は assets の外を指しています: {text}")
+    return normalized
+
+
+def _clip_source_path(ep, clip, lane="main", cfg=None):
     """timeline.yml のクリップ1つが指す音源ファイルを返す。
 
+    - `lane` が `main`（本編）なら、いままでどおり `00_raw/<Path(source).name>`
+      （`join_sources` と同じ決まり）
+    - `lane` が `bgm`・`se` なら、`assets/` からの場所として探す
+      （2026-09-27・ユーザーの判断・案A。`source` の書き方は `assets/` からの相対パス。
+      例: `music/ひらけ アールほうそうきょく.wav`）。`safe_asset_relpath` で
+      `assets/` の外を指さないことを確かめてから探す
+
     録画（`VIDEO_EXTS`）なら、音声トラックを取り出した wav に差し替える
-    （`find_raw` と同じ決まり。`_track_wav` 参照）。`join_sources`（本編）と
-    `step_mix`（BGM・SE）の両方から使う。置き場所は仮置きで本編と同じ
-    `00_raw/<Path(source).name>`（#85）。
+    （`find_raw` と同じ決まり。`_track_wav` 参照。本編でしか起こらない想定だが、
+    bgm・se でも同じ拡張子ならそろえる）。`join_sources`（本編）と
+    `step_mix`（本編・BGM・SE）の両方から使う。
     """
-    found = ep["00_raw"] / Path(clip["source"]).name
+    if lane == "main":
+        found = ep["00_raw"] / Path(clip["source"]).name
+    else:
+        rel = safe_asset_relpath(clip["source"], f"{clip['id']} の音源")
+        found = assets_root(ep["root"]) / rel
     if not found.exists():
         raise FileNotFoundError(f"{clip['id']} の音源がありません: {found}")
     if found.suffix.lower() in VIDEO_EXTS:
@@ -221,7 +263,7 @@ def join_sources(ep, clips, cfg=None):
     """
     raw_dir = ep["00_raw"]
     dst = raw_dir / JOINED
-    parts = [_clip_source_path(ep, clip, cfg) for clip in clips]
+    parts = [_clip_source_path(ep, clip, "main", cfg) for clip in clips]
 
     # **timeline.yml 自身の更新日時も見る。** 音源のファイルだけ見ていると、
     # 並びを入れ替えたときと、行を1つ消したときに繋ぎ直されない
@@ -726,6 +768,29 @@ def volume_expr(points):
     return f"volume=eval=frame:volume='{expr}'"
 
 
+def _volume_at(points, t):
+    """音量カーブ（`volume_expr` と同じ点）から、時刻 t（クリップ先頭からの秒）の音量を出す。
+
+    点の間は直線、最初の点より前・最後の点より後はその端の値のまま
+    （`volume_expr` と同じ意味）。点が無ければ音量カーブが無いので 1（そのまま）。
+    """
+    if not points:
+        return 1.0
+    pts = sorted(points, key=lambda p: p["time"])
+    if t <= pts[0]["time"]:
+        return pts[0]["volume"]
+    if t >= pts[-1]["time"]:
+        return pts[-1]["volume"]
+    for i in range(1, len(pts)):
+        t0, v0 = pts[i - 1]["time"], pts[i - 1]["volume"]
+        t1, v1 = pts[i]["time"], pts[i]["volume"]
+        if t0 <= t <= t1:
+            if t1 == t0:
+                return v1
+            return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+    return pts[-1]["volume"]
+
+
 def _mix_overlay_chain(clip, lane, cfg):
     """1本の BGM・SE クリップを、重ねる前にどう加工するか（フィルタの並び）。
 
@@ -838,7 +903,7 @@ def step_mix(ep, cfg):
         return
 
     main = data["lanes"]["main"]
-    durations = {clip["id"]: _clip_audio_duration(clip, _clip_source_path(ep, clip, cfg))
+    durations = {clip["id"]: _clip_audio_duration(clip, _clip_source_path(ep, clip, "main", cfg))
                  for clip in main}
     # **位置がずれていないかは、長さで確かめる**（cut.wav の有無では判定しない。上を参照）
     _check_mix_positions(ep, main, durations)
@@ -848,7 +913,7 @@ def step_mix(ep, cfg):
     chains = []
     labels = ["[0:a]"]
     for index, (lane, clip) in enumerate(overlays, start=1):
-        found = _clip_source_path(ep, clip, cfg)
+        found = _clip_source_path(ep, clip, lane, cfg)
         clip_total = _clip_audio_duration(clip, found)
         at = positions[clip["id"]]
 
@@ -869,6 +934,15 @@ def step_mix(ep, cfg):
                 print(f"({clip['id']}: 曲がコーナーの終わり（{hhmmss(anchor_total)}）より"
                       f"{hhmmss(anchor_total - covers)}早く尽きます。曲が先に終わります)",
                       flush=True)
+            elif covers > anchor_total:
+                # コーナーの終わりを越えて、次のコーナーの下まで鳴り続けるか。
+                # **音量カーブでコーナーの終わりまでに 0 まで下げていれば出さない**
+                # （ユーザーが意図して消しているので、注意は不要）
+                t_end = anchor_total - clip.get("at", 0)
+                if _volume_at(clip.get("volume"), t_end) > 0:
+                    print(f"({clip['id']}: 曲がコーナーの終わり（{hhmmss(anchor_total)}）を"
+                          f"{hhmmss(covers - anchor_total)}越えて鳴ります。次のコーナーの下でも"
+                          "鳴ります（音量の点で下げるか消してください）)", flush=True)
         # 曲・SE の終わりが、番組の末尾を超えて切れるか。
         # `amix` は `duration=first` で全体の尺を保つので、超えたぶんは黙って切られる
         if at + clip_total > clean_total + 0.05:
