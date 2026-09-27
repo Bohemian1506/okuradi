@@ -123,6 +123,27 @@ class Meta(BaseModel):
     tags: list[str] = []
 
 
+class VolumePoint(BaseModel):
+    time: float
+    volume: float
+
+
+class NewBgm(BaseModel):
+    source: str
+    anchor: str
+    at: float = 0
+    volume: list[VolumePoint] | None = None
+
+
+class BgmUpdate(BaseModel):
+    # 変えられるのは anchor・at・volume の点だけ（#85 の5段目）。id・source は変えない
+    model_config = ConfigDict(extra="forbid")
+
+    anchor: str | None = None
+    at: float | None = None
+    volume: list[VolumePoint] | None = None
+
+
 @app.get("/api/settings")
 def get_settings():
     return {"obs_dir": _guard(sources.read_settings).get("obs_dir", "")}
@@ -198,10 +219,40 @@ def get_timeline(name: str):
     return _guard(media.timeline_view, name)
 
 
-@app.get("/api/episodes/{name}/timeline-source/{filename}")
-def get_timeline_source(name: str, filename: str):
-    path = _guard(media.timeline_source_path, name, filename)
+@app.get("/api/episodes/{name}/timeline-source/{lane}/{filename:path}")
+def get_timeline_source(name: str, lane: str, filename: str):
+    """`lane` は main・bgm・se。main は 00_raw、bgm・se は assets/ から配る（#85 の5段目）。
+    `filename` は bgm・se では `music/xxx.wav` のように `/` を含むので path 型で受ける。"""
+    path = _guard(media.timeline_source_path, name, lane, filename)
     return FileResponse(path, headers={"Accept-Ranges": "bytes"})
+
+
+# ---------------------------------------------------------------- BGM の行（#85 の5段目）
+
+
+@app.get("/api/assets/music")
+def get_music_list():
+    """`assets/music/` の曲の一覧。回をまたいで共有するので、回に紐付かない。"""
+    return _guard(sources.music_list)
+
+
+@app.post("/api/episodes/{name}/bgm")
+def post_bgm(name: str, body: NewBgm):
+    volume = [v.model_dump() for v in body.volume] if body.volume is not None else None
+    return {"bgm": _guard(sources.add_bgm, name, body.source, body.anchor, body.at, volume)}
+
+
+@app.put("/api/episodes/{name}/bgm/{clip_id}")
+def put_bgm(name: str, clip_id: str, body: BgmUpdate):
+    changes = body.model_dump(exclude_unset=True)
+    if "volume" in changes and changes["volume"] is not None:
+        changes["volume"] = [dict(v) for v in changes["volume"]]
+    return {"bgm": _guard(sources.update_bgm, name, clip_id, changes)}
+
+
+@app.delete("/api/episodes/{name}/bgm/{clip_id}")
+def delete_bgm(name: str, clip_id: str):
+    return {"bgm": _guard(sources.remove_bgm, name, clip_id)}
 
 
 @app.get("/api/episodes/{name}/echoes")

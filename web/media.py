@@ -155,18 +155,47 @@ def _resolve_raw_source(raw_dir, source):
     return found
 
 
-def timeline_source_path(name, filename):
-    """タイムラインのクリップが指す音源を配る。"""
+def _resolve_asset_source(source):
+    """bgm・se の `source` を、`assets/` の中の実在するファイルにだけ解決する。
+
+    `build.safe_asset_relpath` と同じ決まり（`..`・絶対パスは断る）。ここは見るだけの
+    画面なので、`_resolve_raw_source` と同じく見つからなければ None（呼び出し側が
+    理由の文言を書く。CLAUDE.md「静かに失敗させない」）。
+    """
+    try:
+        rel = build.safe_asset_relpath(source, "音源")
+    except ValueError:
+        return None
+    found = build.assets_root(episodes.ROOT) / rel
+    if not found.is_file():
+        return None
+    return found
+
+
+def timeline_source_path(name, lane, filename):
+    """タイムラインのクリップが指す音源を配る。
+
+    `lane` が `main` なら `00_raw`、`bgm`・`se` なら `assets/` から探す（#85 の5段目）。
+    """
     ep_dir = episodes.resolve(name)
-    found = _resolve_raw_source(ep_dir / "00_raw", filename)
+    if lane == "main":
+        found = _resolve_raw_source(ep_dir / "00_raw", filename)
+    elif lane in ("bgm", "se"):
+        found = _resolve_asset_source(filename)
+    else:
+        raise episodes.EpisodeError(f"知らないレーンです: {lane}")
     if not found:
         raise episodes.EpisodeError(f"音源がありません: {Path(filename).name or filename}")
     return found
 
 
-def _clip_duration(raw_dir, clip):
-    """生音の長さ。読めなければ (None, 理由) を返す（止めずに、そのクリップにだけ付ける）。"""
-    found = _resolve_raw_source(raw_dir, clip["source"])
+def _clip_duration(raw_dir, clip, lane="main"):
+    """生音の長さ。読めなければ (None, 理由) を返す（止めずに、そのクリップにだけ付ける）。
+
+    `lane` が `main` なら `00_raw`、`bgm`・`se` なら `assets/` から探す（#85 の5段目）。
+    """
+    found = (_resolve_raw_source(raw_dir, clip["source"]) if lane == "main"
+             else _resolve_asset_source(clip["source"]))
     if not found:
         name = Path(clip["source"]).name or clip["source"]
         return None, f"音源がありません: {name}"
@@ -194,18 +223,21 @@ def timeline_view(name):
 
     raw_dir = ep_dir / "00_raw"
 
-    def source_url(clip):
-        return f"/api/episodes/{name}/timeline-source/{quote(Path(clip['source']).name)}"
+    def source_url(clip, lane):
+        # main は 00_raw から探すので基底名だけでよい。bgm・se は assets/ からの
+        # 相対パス（`music/xxx.wav` のように `/` を含む）をそのまま使う（#85 の5段目）
+        rel = Path(clip["source"]).name if lane == "main" else clip["source"]
+        return f"/api/episodes/{name}/timeline-source/{lane}/{quote(rel, safe='/')}"
 
     main_out = []
     positions = {}
     at = 0.0
     broken = False   # 前のクリップの長さが分からないと、後ろの位置はもう出せない
     for clip in data["lanes"]["main"]:
-        length, error = _clip_duration(raw_dir, clip)
+        length, error = _clip_duration(raw_dir, clip, "main")
         entry = {
             "id": clip["id"], "source": Path(clip["source"]).name,
-            "url": source_url(clip), "gap": clip["gap"],
+            "url": source_url(clip, "main"), "gap": clip["gap"],
             "duration": round(length, 3) if length is not None else None,
             "start": None, "error": None,
         }
@@ -224,13 +256,15 @@ def timeline_view(name):
     def side_lane(lane):
         out = []
         for clip in data["lanes"][lane]:
-            length, error = _clip_duration(raw_dir, clip)
+            length, error = _clip_duration(raw_dir, clip, lane)
             entry = {
                 "id": clip["id"], "source": Path(clip["source"]).name,
-                "url": source_url(clip), "anchor": clip["anchor"], "at": clip["at"],
+                "url": source_url(clip, lane), "anchor": clip["anchor"], "at": clip["at"],
                 "duration": round(length, 3) if length is not None else None,
                 "start": None, "error": None,
             }
+            if clip.get("volume") is not None:
+                entry["volume"] = clip["volume"]
             if error:
                 entry["error"] = error
             elif clip["anchor"] not in positions:

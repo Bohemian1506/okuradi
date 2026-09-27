@@ -566,3 +566,95 @@ def test_仮のファイルは枠の音源として解決しない(framed):
     """
     (framed / "00_raw" / ".tmp-op-x.wav").write_bytes(b"1")
     assert sources._resolve_frame_source(framed / "00_raw", ".tmp-op-x.wav") is None
+
+
+# ---------------------------------------------------------------- BGM の行（#85 の5段目）
+
+@pytest.fixture
+def framed_with_op(framed):
+    """op の枠に音源が入った状態（bgm の錨に使う）。"""
+    sources.add_frame_from_upload("ep01", "op", "op.wav", io.BytesIO(b"1"))
+    return framed
+
+
+def test_曲の一覧はassets_musicから返る(here, monkeypatch):
+    music_dir = here.parent / "assets" / "music"
+    music_dir.mkdir(parents=True)
+    (music_dir / "a.wav").write_bytes(b"1")
+    (music_dir / "b.mp3").write_bytes(b"1")                       # 拡張子が対象外（仮置き）
+    (music_dir / ".tmp.wav").write_bytes(b"1")                     # 仮のファイル
+    (music_dir / "a.wav:Zone.Identifier").write_bytes(b"1")        # コピーの印
+    monkeypatch.setattr(sources, "MUSIC_DIR", music_dir)
+    monkeypatch.setattr(sources, "duration_of", lambda path: 59.0)
+
+    got = sources.music_list()
+
+    assert [f["name"] for f in got["files"]] == ["a.wav"]
+    assert got["files"][0]["source"] == "music/a.wav"
+    assert got["files"][0]["duration"] == "0:59"
+
+
+def test_曲の一覧はフォルダが無ければ空(here, monkeypatch, tmp_path):
+    monkeypatch.setattr(sources, "MUSIC_DIR", tmp_path / "無い" / "music")
+    assert sources.music_list()["files"] == []
+
+
+def test_bgmを足すとidが自動で付きvolumeは既定値(framed_with_op):
+    got = sources.add_bgm("ep01", "music/a.wav", "op")
+    assert got[0]["id"] == "a"
+    assert got[0]["source"] == "music/a.wav"
+    assert got[0]["at"] == 0
+    assert got[0]["volume"] == [{"time": 15.0, "volume": 1.0}, {"time": 16.0, "volume": 0.251}]
+
+
+def test_bgmのidが重なれば番号を足す(framed_with_op):
+    sources.add_bgm("ep01", "music/a.wav", "op")
+    got = sources.add_bgm("ep01", "music/a.wav", "op")
+    assert [c["id"] for c in got] == ["a", "a-2"]
+
+
+def test_bgmはatとvolumeを指定できる(framed_with_op):
+    got = sources.add_bgm("ep01", "music/a.wav", "op", at=3.5,
+                           volume=[{"time": 0, "volume": 1}])
+    assert got[0]["at"] == 3.5
+    assert got[0]["volume"] == [{"time": 0.0, "volume": 1.0}]
+
+
+def test_bgmのanchorが無ければ断る(framed_with_op):
+    with pytest.raises(episodes.EpisodeError, match="錨"):
+        sources.add_bgm("ep01", "music/a.wav", "いない")
+
+
+def test_bgmのsourceがassetsの外を指すと断る(framed_with_op):
+    with pytest.raises(episodes.EpisodeError, match="assets の外"):
+        sources.add_bgm("ep01", "../evil.wav", "op")
+
+
+def test_bgmを変えるとanchor_at_volumeだけ変わりsourceは変わらない(framed_with_op):
+    sources.add_bgm("ep01", "music/a.wav", "op")
+    got = sources.update_bgm("ep01", "a", {"at": 9.0})
+    assert got[0]["at"] == 9.0
+    assert got[0]["source"] == "music/a.wav"
+    assert got[0]["volume"] == [{"time": 15.0, "volume": 1.0}, {"time": 16.0, "volume": 0.251}]
+
+
+def test_bgmのvolumeはnullを渡すと外れる(framed_with_op):
+    sources.add_bgm("ep01", "music/a.wav", "op")
+    got = sources.update_bgm("ep01", "a", {"volume": None})
+    assert "volume" not in got[0]
+
+
+def test_無いbgmを変えると断る(framed_with_op):
+    with pytest.raises(episodes.EpisodeError, match="その BGM がありません"):
+        sources.update_bgm("ep01", "no-such", {"at": 1})
+
+
+def test_bgmを消せる(framed_with_op):
+    sources.add_bgm("ep01", "music/a.wav", "op")
+    got = sources.remove_bgm("ep01", "a")
+    assert got == []
+
+
+def test_無いbgmを消すと断る(framed_with_op):
+    with pytest.raises(episodes.EpisodeError, match="その BGM がありません"):
+        sources.remove_bgm("ep01", "no-such")

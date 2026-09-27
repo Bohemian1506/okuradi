@@ -41,8 +41,18 @@ AUDIO_EXTS = [".wav", ".m4a"]
 ACCEPTED = AUDIO_EXTS + build.VIDEO_EXTS
 ACCEPTED_TEXT = " / ".join(e.lstrip(".") for e in ACCEPTED)
 
-# OBS のフォルダは録画が何本もたまるので、新しいほうから何本かだけ見せる
+# OBS のフォルダは何本もたまるので、新しいほうから何本かだけ見せる
 OBS_LIMIT = 12
+
+# BGM・SE の曲の置き場所（回をまたいで共有。#85 の5段目）。SETTINGS と同じく、
+# 起動時の episodes.ROOT で決める（テストは monkeypatch で差し替える）
+MUSIC_DIR = build.assets_root(episodes.ROOT) / "music"
+
+# 新しく足す BGM の既定値（2026-09-27・lead の仮置き）。
+# 「0:15 から -12dB（喋りに被る所を下げる目安。#82）」を、1秒かけて下げる形にしたもの。
+# -12dB を倍率に直すと 0.251（10 ** (-12/20)）
+BGM_DEFAULT_AT = 0
+BGM_DEFAULT_VOLUME = [{"time": 15, "volume": 1.0}, {"time": 16, "volume": 0.251}]
 
 
 # ---------------------------------------------------------------- 設定
@@ -556,3 +566,117 @@ def remove_orphan(name, orphan_id):
     _clear_stem(ep_dir, Path(clip["source"]).stem)
     timeline.save(ep_dir, planned)
     return frames_view(name)
+
+
+# ---------------------------------------------------------------- BGM の行（#85 の5段目）
+#
+# 曲の置き場所は assets/music/（2026-09-26・ユーザーの判断）。
+# timeline.yml の書き方は `_frame_source_info` などと違い、`web/timeline.py` の
+# `save`（検証を通る）にそのまま任せる。書き込みの安全（途中で落ちたとき）も
+# `timeline.save` に合わせる（＝いまは特別なことをしていない。3段目の音源ファイル
+# 自体の置き換え（`_place_raw`）だけが tmp→rename をしている）。
+
+
+def music_list():
+    """`assets/music/` の曲の一覧（画面「曲を置く」欄）。
+
+    音声ファイルだけを見せる。`Zone.Identifier`（Windows からコピーしたときに付く
+    仮のファイル）や `.` で始まる仮のファイルは除く。
+    """
+    if not MUSIC_DIR.is_dir():
+        return {"dir": str(MUSIC_DIR), "files": []}
+    files = [f for f in sorted(MUSIC_DIR.iterdir())
+             if f.is_file() and not f.name.startswith(".")
+             and "Zone.Identifier" not in f.name
+             and f.suffix.lower() in AUDIO_EXTS]
+    rows = []
+    for found in files:
+        seconds = duration_of(found)
+        rows.append({
+            "name": found.name,
+            "source": f"music/{found.name}",
+            "duration": build.hhmmss(seconds) if seconds else "長さが読めません",
+        })
+    return {"dir": str(MUSIC_DIR), "files": rows}
+
+
+def _all_clip_ids(data):
+    return {clip["id"] for lane in data["lanes"].values() for clip in lane}
+
+
+def _unique_bgm_id(data, source):
+    """新しく足す BGM の id。ファイル名から作り、重なれば番号を足す（仮置き）。"""
+    base = Path(source).stem.strip() or "bgm"
+    existing = _all_clip_ids(data)
+    if base not in existing:
+        return base
+    n = 2
+    while f"{base}-{n}" in existing:
+        n += 1
+    return f"{base}-{n}"
+
+
+def _bgm_lanes(ep_dir):
+    """`_base_timeline` の bgm レーンと、そのまま書き戻すための他のレーンを返す。"""
+    data = _base_timeline(ep_dir)
+    return data, list(data["lanes"]["bgm"])
+
+
+def _save_bgm(ep_dir, data, bgm):
+    new_data = {
+        "version": timeline.VERSION,
+        "lanes": {
+            "main": data["lanes"]["main"],
+            "bgm": bgm,
+            "se": data["lanes"]["se"],
+        },
+    }
+    saved = timeline.save(ep_dir, new_data)   # 検証（assets の外を指さないかを含む）はここを通る
+    return saved["lanes"]["bgm"]
+
+
+def add_bgm(name, source, anchor, at=None, volume=None):
+    """BGM のクリップを足す。id は自動で付ける（#85 の5段目）。"""
+    ep_dir = episodes.resolve(name)
+    data, bgm = _bgm_lanes(ep_dir)
+    clip = {
+        "id": _unique_bgm_id(data, source),
+        "source": source,
+        "anchor": anchor,
+        "at": BGM_DEFAULT_AT if at is None else at,
+    }
+    clip["volume"] = ([dict(p) for p in volume] if volume is not None
+                       else [dict(p) for p in BGM_DEFAULT_VOLUME])
+    bgm.append(clip)
+    return _save_bgm(ep_dir, data, bgm)
+
+
+def update_bgm(name, clip_id, changes):
+    """BGM のクリップを変える。変えられるのは anchor・at・volume だけ。"""
+    ep_dir = episodes.resolve(name)
+    data, bgm = _bgm_lanes(ep_dir)
+    index = next((i for i, c in enumerate(bgm) if c["id"] == clip_id), None)
+    if index is None:
+        raise episodes.EpisodeError(f"その BGM がありません: {clip_id}")
+
+    updated = dict(bgm[index])
+    for key in ("anchor", "at"):
+        if key in changes and changes[key] is not None:
+            updated[key] = changes[key]
+    if "volume" in changes:
+        if changes["volume"] is None:
+            updated.pop("volume", None)
+        else:
+            updated["volume"] = [dict(p) for p in changes["volume"]]
+    bgm[index] = updated
+    return _save_bgm(ep_dir, data, bgm)
+
+
+def remove_bgm(name, clip_id):
+    """BGM のクリップを消す。"""
+    ep_dir = episodes.resolve(name)
+    data, bgm = _bgm_lanes(ep_dir)
+    if not any(c["id"] == clip_id for c in bgm):
+        raise episodes.EpisodeError(f"その BGM がありません: {clip_id}")
+    bgm = [c for c in bgm if c["id"] != clip_id]
+    return _save_bgm(ep_dir, data, bgm)

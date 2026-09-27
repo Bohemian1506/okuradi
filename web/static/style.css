@@ -977,6 +977,19 @@ select.field { font-weight: 500; }
    （#86。見た目ではなく操作のための決定） */
 .timeline-clip-se { min-width: 14px !important; }
 
+/* ---------------------------------------------------------------- BGM の行（#85 の5段目） */
+
+.bgm-list { display: flex; flex-direction: column; gap: 4px; padding: 10px 18px 0; }
+.bgm-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 6px 10px; border-radius: 10px; font-size: 13px;
+}
+.bgm-row:hover { background: var(--cream-dim); }
+.bgm-row-label { min-width: 0; }
+.bgm-add { padding: 10px 18px 14px; }
+.bgm-add-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.bgm-add-row .field { min-width: 160px; }
+
 /* ---------------------------------------------------------------- 部品14 エコー区間リスト */
 
 .regions { padding: 10px 18px 14px; display: flex; flex-direction: column; gap: 4px; }

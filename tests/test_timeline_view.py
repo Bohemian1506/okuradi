@@ -28,6 +28,10 @@ def ep(tmp_path, monkeypatch):
     for sub in ["00_raw", "01_clean", "02_text", "03_meta", "04_video"]:
         (ep_dir / sub).mkdir(parents=True)
     monkeypatch.setattr(episodes, "resolve", lambda name, root=None: ep_dir)
+    # bgm・se は assets/ から探す（#85 の5段目）。episodes.ROOT は tmp_path とは
+    # 別の場所（起動時に決まる）ので、テストではここに向け直す
+    monkeypatch.setattr(episodes, "ROOT", tmp_path)
+    (tmp_path / "assets").mkdir(parents=True, exist_ok=True)
     return ep_dir
 
 
@@ -53,7 +57,7 @@ def test_timelineがない回はNoneを返す(ep):
 def test_本編の長さと位置が出る(ep):
     sine(ep / "00_raw" / "op.wav", 2)
     sine(ep / "00_raw" / "zunda.wav", 3)
-    sine(ep / "00_raw" / "bg1.wav", 1)
+    sine(ep.parent / "assets" / "bg1.wav", 1)
     write_timeline(ep, TWO_WITH_BGM)
 
     got = media.timeline_view("ep01")["timeline"]
@@ -68,7 +72,7 @@ def test_本編の長さと位置が出る(ep):
 def test_BGMはanchorの位置に置かれる(ep):
     sine(ep / "00_raw" / "op.wav", 2)
     sine(ep / "00_raw" / "zunda.wav", 3)
-    sine(ep / "00_raw" / "bg1.wav", 1)
+    sine(ep.parent / "assets" / "bg1.wav", 1)
     write_timeline(ep, TWO_WITH_BGM)
 
     got = media.timeline_view("ep01")["timeline"]
@@ -80,7 +84,7 @@ def test_BGMはanchorの位置に置かれる(ep):
 def test_音源がないクリップは理由を付けて止まらない(ep):
     sine(ep / "00_raw" / "op.wav", 2)
     # zunda.wav を置かない
-    sine(ep / "00_raw" / "bg1.wav", 1)
+    sine(ep.parent / "assets" / "bg1.wav", 1)
     write_timeline(ep, TWO_WITH_BGM)
 
     got = media.timeline_view("ep01")["timeline"]
@@ -104,7 +108,7 @@ def test_壊れたtimelineymlは理由を画面に出せる形で断る(ep):
 
 def test_音の在りかはファイル名だけで配る(ep):
     sine(ep / "00_raw" / "op.wav", 1)
-    got = media.timeline_source_path("ep01", "op.wav")
+    got = media.timeline_source_path("ep01", "main", "op.wav")
     assert got == ep / "00_raw" / "op.wav"
 
 
@@ -113,21 +117,40 @@ def test_音源のパスは00_rawの外を指せない(ep, tmp_path):
     outside.write_bytes("だめ".encode())
     (ep / "00_raw" / "ひみつ.wav").write_bytes("00_rawの中身".encode())
     # 名前だけを使うので、../ を混ぜても 00_raw の中しか見ない
-    got = media.timeline_source_path("ep01", "../ひみつ.wav")
+    got = media.timeline_source_path("ep01", "main", "../ひみつ.wav")
     assert got == ep / "00_raw" / "ひみつ.wav"
     assert got.read_bytes() == "00_rawの中身".encode()
 
 
 def test_音源がない名前は断る(ep):
     with pytest.raises(episodes.EpisodeError, match="音源がありません"):
-        media.timeline_source_path("ep01", "no-such.wav")
+        media.timeline_source_path("ep01", "main", "no-such.wav")
 
 
 @pytest.mark.parametrize("name", ["..", "."])
 def test_フォルダを指す名前は断る(ep, name):
     # 基底名にしても `..` と `.` は残り、回のフォルダや 00_raw 自身を指す。ファイルでなければ断る
     with pytest.raises(episodes.EpisodeError, match="音源がありません"):
-        media.timeline_source_path("ep01", name)
+        media.timeline_source_path("ep01", "main", name)
+
+
+def test_知らないレーンは断る(ep):
+    with pytest.raises(episodes.EpisodeError, match="知らないレーン"):
+        media.timeline_source_path("ep01", "talk", "a.wav")
+
+
+def test_bgmはassetsから配る(ep):
+    (ep.parent / "assets" / "music").mkdir(parents=True)
+    sine(ep.parent / "assets" / "music" / "song.wav", 1)
+    got = media.timeline_source_path("ep01", "bgm", "music/song.wav")
+    assert got == ep.parent / "assets" / "music" / "song.wav"
+
+
+def test_bgmはassetsの外を指せない(ep, tmp_path):
+    outside = tmp_path / "ひみつ.wav"
+    outside.write_bytes("だめ".encode())
+    with pytest.raises(episodes.EpisodeError, match="音源がありません"):
+        media.timeline_source_path("ep01", "bgm", "../ひみつ.wav")
 
 
 def test_sourceがフォルダを指していても止まらず理由を返す(ep):
@@ -154,7 +177,7 @@ def test_位置の計算はtimeline_positionsと一致する(ep):
     同じ式を別に書いている。durations が全部そろっているときは、答えが一致するはず。"""
     sine(ep / "00_raw" / "op.wav", 2)
     sine(ep / "00_raw" / "zunda.wav", 3)
-    sine(ep / "00_raw" / "bg1.wav", 1)
+    sine(ep.parent / "assets" / "bg1.wav", 1)
     write_timeline(ep, TWO_WITH_BGM)
 
     got = media.timeline_view("ep01")["timeline"]

@@ -76,6 +76,12 @@ const state = {
   wave: null,        // 波形に使う音（trimmed.wav）の在りかと長さ
   timeline: null,    // timeline.yml の並び（#85 の2段目。無い回は null のまま）
   timelineError: "", // timeline.yml が壊れているときの理由（黙って隠さない）
+  music: null,       // assets/music/ の曲の一覧（BGM を置く選択肢。#85 の5段目）
+  musicError: "",
+  bgmOpen: false,    // 「曲を置く」フォームを開いているか
+  bgmSource: "",     // フォームで選んでいる曲
+  bgmAnchor: "",     // フォームで選んでいるコーナー（錨）
+  bgmBusy: {},       // BGM の id ごとの処理中（追加中は "new" キー）
   echoes: [],        // エコー区間
   echoesSaved: "",   // 保存されている中身（未保存かを見分ける）
   picked: -1,        // 選んでいる区間
@@ -318,11 +324,13 @@ function screenRecording() {
   box.appendChild(section(5, "ミックス（曲を重ねる）して聴く",
     "整音した喋りに、timeline.yml の BGM・SE を重ねる。無ければ喋りだけの音のまま。"
     + "重ねた曲の大きさ・位置が合っているかを聴いて確かめる。"
-    + "BGM・SE を画面で置く・音量カーブを描く部品はこのあと足す（いまは timeline.yml を直に書く）。",
+    + "BGM は下の「タイムラインの並びを確かめる」欄から置ける。"
+    + "SE を画面で置く部品はこのあと足す（いまは timeline.yml を直に書く）。",
     mixCard(), stepOf("mix")));
 
-  // timeline.yml がある回だけ出す（#85 の2段目。いまは見るだけ）
-  const timelineNote = "timeline.yml に書いた音源の並び（見るだけ）。"
+  // timeline.yml がある回だけ出す（#85 の2段目・5段目）
+  const timelineNote = "timeline.yml に書いた音源の並び。BGM は曲を置く・ドラッグで位置を合わせる・"
+    + "音量の点を動かす・削除ができる（#85 の5段目）。本編・SE はまだ見るだけ。"
     + "位置はカット前（生音）の長さで出しています。カット（edits）を書くと下見が失敗します"
     + "（まだ工程に繋がっていません）。";
   if (state.timelineError) {
@@ -1774,6 +1782,25 @@ const LANES = ["main", "bgm", "se"];
 // 重ね幅と、見出しの高さを合わせるため。数を2か所に書き写すと片方だけ直っておかしくなる）
 const TRACK_HEIGHT = 40;
 
+// envelope（wavesurfer-multitrack）は、最初の点より前を volume 0 から、最後の点より後を
+// volume 0 へ補間する（ソースの onTimeUpdate を読んで確認。2026-09-27・lead の指摘）。
+// build.py の volume_expr は逆に「端の値のまま」なので、画面の試聴と実際のミックスが
+// 食い違う（既定の [{15,1.0},{16,0.251}] だと、画面では 0〜15秒が無音からのフェードインに
+// 聞こえる）。**画面で描く・鳴らす点にだけ、端に補助点を足してそろえる**（保存前提の
+// timeline.yml の値は変えない。ユーザーが触ったときだけ、そのまま保存してよい）。
+// volume が無い（null・空）クリップは envelope 自体を付けない（points=[] のまま envelope を
+// 登録すると、点が無い間 onTimeUpdate が常に volume 0 を返し、無音のまま鳴らなくなるバグが
+// あった。#85 の5段目で見つけた）
+function bgmEnvelopePoints(volume, duration) {
+  if (!volume || !volume.length) return null;
+  const pts = volume.map((p) => ({ time: p.time, volume: p.volume })).sort((a, b) => a.time - b.time);
+  if (pts[0].time > 0.001) pts.unshift({ time: 0, volume: pts[0].volume });
+  if (duration != null && pts[pts.length - 1].time < duration - 0.001) {
+    pts.push({ time: duration, volume: pts[pts.length - 1].volume });
+  }
+  return pts;
+}
+
 function timelineTracks(lanes) {
   const tracks = [];
   for (const lane of LANES) {
@@ -1781,15 +1808,26 @@ function timelineTracks(lanes) {
       // 位置が出せないクリップ（音源が無い・長さが読めない）は widget に混ぜず、
       // 上の理由のバナーだけで見せる（止めずに、そのクリップにだけ理由を付ける）
       if (clip.error || clip.start == null) continue;
-      tracks.push({
+      const track = {
         id: `${lane}-${clip.id}`,
         lane,
         url: clip.url,
         startPosition: clip.start,
-        draggable: false,
+        // BGM のクリップだけ、ドラッグで位置を合わせられる（#85 の5段目）。
+        // 本編・SE はまだ動かせない（本編は edits・並びの話、SE は8段目）
+        draggable: lane === "bgm",
         options: { waveColor: LANE_COLOR[lane], progressColor: LANE_COLOR[lane], height: TRACK_HEIGHT },
         markers: [{ time: 0, label: `${LANE_LABEL[lane]}: ${clip.id}`, color: "rgba(0,0,0,.35)" }],
-      });
+      };
+      // BGM の音量カーブは wavesurfer-multitrack の envelope 機能で描き、動かす
+      // （#85 の5段目）。points の形は timeline.yml の volume と同じ（time 秒・volume 0〜1）で、
+      // ソース（vendor/multitrack.min.js）を読んで確かめた（envelope-points-change で受け取る）。
+      // volume が無い（null）クリップは envelope を付けない（次のコメント参照）
+      if (lane === "bgm") {
+        const points = bgmEnvelopePoints(clip.volume, clip.duration);
+        if (points) track.envelope = points;
+      }
+      tracks.push(track);
     }
   }
   return tracks;
@@ -1904,6 +1942,11 @@ function buildTimelineMultitrack(sig, tracks) {
     overlapLaneRows(timelineView.mt, tracks);
     waitForTimelineReady(sig, timelineView.mt);
   });
+  // BGM をドラッグした・音量の点を動かしたら保存する（#85 の5段目）。
+  // この widget はここで作った回にしか出ていない（回を移ると destroyTimelineMultitrack が
+  // 先に壊す）ので、そのつど state.selected.name を見ればよい
+  timelineView.mt.on("start-position-change", ({ id, startPosition }) => onBgmDrag(id, startPosition));
+  timelineView.mt.on("envelope-points-change", ({ id, points }) => onBgmEnvelope(id, points));
   armTimelineTimeout(sig);
 }
 
@@ -2030,7 +2073,255 @@ function timelineCard() {
     note.append(el("span", "mark", "!"), el("span", null, timelineView.error));
     card.appendChild(note);
   }
+
+  // BGM の一覧（削除の操作。ドラッグできない・見えにくい人でも消せるように）と
+  // 「曲を置く」欄（#85 の5段目）
+  const list = bgmList(lanes);
+  if (list) card.appendChild(list);
+  card.appendChild(bgmAddForm(lanes));
+
   return card;
+}
+
+// ---------------------------------------------------------------- BGM の行（#85 の5段目）
+
+// ドラッグ・音量の点を動かしたあと、少し待ってからまとめて PUT する
+// （連打で保存が走りすぎないように。CLAUDE.md）。id ごとに溜めて、次が来たら伸ばす
+const bgmPending = {};
+
+function scheduleBgmSave(clipId, changes) {
+  if (!state.selected) return;
+  const name = state.selected.name;
+  const pending = bgmPending[clipId] || { changes: {} };
+  pending.changes = { ...pending.changes, ...changes };
+  clearTimeout(pending.timer);
+  pending.timer = setTimeout(() => flushBgmSave(name, clipId), 500);
+  bgmPending[clipId] = pending;
+}
+
+async function flushBgmSave(name, clipId) {
+  const pending = bgmPending[clipId];
+  if (!pending) return;
+  delete bgmPending[clipId];
+  const onThisEpisode = state.selected && state.selected.name === name;
+  try {
+    await api(`/api/episodes/${name}/bgm/${encodeURIComponent(clipId)}`, {
+      method: "PUT", body: JSON.stringify(pending.changes),
+    });
+    if (onThisEpisode) state.actionError = "";
+  } catch (err) {
+    // 静かに失敗させない（CLAUDE.md）。失敗したら、動かす前の並びに読み直して戻す
+    if (onThisEpisode) state.actionError = `BGM を保存できませんでした: ${err.message}`;
+    timelineView.sig = null;   // sig が変わらないと widget が作り直されず、失敗前の見た目のまま残る
+  }
+  if (onThisEpisode) {
+    await loadTimeline(name);
+    await reload({ keep: name, keepSelected: true });
+  } else {
+    renderMain();
+  }
+}
+
+function bgmClipById(clipId) {
+  const tl = state.timeline;
+  if (!tl || !tl.timeline) return null;
+  return (tl.timeline.lanes.bgm || []).find((c) => c.id === clipId) || null;
+}
+
+// ドラッグの手離しは multitrack が知らせてくれない（動かすたびに来る）ので、
+// scheduleBgmSave の待ち時間で「離した」とみなす
+function onBgmDrag(trackId, startPosition) {
+  if (!trackId.startsWith("bgm-")) return;
+  const clipId = trackId.slice("bgm-".length);
+  const tl = state.timeline;
+  if (!tl || !tl.timeline) return;
+  const anchor = bgmAnchorForPosition(tl.timeline.lanes.main, startPosition);
+  if (!anchor) return;
+  const at = Math.max(0, round2(startPosition - anchor.start));
+  // 変わっていなければ保存しない（widget を作り直しただけでも動く。#85 の5段目で気づいた）
+  const current = bgmClipById(clipId);
+  if (current && current.anchor === anchor.id && Math.abs((current.at || 0) - at) < 0.005) return;
+  scheduleBgmSave(clipId, { anchor: anchor.id, at });
+}
+
+// 新しい位置が入るコーナー（本編クリップ）を錨にする。無ければ最初のコーナーの頭に寄せる
+// （lead の仮置き。at が負にならないようにする）
+function bgmAnchorForPosition(mainClips, position) {
+  const usable = (mainClips || []).filter((c) => c.start != null)
+    .sort((a, b) => a.start - b.start);
+  if (!usable.length) return null;
+  let anchor = usable[0];
+  for (const clip of usable) {
+    if (clip.start <= position) anchor = clip;
+    else break;
+  }
+  return anchor;
+}
+
+function bgmVolumeEqual(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((p, i) => Math.abs(p.time - b[i].time) < 0.005 && Math.abs(p.volume - b[i].volume) < 0.005);
+}
+
+function onBgmEnvelope(trackId, points) {
+  if (!trackId.startsWith("bgm-")) return;
+  const clipId = trackId.slice("bgm-".length);
+  // クリップ相対の秒はそのまま。volume は0〜1の倍率で、timeline.yml と同じ意味
+  // （vendor/multitrack.min.js を読んで確かめた。#85 の5段目）
+  const volume = points.map((p) => ({ time: round2(p.time), volume: round2(p.volume) }));
+  // widget を作った直後にも1回この事象が起きる（もとの点を読み込むだけで発火する。
+  // ライブラリの仕様）。**画面用に足した端の補助点（bgmEnvelopePoints）ぶんも含めて**、
+  // いま保存されている中身と同じなら、まだユーザーは触っていないので保存しない。
+  // 触って何か変えたら、補助点が付いたままでも普通に保存する（保存されても mix の音は
+  // 変わらない。build.py は端の値のまま扱うため）
+  const current = bgmClipById(clipId);
+  if (current) {
+    const expected = (bgmEnvelopePoints(current.volume, current.duration) || [])
+      .map((p) => ({ time: round2(p.time), volume: round2(p.volume) }));
+    if (bgmVolumeEqual(expected, volume)) return;
+  }
+  scheduleBgmSave(clipId, { volume });
+}
+
+function bgmList(lanes) {
+  const clips = lanes.bgm || [];
+  if (!clips.length) return null;
+  const box = el("div", "bgm-list");
+  clips.forEach((clip) => {
+    const row = el("div", "bgm-row");
+    const busy = !!state.bgmBusy[clip.id];
+    const where = clip.start != null
+      ? `${clip.source}（${LANE_LABEL.main} 「${clip.anchor}」の ${clock(clip.at)} から。`
+        + `音量の点 ${(clip.volume || []).length}件）`
+      : `${clip.source}（${clip.error || "位置が出せません"}）`;
+    row.appendChild(el("span", "bgm-row-label", where));
+
+    const remove = el("button", "btn-icon");
+    remove.innerHTML = icon(SVG.trash);
+    remove.title = "この BGM を削除";
+    remove.setAttribute("aria-label", `${clip.id} を削除`);
+    remove.disabled = busy;
+    remove.onclick = () => removeBgm(clip.id);
+    row.appendChild(remove);
+    box.appendChild(row);
+  });
+  return box;
+}
+
+async function removeBgm(clipId) {
+  if (!confirm("この BGM を削除しますか？")) return;
+  const name = state.selected.name;
+  state.bgmBusy = { ...state.bgmBusy, [clipId]: true };
+  state.actionError = "";
+  renderMain();
+  try {
+    await api(`/api/episodes/${name}/bgm/${encodeURIComponent(clipId)}`, { method: "DELETE" });
+  } catch (err) {
+    state.actionError = `BGM を削除できませんでした: ${err.message}`;
+  }
+  state.bgmBusy = { ...state.bgmBusy, [clipId]: false };
+  await loadTimeline(name);
+  await reload({ keep: name, keepSelected: true });
+}
+
+// 「曲を置く」欄。開くまでは小さいボタンだけ（#85 の5段目）
+function bgmAddForm(lanes) {
+  const box = el("div", "bgm-add");
+  if (!state.bgmOpen) {
+    const open = el("button", "btn-add");
+    open.innerHTML = icon(SVG.plus, 13, 2) + "曲を置く";
+    open.onclick = () => { state.bgmOpen = true; renderMain(); };
+    box.appendChild(open);
+    return box;
+  }
+
+  const close = el("button", "btn-icon");
+  close.innerHTML = icon(SVG.close);
+  close.title = "やめる";
+  close.setAttribute("aria-label", "曲を置くのをやめる");
+  close.onclick = () => { state.bgmOpen = false; renderMain(); };
+
+  if (state.musicError) {
+    box.appendChild(close);
+    const note = el("div", "wave-note is-error");
+    note.append(el("span", "mark", "!"),
+      el("span", null, `曲の一覧を読み込めませんでした: ${state.musicError}`));
+    box.appendChild(note);
+    return box;
+  }
+  if (!state.music || !state.music.files.length) {
+    box.appendChild(close);
+    const note = el("div", "wave-note is-caution");
+    note.append(el("span", "mark", "!"), el("span", null,
+      `曲がありません。${(state.music && state.music.dir) || "assets/music/"} に置いてください`));
+    box.appendChild(note);
+    return box;
+  }
+
+  const anchors = (lanes.main || []).filter((c) => c.start != null);
+  if (!anchors.length) {
+    box.appendChild(close);
+    box.appendChild(el("div", "wave-note is-caution",
+      "本編の位置が出せないので、置く場所を選べません"));
+    return box;
+  }
+
+  if (!state.bgmSource || !state.music.files.some((f) => f.source === state.bgmSource)) {
+    state.bgmSource = state.music.files[0].source;
+  }
+  if (!state.bgmAnchor || !anchors.some((c) => c.id === state.bgmAnchor)) {
+    state.bgmAnchor = anchors[0].id;
+  }
+
+  const musicSelect = el("select", "field");
+  state.music.files.forEach((f) => {
+    const option = el("option", null, `${f.name}（${f.duration}）`);
+    option.value = f.source;
+    musicSelect.appendChild(option);
+  });
+  musicSelect.value = state.bgmSource;
+  musicSelect.onchange = () => { state.bgmSource = musicSelect.value; };
+
+  const anchorSelect = el("select", "field");
+  anchors.forEach((c) => {
+    const option = el("option", null, `${c.id}（${clock(c.start)}）`);
+    option.value = c.id;
+    anchorSelect.appendChild(option);
+  });
+  anchorSelect.value = state.bgmAnchor;
+  anchorSelect.onchange = () => { state.bgmAnchor = anchorSelect.value; };
+
+  const busy = !!state.bgmBusy.new;
+  const add = el("button", "btn-preview");
+  add.textContent = busy ? "置いています…" : "この位置に置く";
+  add.disabled = busy;
+  add.onclick = () => addBgm();
+
+  const row = el("div", "bgm-add-row");
+  row.append(field(el("span", "form-label", "曲"), musicSelect),
+             field(el("span", "form-label", "どのコーナーに付けるか"), anchorSelect),
+             add, close);
+  box.appendChild(row);
+  return box;
+}
+
+async function addBgm() {
+  const name = state.selected.name;
+  state.bgmBusy = { ...state.bgmBusy, new: true };
+  state.actionError = "";
+  renderMain();
+  try {
+    await api(`/api/episodes/${name}/bgm`, {
+      method: "POST",
+      body: JSON.stringify({ source: state.bgmSource, anchor: state.bgmAnchor }),
+    });
+    state.bgmOpen = false;
+  } catch (err) {
+    state.actionError = `曲を置けませんでした: ${err.message}`;
+  }
+  state.bgmBusy = { ...state.bgmBusy, new: false };
+  await loadTimeline(name);
+  await reload({ keep: name, keepSelected: true });
 }
 
 // ---------------------------------------------------------------- 部品11・12 下見
@@ -3605,6 +3896,11 @@ async function selectEpisode(name) {
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
   state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
   await loadTimeline(name);
+  await loadMusic();
+  state.bgmOpen = false;
+  state.bgmSource = "";
+  state.bgmAnchor = "";
+  state.bgmBusy = {};
   const echoes = await api(`/api/episodes/${name}/echoes`).catch(() => ({ echoes: [] }));
   state.echoes = echoes.echoes;
   state.echoesSaved = JSON.stringify(echoes.echoes);
@@ -3642,6 +3938,17 @@ async function loadTimeline(name) {
     state.timeline = await api(`/api/episodes/${name}/timeline`);
   } catch (err) {
     state.timelineError = err.message;
+  }
+}
+
+// assets/music/ の曲の一覧（回をまたいで共有。#85 の5段目の「曲を置く」欄で使う）
+async function loadMusic() {
+  state.music = null;
+  state.musicError = "";
+  try {
+    state.music = await api("/api/assets/music");
+  } catch (err) {
+    state.musicError = err.message;
   }
 }
 

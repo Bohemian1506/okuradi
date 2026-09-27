@@ -16,6 +16,8 @@
 
 import yaml
 
+import build
+
 from web import episodes
 
 NAME = "timeline.yml"
@@ -113,11 +115,19 @@ def _clip(row, lane, index):
 
     made = dict(row)
     made["id"] = clip_id
-    made["source"] = source
     if lane == "main":
+        made["source"] = source
         made["gap"] = _number(row.get("gap", 0), f"{where}（{clip_id}）の間")
         made["edits"] = _ranges(row.get("edits"), f"{clip_id} の編集点")
     else:
+        # bgm・se の source は assets/ からの場所（2026-09-27・ユーザーの判断）。
+        # `..`・絶対パスで assets の外を指すものは断る。build.py（工程を動かすとき）と
+        # ここ（保存するときの検証）で決まりを1か所にまとめる（#85 の5段目）
+        try:
+            source = build.safe_asset_relpath(source, f"{where}（{clip_id}）の音源")
+        except ValueError as exc:
+            raise episodes.EpisodeError(str(exc)) from exc
+        made["source"] = source
         # 本編以外に編集点は書けない。黙って残すと、値の形すら確かめないまま通ってしまう
         if "edits" in row:
             raise episodes.EpisodeError(

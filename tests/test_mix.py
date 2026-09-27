@@ -85,7 +85,17 @@ def ep(tmp_path):
     for sub in ["00_raw", "01_cut", "01_clean", "01_mix"]:
         made[sub] = tmp_path / sub
         made[sub].mkdir()
+    # bgm・se は assets/ から探す（#85 の5段目）。root は tmp_path と同じ場所なので、
+    # そのまま assets/ を掘れる
+    (tmp_path / "assets").mkdir()
     return made
+
+
+def asset(ep, relpath):
+    """bgm・se のテスト用の曲・SE を assets/ の下に置く場所（親フォルダも作る）。"""
+    path = ep["root"] / "assets" / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 CFG = {"audio": {"target_lufs": -14, "denoise": False, "trim_silence": True}}
@@ -178,7 +188,7 @@ def test_mixの長さはclean_wavと1サンプルも変わらない(ep):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
-    sine(ep["00_raw"] / "bgm.wav", 3, freq=1000, amp=0.6)
+    sine(asset(ep, "bgm.wav"), 3, freq=1000, amp=0.6)
     timeline_yml(ep, TWO_CORNERS.format(at=1.0))
     write_clean_json(ep)
 
@@ -193,7 +203,7 @@ def test_曲は正しい位置から鳴りその位置より前は鳴らない(e
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, freq=100, amp=0.05)   # 喋りに見立てた小さい音
-    sine(ep["00_raw"] / "bgm.wav", 3, freq=1000, amp=0.8)        # 曲。振幅を大きくして見分ける
+    sine(asset(ep, "bgm.wav"), 3, freq=1000, amp=0.8)        # 曲。振幅を大きくして見分ける
     timeline_yml(ep, TWO_CORNERS.format(at=1.0))                  # 位置 = 4 + 1 = 5秒
     write_clean_json(ep)
 
@@ -212,7 +222,7 @@ def test_位置が番組の長さを超えたら断る(ep):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
-    sine(ep["00_raw"] / "bgm.wav", 2)
+    sine(asset(ep, "bgm.wav"), 2)
     timeline_yml(ep, TWO_CORNERS.format(at=100))   # 4 + 100 = 104秒。番組は10秒しか無い
     write_clean_json(ep)
 
@@ -248,7 +258,7 @@ def test_曲が錨のコーナーより短ければ警告だけ出して止ま�
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
-    sine(ep["00_raw"] / "bgm.wav", 1)              # talk（6秒）よりずっと短い曲
+    sine(asset(ep, "bgm.wav"), 1)              # talk（6秒）よりずっと短い曲
     timeline_yml(ep, TWO_CORNERS.format(at=0))
     write_clean_json(ep)
 
@@ -263,7 +273,7 @@ def test_曲が短いという警告はseには出ない(ep, capsys):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
-    sine(ep["00_raw"] / "pin.wav", 1)               # talk（6秒）よりずっと短い SE
+    sine(asset(ep, "pin.wav"), 1)               # talk（6秒）よりずっと短い SE
     timeline_yml(ep, """version: 1
 lanes:
   main:
@@ -284,7 +294,7 @@ def test_曲の終わりが番組の末尾を超えると切れることをロ�
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
-    sine(ep["00_raw"] / "bgm.wav", 8)               # at=4 だと 4+8=12秒。番組は10秒しかない
+    sine(asset(ep, "bgm.wav"), 8)               # at=4 だと 4+8=12秒。番組は10秒しかない
     timeline_yml(ep, TWO_CORNERS.format(at=4))
     write_clean_json(ep)
 
@@ -298,12 +308,80 @@ def test_bgmもseもファイルが壊れているとidを含めて断る(ep):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
-    (ep["00_raw"] / "bgm.wav").write_bytes(b"not really audio")
+    (asset(ep, "bgm.wav")).write_bytes(b"not really audio")
     timeline_yml(ep, TWO_CORNERS.format(at=0))
     write_clean_json(ep)
 
     with pytest.raises(ValueError, match="theme の音源の長さが読めません"):
         build.step_mix(ep, CFG)
+
+
+# ---------------------------------------------------------------- bgm・se は assets/ から探す（#85 の5段目）
+
+def test_bgmはassetsの下のフォルダに置ける(ep):
+    """`source: music/xxx.wav` のように、assets の下の階層も指せる（2026-09-27・案A）。"""
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
+    sine(asset(ep, "music/theme.wav"), 2)
+    timeline_yml(ep, TWO_CORNERS.format(at=0).replace("bgm.wav", "music/theme.wav"))
+    write_clean_json(ep)
+
+    build.step_mix(ep, CFG)
+
+    assert (ep["01_mix"] / "mix.wav").exists()
+
+
+def test_bgmのsourceが親フォルダを指すと断る(ep):
+    """`timeline.read` の検証（`web/timeline.py`）が先に断る（`_clip_source_path` の
+    確かめは、検証を経ないで直接呼ばれたときのための二重の守り）。"""
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
+    timeline_yml(ep, TWO_CORNERS.format(at=0).replace("bgm.wav", "../secret.wav"))
+    write_clean_json(ep)
+
+    with pytest.raises(episodes.EpisodeError, match="assets の外"):
+        build.step_mix(ep, CFG)
+
+
+def test_bgmのsourceが絶対パスだと断る(ep):
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
+    timeline_yml(ep, TWO_CORNERS.format(at=0).replace("bgm.wav", "/etc/passwd"))
+    write_clean_json(ep)
+
+    with pytest.raises(episodes.EpisodeError, match="assets の外"):
+        build.step_mix(ep, CFG)
+
+
+def test_clip_source_pathはvalidateを経ずに呼ばれてもassetsの外を断る(ep):
+    """`_clip_source_path` 自身の確かめ（`timeline.read` の検証を経ない直呼び）。"""
+    with pytest.raises(ValueError, match="assets の外"):
+        build._clip_source_path(ep, {"id": "theme", "source": "../secret.wav"}, "bgm")
+
+
+def test_本編はいままでどおり00_rawだけを見る(ep):
+    """main の source は assets を経由しない（#85 の5段目の決定は bgm・se だけ）。
+
+    `source` に `/` が混ざっていても、main は基底名だけを 00_raw から探す
+    （いままでどおり。`join_sources` と同じ決まり）。
+    """
+    silence(ep["00_raw"] / "op.wav", 4)
+    found = build._clip_source_path(ep, {"id": "op", "source": "music/op.wav"}, "main")
+    assert found == ep["00_raw"] / "op.wav"
+
+
+def test_safe_asset_relpathは正規化した相対パスを返す():
+    assert build.safe_asset_relpath("music/./a.wav", "音源") == "music/a.wav"
+    assert build.safe_asset_relpath(" music/a.wav ", "音源") == "music/a.wav"
+
+
+@pytest.mark.parametrize("bad", ["..", "../a.wav", "/a.wav", "a/../../b.wav", ""])
+def test_safe_asset_relpathはassetsの外や空を断る(bad):
+    with pytest.raises(ValueError, match="音源"):
+        build.safe_asset_relpath(bad, "音源")
 
 
 # ---------------------------------------------------------------- mix: カットとの組み合わせ
@@ -315,7 +393,7 @@ def test_cutwavがあるだけでは断らない(ep):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)   # 実際にカットされていない
-    sine(ep["00_raw"] / "bgm.wav", 2)
+    sine(asset(ep, "bgm.wav"), 2)
     timeline_yml(ep, TWO_CORNERS.format(at=0))
     (ep["01_cut"] / "cut.wav").write_bytes(b"dummy")   # cuts が空でも書かれるファイル
     write_clean_json(ep)                                # 実際は削れていない（head=0, tail=0）
@@ -330,7 +408,7 @@ def test_本編の長さが合わなければ断る(ep):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
-    sine(ep["00_raw"] / "bgm.wav", 2)
+    sine(asset(ep, "bgm.wav"), 2)
     timeline_yml(ep, TWO_CORNERS.format(at=0))
     # 生の長さ(10秒)から5秒引いた記録＝本当は5秒のはずなのに、実際は10秒のまま
     write_clean_json(ep, head_removed=5.0, tail_removed=0.0)
@@ -343,7 +421,7 @@ def test_clean_jsonが無ければ確かめずに警告だけ出す(ep, capsys):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
     sine(ep["01_clean"] / "clean.wav", 10, amp=0.2)
-    sine(ep["00_raw"] / "bgm.wav", 2)
+    sine(asset(ep, "bgm.wav"), 2)
     timeline_yml(ep, TWO_CORNERS.format(at=0))
     # clean.json を書かない
 
@@ -408,7 +486,7 @@ def make_image(path):
 def _video_cfg(ep, episode=99):
     (ep["dir"] / "04_video").mkdir()
     ep["04_video"] = ep["dir"] / "04_video"
-    (ep["dir"] / "assets").mkdir()
+    (ep["dir"] / "assets").mkdir(exist_ok=True)
     make_image(ep["dir"] / "assets" / "pic.png")
     return {**CFG, "episode": episode, "images": [{"file": "assets/pic.png", "duration": "full"}]}
 
