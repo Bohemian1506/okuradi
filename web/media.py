@@ -21,6 +21,12 @@ def read_scan(name):
 
     時刻は、下見をかけた音そのもの（`source`）を基準にしている。
     再生もその音に合わせるので、行を押した位置と音がずれない。
+
+    **枠の回では `layout` も返す**（2026-09-27・ユーザーの判断・案A。#85 の6段目のレビュー
+    対応）。下見が読む音は、クリップごとにカットを当てて繋いだ音なので、画面はこれで
+    「繋いだ音の t 秒 → どのクリップの生音の何秒」を変換し、下見の行からカットへ飛ぶ。
+    **`layout` が無い古い記録（この変更より前に作った scan.json）では返さない**（無い物を
+    でっち上げない。作り直す＝下見をやり直すと付く）。
     """
     ep_dir = episodes.resolve(name)
     path = ep_dir / "02_text" / "scan.json"
@@ -38,12 +44,15 @@ def read_scan(name):
          "text": (row.get("text") or "").strip()}
         for row in data.get("segments") or []
     ]
-    return {
+    out = {
         "state": "表示",
         "segments": segments,
         "duration": data.get("duration"),
         "source": data.get("source") or "",
     }
+    if "layout" in data:
+        out["layout"] = data["layout"]
+    return out
 
 
 def audio_path(name, kind):
@@ -407,7 +416,7 @@ def _same_echoes(made, now):
 def _why_stale(ep_dir, clean, detail):
     """作り直しが要るなら、その理由を返す。要らなければ None。
 
-    docs/components.md 部品15 の「古い（音源やエコーを変えた）」。
+    docs/components.md 部品15 の「古い（音源やエコー・カットを変えた）」。
     """
     source = sources_newest(ep_dir)
     if source is not None and source > clean.stat().st_mtime:
@@ -415,6 +424,12 @@ def _why_stale(ep_dir, clean, detail):
 
     if not detail:
         return None           # 作ったときの記録が無い。判断できないので何も言わない
+
+    # 枠の回で、いまの本編クリップの cut edits と、整音を当てたときの記録が違えば「古い」
+    # （#85 の6段目のレビュー対応。枠でない回・カットが無い回は `framed_cuts_changed` が
+    # 自分で False を返すので、ここで枠かどうかを別に見る必要はない）
+    if build.framed_cuts_changed(ep_dir, detail.get("cuts")):
+        return "カットを変えました"
 
     try:
         now = episodes.read_config(ep_dir).get("echoes") or []

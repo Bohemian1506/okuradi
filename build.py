@@ -292,6 +292,49 @@ def clip_finished_duration(clip, raw_seconds):
     return round(sum(e - s for s, e in keeps), 3)
 
 
+def framed_cut_snapshot(ep_dir):
+    """枠の回で、いまの本編クリップの cut edits（`kind: cut`）のスナップショットを返す。
+
+    `{クリップの id: [[start, end], ...]}`。`timeline.yml` が無い回（枠でない回）は `{}`。
+
+    `step_scan`・`step_clean` がこれを結果の json（`scan.json`・`clean.json`）に
+    `cuts` として残し、`web/episodes.py` の `step_states` が「古い」を判定するのに使う
+    （#85 の6段目のレビュー対応）。**`timeline.yml` の更新日時では見ない。** BGM・SE の
+    保存でも更新日時は動くので、それだけで「古い」にすると本編を触っていなくても古くなる。
+    比べるのは中身（カットの区間そのもの）。
+    """
+    from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
+    data = timeline.read(ep_dir)
+    if not data:
+        return {}
+    out = {}
+    for clip in data["lanes"]["main"]:
+        cuts = sorted(
+            [round(float(e["start"]), 3), round(float(e["end"]), 3)]
+            for e in clip.get("edits") or [] if e.get("kind") == "cut"
+        )
+        out[clip["id"]] = cuts
+    return out
+
+
+def framed_cuts_changed(ep_dir, recorded):
+    """いまの本編クリップの cut edits（`framed_cut_snapshot`）が、記録した `recorded` と違うか。
+
+    `web/episodes.py` の `step_states`（下見・整音の「古い」）と、`web/media.py` の
+    `_why_stale`（整音結果パネルの理由）の両方から呼ぶ。決まりを1か所にまとめる
+    （#85 の6段目のレビュー対応）。
+
+    いま枠にカットが1つも無ければ、記録の有無に関わらず「違わない」
+    （カットの無い回・枠でない回まで、記録が無いというだけで古い扱いにしないため）。
+    記録が無い・壊れているときは、いまカットがあるなら「違う」扱い（安全側に倒す。
+    #225 の `_cut_wav_matches` と同じ考え方）。
+    """
+    current = framed_cut_snapshot(ep_dir)
+    if not any(current.values()):
+        return False
+    return recorded != current
+
+
 def _clip_cut_graph(input_index, clip, total):
     """1本のクリップの cut edits を当てるフィルタの並みと、出力ラベルを作る。
 
@@ -396,10 +439,41 @@ def join_sources(ep, clips, cfg=None):
     return dst
 
 
+def join_layout(ep, clips, cfg=None):
+    """`join_sources` が繋いだ音の中で、各クリップがどこに来るか（下見の並びの記録）。
+
+    枠の回で下見（`step_scan`）が読む音は、クリップごとにカットを当てて繋いだ音。
+    画面はこれで「繋いだ音の t 秒 → どのクリップの生音の何秒」を変換する
+    （2026-09-27・ユーザーの判断・案A。#85 の6段目のレビュー対応）。
+
+    返すのは `[{"id": クリップの id, "start": 繋いだ音での開始秒, "end": 終了秒,
+    "keeps": [[生音の開始, 生音の終了], ...]}]`。`keeps` はそのクリップで残した生音の区間
+    （カットが無ければ `[[0, 生音の長さ]]`）。`join_sources` と同じ並べ方（gap を先に足し、
+    次にクリップの出来上がりの長さを足す）をたどるので、片方だけ直してずれることがない。
+    """
+    layout = []
+    at = 0.0
+    for clip in clips:
+        at = round(at + clip["gap"], 3)
+        found = _clip_source_path(ep, clip, "main", cfg)
+        total = _clip_audio_duration(clip, found)
+        keeps, _ = _clip_cut_plan(clip, total)
+        length = round(sum(e - s for s, e in keeps), 3)
+        layout.append({
+            "id": clip["id"],
+            "start": round(at, 3),
+            "end": round(at + length, 3),
+            "keeps": [[round(s, 3), round(e, 3)] for s, e in keeps],
+        })
+        at = round(at + length, 3)
+    return layout
+
+
 def find_raw(ep, cfg=None):
     """収録音声を返す。
 
-    timeline.yml が音源を2本以上並べていれば、繋いだ1本を返す。
+    `timeline.yml` があり、音源が2本以上、または1本でもカット（`kind: cut` の edits）が
+    あれば、繋いだ1本を返す（#85 の6段目。`_timeline_sources` を見よ）。
     OBS の録画ファイルが置いてあれば、音声だけを「録画名.trackN.wav」に取り出してそれを返す。
     録画が wav より新しければ取り出し直す。
     """
@@ -539,6 +613,18 @@ def step_scan(ep, cfg):
     data = transcribe_file(src, cfg)
     data["source"] = src.name
     data["duration"] = audio_duration(src)
+
+    # **枠の回だけ、いま当てたカットの記録と、繋いだ音の中でクリップがどこに来るかを残す。**
+    # 前者は `web/episodes.py` の `step_states` が「古い」を判定するのに使う（#85 の6段目の
+    # レビュー対応）。後者（layout）は画面が「下見の行 → カットの波形」へ飛ぶときに使う
+    # （2026-09-27・ユーザーの判断・案A）。枠でない回は両方とも書かない
+    data["cuts"] = framed_cut_snapshot(ep["dir"])
+    if _has_timeline(ep):
+        from web import timeline      # noqa: PLC0415（依存の向きを保つためここで読む）
+        main = timeline.read(ep["dir"])["lanes"]["main"]
+        if main:
+            data["layout"] = join_layout(ep, main, cfg)
+
     dst.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"-> {dst}  ({len(data['segments'])}セグメント)")
 
@@ -621,25 +707,27 @@ def _cut_wav_matches(ep, raw, cfg):
     """`01_cut/cut.wav` が、いまの `config.yml` の `cuts` と合っているか（#225）。
 
     `01_cut/cut.json`（`_write_cut_record`）に残した cuts と、いまの `cuts` を
-    同じ `normalize_cuts` にかけて比べる。**サイドカーが無ければ合っていない扱い**
-    （前のバージョンで作った cut.wav や、手で作ったファイルは安全側に倒す）。
+    同じ `normalize_cuts` にかけて比べる。
 
-    `cuts` を空に戻したのに `cut.wav` が残っている、というだけで見分けが付く
-    （#225 で見つかった不具合。`cuts` が空でも `step_cut` は毎回 cut.wav を書くため、
-    存在するかどうかでは判定できない）。
+    戻り値は3つ: `True`（合っている）/ `False`（合っていない）/ `None`（記録が無い、
+    または読めないので分からない）。**`None` と `False` は呼び出し側で言うことが違う**
+    （#225 のあとのレビューで見つかった）。記録が無いだけなのに「cuts を変えたので」と
+    言うと、実際には変えていない回（前のバージョンで作った `cut.wav` が残っているだけ）
+    でも事実と違う理由が出る。前のバージョンで作った `cut.wav` や、手で作ったファイルは
+    安全側に倒し（`00_raw` を使い直す）、理由だけ「記録が無い」に変える。
     """
     record = ep["01_cut"] / "cut.json"
     if not record.exists():
-        return False
+        return None
     try:
         saved = json.loads(record.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return False
+        return None
     try:
         total = audio_duration(raw)
         now = [list(c) for c in normalize_cuts(cfg.get("cuts") or [], total)]
     except (ValueError, OSError, subprocess.SubprocessError):
-        return False
+        return None
     return saved.get("cuts") == now
 
 
@@ -802,17 +890,29 @@ def step_clean(ep, cfg):
     # 枠でない回のためのもの。
     cut_wav = ep["01_cut"] / "cut.wav"
     if framed:
+        # **config.yml の cuts が空でないのに、使わない。** 枠に切り替わったのに前のバージョンの
+        # `cuts` が残っている・戻し忘れ、を静かに無視しない（レビュー指摘）
+        if cfg.get("cuts"):
+            print(f"(枠の回なので、config.yml の cuts（{len(cfg['cuts'])}件）は使いません。"
+                  "timeline.yml の本編クリップのカット（言い直し）を使います)")
         src = find_raw(ep, cfg)
     elif cut_wav.exists():
         raw = find_raw(ep, cfg)
-        if _cut_wav_matches(ep, raw, cfg):
+        matches = _cut_wav_matches(ep, raw, cfg)
+        if matches:
             src = cut_wav
         else:
             # **cuts を空に戻しても、古い cut.wav を使い続けない**（#225）。
-            # 黙って切り替えると気づけないので、理由をログに出す
+            # 黙って切り替えると気づけないので、理由をログに出す。
+            # **記録（cut.json）が無いだけなのに「cuts を変えたので」と事実と違う理由を
+            # 出さない**（レビュー指摘。ep01 のような、記録の無い古い cut.wav で起きた）
             src = raw
-            print("(config.yml の cuts を変えたので、古い 01_cut/cut.wav ではなく "
-                  "00_raw を使い直します)")
+            if matches is None:
+                print("(01_cut/cut.wav に記録（cut.json）が無いので、使い直します"
+                      "（00_raw から作り直します）)")
+            else:
+                print("(config.yml の cuts を変えたので、古い 01_cut/cut.wav ではなく "
+                      "00_raw を使い直します)")
     else:
         src = find_raw(ep, cfg)
         print("(カット未実行のため 00_raw をそのまま使います)")
@@ -881,6 +981,10 @@ def step_clean(ep, cfg):
         "framed": framed,
         "target_lufs": a.get("target_lufs", -14),
         "echoes": [{"start": s, "end": e, "preset": p} for s, e, p in regions],
+        # 枠の回で、いま当てたカットの記録（#85 の6段目のレビュー対応）。
+        # `web/episodes.py` の `step_states` が、いまの本編クリップの cut edits と
+        # 比べて「古い」を判定する
+        "cuts": framed_cut_snapshot(ep["dir"]),
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

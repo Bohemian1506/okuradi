@@ -604,3 +604,81 @@ def test_録画から取り出した名前のm4aは音源として数える(ep):
     (ep["00_raw"] / "収録.track0.m4a").write_bytes(b"")  # これは人が置いたもの
     names = [f.name for f in build.source_candidates(ep["00_raw"])]
     assert names == ["収録.mkv", "収録.track0.m4a"]
+
+
+# ---------------------------------------------------------------- カットの記録との比較（#85 の6段目のレビュー対応）
+
+def test_framed_cut_snapshotは枠でない回では空(ep):
+    assert build.framed_cut_snapshot(ep["dir"]) == {}
+
+
+def test_framed_cut_snapshotはクリップごとのカットを返す(ep):
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+    - {id: b, source: b.wav, gap: 0}
+  bgm: []
+  se: []
+""")
+    assert build.framed_cut_snapshot(ep["dir"]) == {"a": [[1.0, 2.0]], "b": []}
+
+
+def test_framed_cuts_changedはいまカットが無ければ記録に関わらず違わない(ep):
+    """カットの無い回まで、記録が無いというだけで「古い」にしない。"""
+    timeline_yml(ep, """version: 1
+lanes:
+  main: [{id: a, source: a.wav, gap: 0}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], None) is False
+    assert build.framed_cuts_changed(ep["dir"], {}) is False
+
+
+def test_framed_cuts_changedは記録が無ければ違う扱い(ep):
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], None) is True
+
+
+def test_framed_cuts_changedは記録と同じなら違わない(ep):
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]]}) is False
+
+
+def test_framed_cuts_changedはbgmの並びだけでは変わらない(ep):
+    """BGM・SE はカットと無関係。本編のカットが同じなら「違わない」（timeline.yml
+    の更新日時ではなく中身で比べているはず）。"""
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+  bgm:
+    - {id: m1, source: music/a.wav, anchor: a, at: 0}
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]]}) is False

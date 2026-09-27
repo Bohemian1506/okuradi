@@ -99,6 +99,19 @@ def test_サイドカーが無いcutwavは使わない(ep):
     assert clean_json(ep)["source"] == "rec.wav"
 
 
+def test_記録が無いcutwavは記録が無いと言う(ep, capsys):
+    """レビュー指摘: 記録（cut.json）が無いだけなのに「cuts を変えたので」と
+    事実と違う理由が出ていた（ep01 のような、前のバージョンで作った cut.wav）。"""
+    sine(ep["00_raw"] / "rec.wav", 10)
+    (ep["01_cut"] / "cut.wav").write_bytes(b"dummy")
+
+    build.step_clean(ep, CFG)
+
+    out = capsys.readouterr().out
+    assert "記録（cut.json）が無いので" in out
+    assert "cuts を変えたので" not in out
+
+
 def test_カット未実行なら今までどおり(ep, capsys):
     sine(ep["00_raw"] / "rec.wav", 10)
 
@@ -121,3 +134,43 @@ def test_枠の回はcutwavがあっても見ない(ep):
     build.step_clean(ep, CFG)
 
     assert clean_json(ep)["source"] == "op.wav"
+
+
+def test_枠の回でconfigのcutsが空でなければ静かに無視しない(ep, capsys):
+    """レビュー指摘: 枠に切り替わったのに config.yml の cuts が残っていても、
+    黙って無視していた（静かに失敗させない。CLAUDE.md）。"""
+    sine(ep["00_raw"] / "op.wav", 10)
+    (ep["dir"] / "timeline.yml").write_text(
+        "version: 1\nlanes:\n  main: [{id: op, source: op.wav, gap: 0}]\n"
+        "  bgm: []\n  se: []\n", encoding="utf-8")
+
+    build.step_clean(ep, {**CFG, "cuts": [[1, 2]]})
+
+    out = capsys.readouterr().out
+    assert "config.yml の cuts" in out
+    assert "使いません" in out
+
+
+def test_枠の回でconfigのcutsが空ならログに出さない(ep, capsys):
+    sine(ep["00_raw"] / "op.wav", 10)
+    (ep["dir"] / "timeline.yml").write_text(
+        "version: 1\nlanes:\n  main: [{id: op, source: op.wav, gap: 0}]\n"
+        "  bgm: []\n  se: []\n", encoding="utf-8")
+
+    build.step_clean(ep, CFG)
+
+    assert "config.yml の cuts" not in capsys.readouterr().out
+
+
+def test_枠の回のclean_jsonにカットの記録が残る(ep):
+    """#85 の6段目のレビュー対応: `web/episodes.py`・`web/media.py` の「古い」判定が
+    これを読む。"""
+    sine(ep["00_raw"] / "op.wav", 10)
+    (ep["dir"] / "timeline.yml").write_text(
+        "version: 1\nlanes:\n  main:\n    - id: op\n      source: op.wav\n      gap: 0\n"
+        "      edits: [{start: 1.0, end: 2.0, kind: cut}]\n  bgm: []\n  se: []\n",
+        encoding="utf-8")
+
+    build.step_clean(ep, CFG)
+
+    assert clean_json(ep)["cuts"] == {"op": [[1.0, 2.0]]}

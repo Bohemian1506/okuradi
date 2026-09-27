@@ -259,6 +259,9 @@ button, input, select, textarea { font-family: inherit; }
   background: var(--ink); border-color: var(--ink);
   color: var(--cream-on-wood); font-weight: 700;
 }
+/* 押せないタブ（音源が無い枠など）も、他のボタンと同じ見た目にそろえる（#85 の6段目のレビュー） */
+.tab:disabled { color: var(--disabled); cursor: not-allowed; }
+.tab:disabled:hover { background: var(--cream); }
 
 /* ---------------------------------------------------------------- メイン */
 
@@ -490,16 +493,23 @@ select.field { font-weight: 500; }
   height: 300px; overflow: auto; padding: 8px 8px 12px;
   display: flex; flex-direction: column; gap: 2px;
 }
+/* 行の中に「カットへ」も並ぶので、外側は div（ボタンの中にボタンは置けない。
+   #85 の6段目のレビュー）。押して再生する部分だけ line-seek というボタンにする */
 .line {
-  display: flex; align-items: baseline; gap: 12px;
-  padding: 7px 10px; border: none; border-radius: 10px;
-  background: transparent; cursor: pointer; text-align: left; width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 10px;
+  background: transparent; width: 100%;
 }
 .line:hover { background: var(--cream-dim); }
 .line.is-now { background: #fdf1e4; box-shadow: inset 3px 0 0 var(--accent); }
+.line-seek {
+  display: flex; align-items: baseline; gap: 12px; flex: 1; min-width: 0;
+  padding: 0; border: none; background: transparent; cursor: pointer; text-align: left;
+}
 .line .at { font: 12px var(--mono); color: var(--disabled); flex: none; }
 .line.is-now .at { color: var(--accent-text); font-weight: 500; }
 .line .say { font-size: 14px; line-height: 1.7; text-wrap: pretty; }
+.line-cut-jump { flex: none; }
 
 .lines-empty {
   height: 140px; display: flex; align-items: center; justify-content: center;
@@ -1068,6 +1078,8 @@ select.field { font-weight: 500; }
 .cut-row:hover { background: var(--cream-dim); }
 .cut-row.is-picked { background: #fdf1e4; box-shadow: inset 3px 0 0 var(--accent); }
 .cut-row .field { max-width: 100px; }
+.cut-number-wrap { display: inline-flex; align-items: baseline; gap: 4px; }
+.cut-number-unit { font-size: 12px; color: var(--disabled); }
 
 /* ---------------------------------------------------------------- 部品15 整音結果パネル */
 

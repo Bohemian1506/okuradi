@@ -4,6 +4,7 @@
 本物の音声は使わず、中身の無いファイルの更新日時だけで判定できることを利用する。
 """
 
+import json
 import os
 import time
 
@@ -178,6 +179,99 @@ def test_timelineを変えるとミックスが古いになる(tmp_path):
     got = states(ep_dir)
     assert got["mix"] == "古い"
     assert got["clean"] == "完了"        # 整音は timeline.yml を読まないので、影響しない
+
+
+# -------------------------------------------------------- カットを変えると下見・整音が古い
+
+def timeline_with_cuts(ep_dir, cuts=()):
+    """本編クリップ1本（id: a）に、渡した cut edits を付けた timeline.yml。"""
+    edits = "".join(f"        - {{start: {s}, end: {e}, kind: cut}}\n" for s, e in cuts)
+    body = (
+        "version: 1\nlanes:\n  main:\n    - id: a\n      source: a.wav\n      gap: 0\n"
+        + ("      edits:\n" + edits if cuts else "      edits: []\n")
+        + "  bgm: []\n  se: []\n"
+    )
+    timeline_yml(ep_dir, body)
+
+
+def write_json(path, data):
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_カットを変えると下見と整音が古いになる(tmp_path):
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_with_cuts(ep_dir, [])
+    write_json(ep_dir / "02_text" / "scan.json", {"cuts": {"a": []}})
+    write_json(ep_dir / "01_clean" / "clean.json", {"cuts": {"a": []}})
+
+    assert states(ep_dir)["scan"] == "完了"
+    assert states(ep_dir)["clean"] == "完了"
+
+    # カットを足す。timeline.yml の更新日時は動くが、scan.json・clean.json の
+    # 更新日時はさわらない（それでも「古い」になることを確かめる）
+    timeline_with_cuts(ep_dir, [(1.0, 2.0)])
+
+    got = states(ep_dir)
+    assert got["scan"] == "古い"
+    assert got["clean"] == "古い"
+
+
+def test_カットが記録と同じなら古くならない(tmp_path):
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_with_cuts(ep_dir, [(1.0, 2.0)])
+    write_json(ep_dir / "02_text" / "scan.json", {"cuts": {"a": [[1.0, 2.0]]}})
+    write_json(ep_dir / "01_clean" / "clean.json", {"cuts": {"a": [[1.0, 2.0]]}})
+
+    got = states(ep_dir)
+    assert got["scan"] == "完了"
+    assert got["clean"] == "完了"
+
+
+def test_bgmを保存しただけでは下見と整音は古くならない(tmp_path):
+    """timeline.yml の更新日時だけでは判定しない、が確かめたいところ。
+
+    BGM・SE はカットと無関係だが、保存すれば timeline.yml の更新日時は動く。
+    """
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_with_cuts(ep_dir, [])
+    write_json(ep_dir / "02_text" / "scan.json", {"cuts": {"a": []}})
+    write_json(ep_dir / "01_clean" / "clean.json", {"cuts": {"a": []}})
+
+    body = (
+        "version: 1\nlanes:\n  main:\n    - id: a\n      source: a.wav\n      gap: 0\n"
+        "      edits: []\n"
+        "  bgm:\n    - {id: m1, source: music/a.wav, anchor: a, at: 0}\n  se: []\n"
+    )
+    timeline_yml(ep_dir, body)     # BGM を1本足しただけ（本編のカットはさわっていない）
+
+    got = states(ep_dir)
+    assert got["scan"] == "完了"
+    assert got["clean"] == "完了"
+    assert got["mix"] == "古い"    # BGM・SE はミックスの元なので、こちらは古くなる
+
+
+def test_記録が無いカットの回は古いになる(tmp_path):
+    """scan.json・clean.json に cuts の記録が無い（この変更より前に作ったファイル）のに、
+    いまカットがあるなら、安全側に倒して「古い」にする。"""
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_with_cuts(ep_dir, [(1.0, 2.0)])
+    write_json(ep_dir / "02_text" / "scan.json", {})   # cuts を持たない古い記録
+    write_json(ep_dir / "01_clean" / "clean.json", {})
+
+    got = states(ep_dir)
+    assert got["scan"] == "古い"
+    assert got["clean"] == "古い"
+
+
+def test_カットが無い回は記録が無くても古くならない(tmp_path):
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_with_cuts(ep_dir, [])
+    write_json(ep_dir / "02_text" / "scan.json", {})   # cuts を持たない古い記録
+    write_json(ep_dir / "01_clean" / "clean.json", {})
+
+    got = states(ep_dir)
+    assert got["scan"] == "完了"
+    assert got["clean"] == "完了"
 
 
 def test_進み具合は完了の数だけ数える(tmp_path):
