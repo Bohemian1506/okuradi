@@ -1003,6 +1003,7 @@ select.field { font-weight: 500; }
 .bgm-row-where { font-size: 12px; color: var(--disabled); align-self: center; }
 .bgm-volume { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px dashed var(--rule); }
 .bgm-volume-label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.bgm-volume-hint { font-size: 11px; color: var(--disabled); line-height: 1.6; }
 .bgm-volume-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
 .bgm-volume-row .field { min-width: 90px; max-width: 110px; }
 .bgm-add { padding: 10px 18px 14px; }

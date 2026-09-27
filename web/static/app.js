@@ -1822,6 +1822,11 @@ const TRACK_HEIGHT = 40;
 // volume が無い（null・空）クリップは envelope 自体を付けない（points=[] のまま envelope を
 // 登録すると、点が無い間 onTimeUpdate が常に volume 0 を返し、無音のまま鳴らなくなるバグが
 // あった。#85 の5段目で見つけた）
+//
+// **足した端の補助点は、保存の対象にしない。** ユーザーが動かしていない補助点まで
+// state.bgm に取り込むと、数字の欄の点が2つ→4つに増えて見える（PR #239 の2回目レビュー・
+// 🚨。前回「触ったら保存してよい」としたのは誤りだった）。onBgmEnvelope の
+// stripUntouchedPadding が、動かされていない補助点だけを外す
 function bgmEnvelopePoints(volume, duration) {
   if (!volume || !volume.length) return null;
   const pts = volume.map((p) => ({ time: p.time, volume: p.volume })).sort((a, b) => a.time - b.time);
@@ -1830,6 +1835,35 @@ function bgmEnvelopePoints(volume, duration) {
     pts.push({ time: duration, volume: pts[pts.length - 1].volume });
   }
   return pts;
+}
+
+// onBgmEnvelope が受け取る points から、bgmEnvelopePoints が足しただけで
+// ユーザーが動かしていない先頭・末尾の補助点を外す（PR #239 の2回目レビュー・🚨）。
+// 「動かしていない」＝時刻も音量も、足したときの値のまま。どちらかが変わっていたら
+// （フェードインを作る、など）本物の点として残す。点の数そのものが変わっていたら
+// （追加・削除が起きていたら）判定がずれるので、何もしない
+function stripUntouchedPadding(points, savedVolume, duration) {
+  const real = (savedVolume || []).map((p) => ({ time: round2(p.time), volume: round2(p.volume) }))
+    .sort((a, b) => a.time - b.time);
+  if (!real.length) return points;
+  const hasStartPad = real[0].time > 0.001;
+  const hasEndPad = duration != null && real[real.length - 1].time < duration - 0.001;
+  const expectedLen = real.length + (hasStartPad ? 1 : 0) + (hasEndPad ? 1 : 0);
+  if (points.length !== expectedLen) return points;
+
+  let out = points;
+  if (hasStartPad) {
+    const p0 = out[0];
+    const untouched = Math.abs(p0.time) < 0.005 && Math.abs(p0.volume - real[0].volume) < 0.005;
+    if (untouched) out = out.slice(1);
+  }
+  if (hasEndPad) {
+    const last = out[out.length - 1];
+    const untouched = Math.abs(last.time - duration) < 0.005
+      && Math.abs(last.volume - real[real.length - 1].volume) < 0.005;
+    if (untouched) out = out.slice(0, -1);
+  }
+  return out;
 }
 
 function timelineTracks(lanes) {
@@ -2568,7 +2602,10 @@ function onBgmEnvelope(trackId, points) {
       .map((p) => ({ time: round2(p.time), volume: round2(p.volume) }));
     if (bgmVolumeEqual(expected, volume)) return;
   }
-  scheduleBgmDragCommit(clipId, { volume: normalizeVolumePoints(volume) });
+  // 何かは変わったが、それが補助点そのものとは限らない。動かしていない補助点は
+  // ここで外してから取り込む（PR #239 の2回目レビュー・🚨）
+  const real = clip ? stripUntouchedPadding(volume, clip.volume, clip.duration) : volume;
+  scheduleBgmDragCommit(clipId, { volume: normalizeVolumePoints(real) });
 }
 
 // 「保存する」ボタンと未保存の表示（部品14 のエコー区間と同じ見た目・作法）
@@ -2599,35 +2636,82 @@ async function saveBgm() {
   renderMain();
 
   const savedById = new Map(JSON.parse(state.bgmSaved || "[]").map((c) => [c.id, c]));
-  const currentIds = new Set(state.bgm.map((c) => c.id));
-  const removed = [...savedById.keys()].filter((id) => !currentIds.has(id));
+  // 読み直しで state.bgm が上書きされる前に、いまの直しを控えておく（失敗した分を戻すため）
+  const pendingBgm = state.bgm.map((c) => ({ ...c, volume: c.volume ? c.volume.map((p) => ({ ...p })) : c.volume }));
+  const currentIds = new Set(pendingBgm.map((c) => c.id));
+  const removedIds = [...savedById.keys()].filter((id) => !currentIds.has(id));
 
-  try {
-    for (const id of removed) {
+  // **1件が失敗しても、残りは送り切る。** 失敗は id ごとに集めて、あとでまとめて出す
+  // （PR #239 の2回目レビュー・🚨。前は最初の失敗で止まり、以降が1件も送られなかった）
+  const failed = [];
+  for (const id of removedIds) {
+    try {
       await api(`/api/episodes/${name}/bgm/${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch (err) {
+      failed.push({ id, message: err.message });
     }
-    for (const clip of state.bgm) {
-      const before = savedById.get(clip.id);
-      const now = bgmEditableSnapshot(clip);
-      const changes = {};
-      if (!before || before.anchor !== now.anchor) changes.anchor = now.anchor;
-      if (!before || Math.abs(before.at - now.at) > 0.004) changes.at = now.at;
-      if (!before || JSON.stringify(before.volume) !== JSON.stringify(now.volume)) {
-        changes.volume = now.volume.length ? now.volume : null;
-      }
-      if (Object.keys(changes).length) {
-        await api(`/api/episodes/${name}/bgm/${encodeURIComponent(clip.id)}`, {
-          method: "PUT", body: JSON.stringify(changes),
-        });
-      }
-    }
-  } catch (err) {
-    // 静かに失敗させない（CLAUDE.md）。読み直せば、実際に保存できた分だけ反映される
-    state.actionError = `BGM を保存できませんでした: ${err.message}`;
   }
+  for (const clip of pendingBgm) {
+    const before = savedById.get(clip.id);
+    const now = bgmEditableSnapshot(clip);
+    const changes = {};
+    if (!before || before.anchor !== now.anchor) changes.anchor = now.anchor;
+    if (!before || Math.abs(before.at - now.at) > 0.004) changes.at = now.at;
+    if (!before || JSON.stringify(before.volume) !== JSON.stringify(now.volume)) {
+      changes.volume = now.volume.length ? now.volume : null;
+    }
+    if (!Object.keys(changes).length) continue;
+    try {
+      await api(`/api/episodes/${name}/bgm/${encodeURIComponent(clip.id)}`, {
+        method: "PUT", body: JSON.stringify(changes),
+      });
+    } catch (err) {
+      failed.push({ id: clip.id, message: err.message });
+    }
+  }
+
   state.bgmSaving = false;
+  // 保存している間に別の回へ移っていたら、この画面（もう表示していない回のもの）には
+  // 書き戻さない。**保存そのものは、ここまでで元の回に対して最後まで進めている**
+  // （commitBgmDrag と同じ用心。PR #239 の2回目レビュー・🚨）
+  if (!state.selected || state.selected.name !== name) {
+    if (failed.length) {
+      console.warn("BGM の保存で失敗がありましたが、すでに別の回へ移っていたため画面には出しません", failed);
+    }
+    return;
+  }
+
   await loadTimeline(name);
   syncBgmFromTimeline();
+
+  // 失敗した分は、読み直した並びの上に、保存できなかった直しを載せ直す。
+  // **黙って消えたように見せない**（保存できたのか、直しごと消えたのか区別が付かなくなる）。
+  // 未保存のまま画面に残し、もう一度「保存する」を押せば直せる形にした（PR #239 の
+  // 2回目レビュー・🚨。読み直しで消える案は採らなかった）
+  if (failed.length) {
+    const failedIds = new Set(failed.map((f) => f.id));
+    const pendingById = new Map(pendingBgm.map((c) => [c.id, c]));
+    const stillOnServer = new Set(state.bgm.map((c) => c.id));
+
+    state.bgm = state.bgm.map((clip) => {
+      if (!failedIds.has(clip.id)) return clip;
+      const pending = pendingById.get(clip.id);
+      if (!pending) return clip;   // 消すはずが消えていない（DELETE 失敗）方は下で扱う
+      return { ...clip, anchor: pending.anchor, at: pending.at, volume: pending.volume };
+    });
+
+    // DELETE が失敗して、まだサーバーに残っているクリップは、画面でも「消すつもり」の
+    // ままにする（読み直した並びにはまだ入っているので、もう一度外す）
+    const stillWantRemoved = removedIds.filter((id) => failedIds.has(id) && stillOnServer.has(id));
+    if (stillWantRemoved.length) {
+      state.bgm = state.bgm.filter((c) => !stillWantRemoved.includes(c.id));
+    }
+
+    const detail = failed.map((f) => `${f.id}（${f.message}）`).join("、");
+    state.actionError = `BGM を保存できませんでした: ${detail}。`
+      + "直しは保存されていません（もう一度「保存する」を押してください）";
+  }
+
   timelineView.sig = null;
   await reload({ keep: name, keepSelected: true });
 }
@@ -2714,6 +2798,9 @@ function bgmVolumePointRow(clip, points, index) {
 function bgmVolumeEditor(clip) {
   const box = el("div", "bgm-volume");
   box.appendChild(el("div", "bgm-volume-label", "音量の点（曲の先頭から何秒・何dB）"));
+  box.appendChild(el("div", "bgm-volume-hint",
+    "点と点の間は直線でつながって変わります。ある秒までその音量を保ちたいときは、"
+    + "手前にも同じ音量の点を置いてください"));
   const points = clip.volume || [];
   if (!points.length) box.appendChild(el("div", "region-empty", "点はまだありません。曲は等倍のまま鳴ります。"));
   points.forEach((_, index) => box.appendChild(bgmVolumePointRow(clip, points, index)));
@@ -2861,16 +2948,24 @@ async function addBgm() {
   state.bgmBusy = { ...state.bgmBusy, new: true };
   state.actionError = "";
   renderMain();
+  let failMessage = "";
   try {
     await api(`/api/episodes/${name}/bgm`, {
       method: "POST",
       body: JSON.stringify({ source: state.bgmSource, anchor: state.bgmAnchor }),
     });
-    state.bgmOpen = false;
   } catch (err) {
-    state.actionError = `曲を置けませんでした: ${err.message}`;
+    failMessage = `曲を置けませんでした: ${err.message}`;
   }
   state.bgmBusy = { ...state.bgmBusy, new: false };
+  // 置いている間に別の回へ移っていたら、この画面には書き戻さない（saveBgm・commitBgmDrag
+  // と同じ用心。置く命令そのものは元の回に対して最後まで進めている。PR #239 の2回目レビュー・🚨）
+  if (!state.selected || state.selected.name !== name) {
+    if (failMessage) console.warn("曲を置けませんでしたが、すでに別の回へ移っていたため画面には出しません", failMessage);
+    return;
+  }
+  state.actionError = failMessage;
+  if (!failMessage) state.bgmOpen = false;
   await loadTimeline(name);
   syncBgmFromTimeline();
   timelineView.sig = null;
@@ -4430,6 +4525,12 @@ async function loadFrames(name) {
 }
 
 async function selectEpisode(name) {
+  // 保存している最中は、「破棄しますか」は実態と違う（破棄ではなく、終わるのを待つだけ）。
+  // PR #239 の2回目レビュー・🟡
+  if (state.bgmSaving && state.selected && state.selected.name !== name) {
+    alert("BGM を保存しています。終わるまで待ってから移ってください");
+    return;
+  }
   const unsaved = unsavedThings();
   if (unsaved.length && state.selected && state.selected.name !== name) {
     if (!confirm(`${unsaved.join("・")}を保存していません。\n破棄して別の回に移りますか？`)) return;
