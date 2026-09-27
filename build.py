@@ -768,6 +768,29 @@ def volume_expr(points):
     return f"volume=eval=frame:volume='{expr}'"
 
 
+def _volume_at(points, t):
+    """音量カーブ（`volume_expr` と同じ点）から、時刻 t（クリップ先頭からの秒）の音量を出す。
+
+    点の間は直線、最初の点より前・最後の点より後はその端の値のまま
+    （`volume_expr` と同じ意味）。点が無ければ音量カーブが無いので 1（そのまま）。
+    """
+    if not points:
+        return 1.0
+    pts = sorted(points, key=lambda p: p["time"])
+    if t <= pts[0]["time"]:
+        return pts[0]["volume"]
+    if t >= pts[-1]["time"]:
+        return pts[-1]["volume"]
+    for i in range(1, len(pts)):
+        t0, v0 = pts[i - 1]["time"], pts[i - 1]["volume"]
+        t1, v1 = pts[i]["time"], pts[i]["volume"]
+        if t0 <= t <= t1:
+            if t1 == t0:
+                return v1
+            return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+    return pts[-1]["volume"]
+
+
 def _mix_overlay_chain(clip, lane, cfg):
     """1本の BGM・SE クリップを、重ねる前にどう加工するか（フィルタの並び）。
 
@@ -911,6 +934,15 @@ def step_mix(ep, cfg):
                 print(f"({clip['id']}: 曲がコーナーの終わり（{hhmmss(anchor_total)}）より"
                       f"{hhmmss(anchor_total - covers)}早く尽きます。曲が先に終わります)",
                       flush=True)
+            elif covers > anchor_total:
+                # コーナーの終わりを越えて、次のコーナーの下まで鳴り続けるか。
+                # **音量カーブでコーナーの終わりまでに 0 まで下げていれば出さない**
+                # （ユーザーが意図して消しているので、注意は不要）
+                t_end = anchor_total - clip.get("at", 0)
+                if _volume_at(clip.get("volume"), t_end) > 0:
+                    print(f"({clip['id']}: 曲がコーナーの終わり（{hhmmss(anchor_total)}）を"
+                          f"{hhmmss(covers - anchor_total)}越えて鳴ります。次のコーナーの下でも"
+                          "鳴ります（音量の点で下げるか消してください）)", flush=True)
         # 曲・SE の終わりが、番組の末尾を超えて切れるか。
         # `amix` は `duration=first` で全体の尺を保つので、超えたぶんは黙って切られる
         if at + clip_total > clean_total + 0.05:

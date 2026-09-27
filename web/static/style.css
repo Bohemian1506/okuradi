@@ -977,15 +977,34 @@ select.field { font-weight: 500; }
    （#86。見た目ではなく操作のための決定） */
 .timeline-clip-se { min-width: 14px !important; }
 
+/* 拡大縮小のボタン（#99・PR #239 のレビューで前に出した）。仮置きの見た目 */
+.timeline-zoom {
+  display: flex; align-items: center; gap: 6px; margin: 8px 18px 0;
+}
+.timeline-zoom-note { font-size: 12px; color: var(--disabled); }
+
 /* ---------------------------------------------------------------- BGM の行（#85 の5段目） */
 
-.bgm-list { display: flex; flex-direction: column; gap: 4px; padding: 10px 18px 0; }
+.bgm-list { display: flex; flex-direction: column; gap: 10px; padding: 10px 18px 0; }
 .bgm-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 6px 10px; border-radius: 10px; font-size: 13px;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; border-radius: 10px; font-size: 13px;
+  border: 1.5px solid var(--rule-strong);
 }
-.bgm-row:hover { background: var(--cream-dim); }
-.bgm-row-label { min-width: 0; }
+/* 音源が無い・長さが読めないなど、直せないクリップ（#59 の考え方と同じ赤） */
+.bgm-row.is-error { border-color: oklch(0.55 0.2 25 / .45); background: #fbeee8; }
+.bgm-row-head { display: flex; align-items: center; gap: 10px; }
+.bgm-row-id { font: 700 12px var(--mono); color: var(--muted); }
+.bgm-row-source { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.bgm-row-error { color: var(--error-text); font-size: 12px; }
+.bgm-row-head .btn-icon { margin-left: auto; }
+.bgm-row-pos { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.bgm-row-pos .field { min-width: 120px; }
+.bgm-row-where { font-size: 12px; color: var(--disabled); align-self: center; }
+.bgm-volume { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px dashed var(--rule); }
+.bgm-volume-label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.bgm-volume-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.bgm-volume-row .field { min-width: 90px; max-width: 110px; }
 .bgm-add { padding: 10px 18px 14px; }
 .bgm-add-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
 .bgm-add-row .field { min-width: 160px; }

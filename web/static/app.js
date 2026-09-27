@@ -81,7 +81,10 @@ const state = {
   bgmOpen: false,    // 「曲を置く」フォームを開いているか
   bgmSource: "",     // フォームで選んでいる曲
   bgmAnchor: "",     // フォームで選んでいるコーナー（錨）
-  bgmBusy: {},       // BGM の id ごとの処理中（追加中は "new" キー）
+  bgmBusy: {},       // BGM の id ごとの処理中（いまは "new" キー＝曲を置いている間だけ使う）
+  bgm: [],           // BGM の並び（画面の作業用。エコー区間と同じく、保存するまでサーバーへ送らない）
+  bgmSaved: "[]",    // 保存されている中身のスナップショット（未保存かを見分ける。#85 の5段目のレビュー）
+  bgmSaving: false,  // 「保存する」を押してから終わるまで
   echoes: [],        // エコー区間
   echoesSaved: "",   // 保存されている中身（未保存かを見分ける）
   picked: -1,        // 選んでいる区間
@@ -245,7 +248,16 @@ function selectTab(tab) {
   renderMain();
 }
 
+// renderMain() は毎回 main.innerHTML = "" で組み立て直す。timelineView.box は
+// 使い回している（波形の widget を作り直さないため）ので、その一瞬だけ画面から外れる。
+// **外れると scrollLeft が 0 に戻る**（ブラウザの仕様。#98 のレビューで見つけた）ので、
+// 組み立て終わったあとに restoreTimelineScroll() で戻す
 function renderMain() {
+  renderMainInner();
+  restoreTimelineScroll();
+}
+
+function renderMainInner() {
   const main = $("main");
   main.innerHTML = "";
 
@@ -1771,6 +1783,25 @@ async function saveEchoes() {
 const timelineView = {
   box: el("div", "timeline-multitrack"),
   mt: null, phase: "空", error: "", sig: null, timeoutId: null,
+  // 拡大縮小（#99・PR #239 のレビューで前に出した）。null は「全体を見る」（そのつど
+  // 器の幅から計算し直す）。ユーザーが＋／－を押したら px/秒 の実数を持つ
+  pxPerSec: null,
+  // 直近に実際に測れた器の幅。render の途中（timelineView.box がまだ画面から
+  // 外れている瞬間）は clientWidth が 0 になるため、その間はこれを使う
+  lastWidth: 0,
+  totalSeconds: 0,
+  // 作り直す（destroy→create）の前後で、見ていた時刻を保つ（#98）
+  pendingCenter: null,
+  // 直近のスクロール位置（px）。**renderMain() は毎回 main.innerHTML = "" で
+  // timelineView.box をいったん画面から外すので、その瞬間に scrollLeft が 0 に戻る**
+  // （ブラウザの仕様。実機で確かめた。#98・PR #239 のレビュー）。これを控えておき、
+  // render のたびに restoreTimelineScroll() で戻す。null なら戻さない（新しく作った
+  // ばかりで、まだ位置が無い）
+  scrollLeft: null,
+  // setTrackStartPosition・setEnvelopePoints で部品を直接書き換えている間、
+  // その通知（start-position-change・envelope-points-change）を自分の変更として
+  // 拾い直さないためのフラグ
+  applying: false,
 };
 
 const LANE_LABEL = { main: "本編", bgm: "BGM", se: "SE" };
@@ -1882,15 +1913,33 @@ function destroyTimelineMultitrack() {
   timelineView.phase = "空";
   timelineView.error = "";
   timelineView.sig = null;
+  timelineView.pxPerSec = null;
+  timelineView.lastWidth = 0;
+  timelineView.pendingCenter = null;
+  timelineView.scrollLeft = null;
+}
+
+// 部品に渡す tracks（id・url・startPosition）から、作り直しが要るかを見分ける印。
+// envelope（音量カーブ）は含めない。数字の欄からの直しは setEnvelopePoints で
+// その場に反映するので、作り直しの判定には使わない
+function sigOfTracks(tracks) {
+  return JSON.stringify(tracks.map((t) => [t.id, t.url, t.startPosition]));
 }
 
 function ensureTimelineMultitrack(lanes) {
   const tracks = timelineTracks(lanes);
-  const sig = JSON.stringify(tracks.map((t) => [t.id, t.url, t.startPosition]));
+  const sig = sigOfTracks(tracks);
   if (timelineView.sig === sig) return;
   timelineView.sig = sig;
 
-  if (timelineView.mt) { timelineView.mt.destroy(); timelineView.mt = null; }
+  if (timelineView.mt) {
+    // 作り直す前に、いま見ている時刻を控えておく（#98）。全体表示（拡大縮小なし）の
+    // ときは pxPerSec が無いので、直近に測った幅から計算し直す
+    timelineView.pendingCenter = timelineCenterSeconds();
+    timelineView.mt.destroy();
+    timelineView.mt = null;
+    timelineView.scrollLeft = null;   // 古い widget の位置。新しい widget にはそのまま使えない
+  }
   if (timelineView.timeoutId) { clearTimeout(timelineView.timeoutId); timelineView.timeoutId = null; }
   timelineView.box.innerHTML = "";
   timelineView.phase = "読み込み中";
@@ -1922,11 +1971,18 @@ function buildTimelineMultitrack(sig, tracks) {
     return;
   }
 
+  // ここは1コマ待ったあと（renderMain が組み立て終わったあと）なので、器の幅が測れる。
+  // 測れた値は、次に render の途中でしか呼べない場面（zoomControls など）のために控える
+  timelineView.lastWidth = timelineView.box.clientWidth || timelineView.lastWidth || 800;
+  const pxPerSec = timelineView.pxPerSec != null
+    ? timelineView.pxPerSec : timelineFitPxPerSec(timelineView.totalSeconds);
+
   try {
     timelineView.mt = lib.create(tracks, {
       container: timelineView.box,
       cursorWidth: 2,
       cursorColor: "#e8c39e",
+      minPxPerSec: pxPerSec,
       // trackBorderColor は付けない。ライブラリはトラックの間に2pxの仕切りを挟むので、
       // 同じレーンで重ねた分だけ隙間が積み重なってずれる（レーンの境目は左の見出しで示す）
     });
@@ -1937,12 +1993,18 @@ function buildTimelineMultitrack(sig, tracks) {
     return;
   }
 
+  // ユーザーがマウス・ホイールで直接スクロールしたときも控えておく（ボタンでの
+  // 拡大縮小だけでなく、素のドラッグでも renderMain() のたびに 0 へ戻らないように）
+  const sc = timelineScrollEl();
+  if (sc) sc.addEventListener("scroll", () => { timelineView.scrollLeft = sc.scrollLeft; });
+
   timelineView.mt.once("canplay", () => {
     if (timelineView.sig !== sig) return;
     overlapLaneRows(timelineView.mt, tracks);
     waitForTimelineReady(sig, timelineView.mt);
   });
-  // BGM をドラッグした・音量の点を動かしたら保存する（#85 の5段目）。
+  // BGM をドラッグした・音量の点を動かしたら、画面の作業用の並びに取り込む
+  // （保存は「保存する」を押すまでしない。#85 の5段目・PR #239 のレビュー）。
   // この widget はここで作った回にしか出ていない（回を移ると destroyTimelineMultitrack が
   // 先に壊す）ので、そのつど state.selected.name を見ればよい
   timelineView.mt.on("start-position-change", ({ id, startPosition }) => onBgmDrag(id, startPosition));
@@ -1995,7 +2057,121 @@ function finishTimelineLoad(sig) {
   if (timelineView.sig !== sig) return;
   timelineView.phase = "表示";
   if (timelineView.timeoutId) { clearTimeout(timelineView.timeoutId); timelineView.timeoutId = null; }
+  // 作り直す前に見ていた時刻があれば、描き終わってから戻す（#98）
+  if (timelineView.pendingCenter != null) {
+    const px = timelineView.pxPerSec != null
+      ? timelineView.pxPerSec : timelineFitPxPerSec(timelineView.totalSeconds);
+    timelineRestoreCenter(timelineView.pendingCenter, px);
+    timelineView.pendingCenter = null;
+  }
   renderMain();
+}
+
+// ---------------------------------------------------------------- 拡大縮小（#99・PR #239 のレビューで前に出した）
+//
+// wavesurfer-multitrack の zoom(pxPerSec) は命令だけで、ボタンもホイールも付いてこない
+// （#99）。段階は #99 の表の4つ（0.64 / 2 / 10 / 20 px/秒）を目安にする。下限は決め打ちにせず、
+// 全体が器に収まる倍率をそのつど計算する。上限は #99 でも決まっていないので、表の最大（20）にする
+const ZOOM_STEPS = [0.64, 2, 10, 20];
+
+function timelineFitPxPerSec(totalSeconds) {
+  const width = timelineView.lastWidth || 800;
+  if (!totalSeconds) return ZOOM_STEPS[0];
+  return width / totalSeconds;
+}
+
+function timelineZoomLevels() {
+  const fit = timelineFitPxPerSec(timelineView.totalSeconds);
+  const steps = ZOOM_STEPS.filter((v) => v > fit * 1.02);   // 下限に近すぎる段は候補から外す
+  return [fit, ...steps];
+}
+
+// multitrack が作る、横にスクロールする器（app.js からは見えない内部の div。
+// vendor/multitrack.js を読んで確かめた。#98・#99）。timelineView.box の最初の子がそれにあたる
+function timelineScrollEl() {
+  return timelineView.box.firstElementChild || null;
+}
+
+// **DOM を直接読まない。** renderMain() は毎回 timelineView.box をいったん画面から
+// 外すので（main.innerHTML = ""）、その瞬間は scrollLeft・clientWidth のどちらを読んでも
+// 0 になる（実機で確かめた。#98 のレビューで気づいた）。代わりに、控えてある値
+// （timelineView.scrollLeft・lastWidth）から計算する。ensureTimelineMultitrack が
+// 作り直しの前に呼ぶのも、まさにこの「画面から外れた直後」なので、DOM 頼みだと壊れる
+function timelineCenterSeconds() {
+  const px = timelineView.pxPerSec != null
+    ? timelineView.pxPerSec : timelineFitPxPerSec(timelineView.totalSeconds);
+  if (!px) return null;
+  const width = timelineView.lastWidth || 0;
+  const left = timelineView.scrollLeft || 0;
+  return (left + width / 2) / px;
+}
+
+function timelineRestoreCenter(seconds, pxPerSec) {
+  if (seconds == null || !pxPerSec) return;
+  const width = timelineView.lastWidth || 0;
+  const left = Math.max(0, seconds * pxPerSec - width / 2);
+  timelineView.scrollLeft = left;   // 控えは常にここで確定させる
+  const sc = timelineScrollEl();
+  // 画面に付いていれば、その場でも反映する。外れている途中なら、restoreTimelineScroll()
+  // が render の最後（main へ付け直したあと）に反映する
+  if (sc) sc.scrollLeft = left;
+}
+
+// renderMain() の最後に呼ぶ。timelineView.box は毎回いったん外れて付け直されるので、
+// 付け直したあとで、控えてあるスクロール位置を戻す（#98 のレビューで見つけた不具合）。
+// 拡大縮小のボタンを押していなくても、素のドラッグでスクロールした位置も対象になる
+function restoreTimelineScroll() {
+  if (timelineView.scrollLeft == null) return;
+  const sc = timelineScrollEl();
+  if (sc) sc.scrollLeft = timelineView.scrollLeft;
+}
+
+// ＋／－／全体を見る、共通の操作。#98（見ている時刻を保つ）もここでまとめて行う
+function setTimelineZoom(pxPerSec) {
+  if (!timelineView.mt || timelineView.phase !== "表示") return;   // 復号が終わる前は押せない（#99）
+  const center = timelineCenterSeconds();
+  try {
+    timelineView.mt.zoom(pxPerSec);
+  } catch (err) {
+    // "No audio loaded" など。静かに諦めない（CLAUDE.md）
+    console.warn("タイムライン: 拡大縮小に失敗しました", err);
+    state.actionError = `タイムラインの拡大縮小に失敗しました: ${err.message}`;
+    renderMain();
+    return;
+  }
+  timelineView.pxPerSec = pxPerSec;
+  timelineRestoreCenter(center, pxPerSec);
+  renderMain();
+}
+
+// ボタン「＋」「－」「全体を見る」（仮置き。#99 の決めること1は着手時点でまだ決まっていない）
+function zoomControls() {
+  const box = el("div", "timeline-zoom");
+  const ready = timelineView.phase === "表示";
+  const levels = timelineZoomLevels();
+  const current = timelineView.pxPerSec != null ? timelineView.pxPerSec : levels[0];
+  let idx = 0;
+  levels.forEach((v, i) => { if (Math.abs(v - current) < Math.abs(levels[idx] - current)) idx = i; });
+
+  const zoomOut = el("button", "btn-icon", "－");
+  zoomOut.title = "縮小";
+  zoomOut.setAttribute("aria-label", "タイムラインを縮小");
+  zoomOut.disabled = !ready || idx <= 0;
+  zoomOut.onclick = () => setTimelineZoom(levels[Math.max(0, idx - 1)]);
+
+  const zoomIn = el("button", "btn-icon", "＋");
+  zoomIn.title = "拡大";
+  zoomIn.setAttribute("aria-label", "タイムラインを拡大");
+  zoomIn.disabled = !ready || idx >= levels.length - 1;
+  zoomIn.onclick = () => setTimelineZoom(levels[Math.min(levels.length - 1, idx + 1)]);
+
+  const fit = el("button", "btn-tiny is-plain", "全体を見る");
+  fit.disabled = !ready;
+  fit.onclick = () => setTimelineZoom(levels[0]);
+
+  box.append(zoomOut, zoomIn, fit);
+  if (!ready) box.appendChild(el("span", "timeline-zoom-note", "音の読み込みが終わると押せます"));
+  return box;
 }
 
 // 読み込み中は、波形の箱の中に重ねて出す（部品13 の syncWaveCover と同じ作り。#59）。
@@ -2018,7 +2194,8 @@ function timelineCard() {
   if (!tl || !tl.timeline) return null;   // timeline.yml が無い回では出さない
 
   const card = el("div", "panel-card");
-  const lanes = tl.timeline.lanes;
+  // BGM だけ、画面の作業用の並び（state.bgm。保存するまでサーバーへ送らない）に差し替える
+  const lanes = currentLanes();
 
   for (const lane of LANES) {
     for (const clip of lanes[lane] || []) {
@@ -2040,12 +2217,24 @@ function timelineCard() {
     card.appendChild(note);
   }
 
+  // 曲がコーナーの終わりを越えて、次のコーナーの下でも鳴り続けるか（build.py の mix と同じ
+  // 判定・同じ文言。処理側は 01_mix のログに出す。#85 の5段目・PR #239 のレビュー）
+  const mainDurations = bgmMainDurations(lanes);
+  for (const clip of lanes.bgm || []) {
+    const overrun = bgmOverrunNote(clip, mainDurations);
+    if (!overrun) continue;
+    const note = el("div", "wave-note is-caution");
+    note.append(el("span", "mark", "!"), el("span", null, overrun));
+    card.appendChild(note);
+  }
+
   // クリップが1件も無い timeline.yml は、失敗ではなく空の状態として見せる
   // （部品13 の .wave-empty と同じ扱い）
   const totalClips = LANES.reduce((n, lane) => n + (lanes[lane] || []).length, 0);
   if (!totalClips) {
     destroyTimelineMultitrack();
     card.appendChild(el("div", "wave-empty", "まだクリップがありません"));
+    card.appendChild(bgmAddForm(lanes));
     return card;
   }
 
@@ -2063,10 +2252,12 @@ function timelineCard() {
     laneRow.appendChild(labels);
   }
 
+  timelineView.totalSeconds = timelineTotalSeconds(lanes);
   ensureTimelineMultitrack(lanes);
   syncTimelineCover();
   laneRow.appendChild(timelineView.box);
   card.appendChild(laneRow);
+  card.appendChild(zoomControls());
 
   if (timelineView.phase === "失敗") {
     const note = el("div", "wave-note is-error");
@@ -2074,8 +2265,8 @@ function timelineCard() {
     card.appendChild(note);
   }
 
-  // BGM の一覧（削除の操作。ドラッグできない・見えにくい人でも消せるように）と
-  // 「曲を置く」欄（#85 の5段目）
+  // BGM の一覧（数字で位置・音量を直す、削除）と「曲を置く」欄（#85 の5段目）
+  card.appendChild(bgmSaveRow());
   const list = bgmList(lanes);
   if (list) card.appendChild(list);
   card.appendChild(bgmAddForm(lanes));
@@ -2083,65 +2274,264 @@ function timelineCard() {
   return card;
 }
 
+// 番組全体の長さ（見えている範囲。main・bgm・se のうち、位置が出ているものの右端）。
+// web/timeline.py の total_seconds と同じ考え方（#88）だが、ここは見るだけの計算で保存しない
+function timelineTotalSeconds(lanes) {
+  let total = 0;
+  for (const lane of LANES) {
+    for (const clip of lanes[lane] || []) {
+      if (clip.start != null && clip.duration != null) total = Math.max(total, clip.start + clip.duration);
+    }
+  }
+  return total;
+}
+
 // ---------------------------------------------------------------- BGM の行（#85 の5段目）
+//
+// 保存の作法はエコー区間（部品13・14）と同じにする（PR #239 のレビュー・ユーザーの判断・
+// 案A）。ドラッグ・音量の点・数字の欄のどれで変えても、その場では保存しない。
+// 画面はいったん state.bgm（作業用の並び）を直し、「保存する」を押したときだけ
+// 変わったクリップだけ PUT で送る。回をまたいで混ざらないよう、debounce で待っている間に
+// 別の回へ移ったら破棄する（commitBgmDrag が state.selected を見て確かめる）
 
-// ドラッグ・音量の点を動かしたあと、少し待ってからまとめて PUT する
-// （連打で保存が走りすぎないように。CLAUDE.md）。id ごとに溜めて、次が来たら伸ばす
-const bgmPending = {};
-
-function scheduleBgmSave(clipId, changes) {
-  if (!state.selected) return;
-  const name = state.selected.name;
-  const pending = bgmPending[clipId] || { changes: {} };
-  pending.changes = { ...pending.changes, ...changes };
-  clearTimeout(pending.timer);
-  pending.timer = setTimeout(() => flushBgmSave(name, clipId), 500);
-  bgmPending[clipId] = pending;
+// timeline.yml から読んだ「保存されている」形と、画面の作業用の形を行き来する。
+// duration・error・url・start（サーバーが計算した値）はそのまま持ち回り、
+// anchor・at・volume だけを画面で直す
+function syncBgmFromTimeline() {
+  const tl = state.timeline;
+  const rows = (tl && tl.timeline && tl.timeline.lanes.bgm) || [];
+  state.bgm = rows.map((c) => ({ ...c, volume: c.volume ? c.volume.map((p) => ({ ...p })) : c.volume }));
+  state.bgmSaved = JSON.stringify(state.bgm.map(bgmEditableSnapshot));
 }
 
-async function flushBgmSave(name, clipId) {
-  const pending = bgmPending[clipId];
-  if (!pending) return;
-  delete bgmPending[clipId];
-  const onThisEpisode = state.selected && state.selected.name === name;
-  try {
-    await api(`/api/episodes/${name}/bgm/${encodeURIComponent(clipId)}`, {
-      method: "PUT", body: JSON.stringify(pending.changes),
-    });
-    if (onThisEpisode) state.actionError = "";
-  } catch (err) {
-    // 静かに失敗させない（CLAUDE.md）。失敗したら、動かす前の並びに読み直して戻す
-    if (onThisEpisode) state.actionError = `BGM を保存できませんでした: ${err.message}`;
-    timelineView.sig = null;   // sig が変わらないと widget が作り直されず、失敗前の見た目のまま残る
-  }
-  if (onThisEpisode) {
-    await loadTimeline(name);
-    await reload({ keep: name, keepSelected: true });
-  } else {
-    renderMain();
-  }
+// 保存する・しないの比較に使う形（id・anchor・at・volume だけ。丸めをそろえる）
+function bgmEditableSnapshot(clip) {
+  return {
+    id: clip.id,
+    anchor: clip.anchor,
+    at: round2(clip.at || 0),
+    volume: (clip.volume || []).map((p) => ({ time: round2(p.time), volume: round2(p.volume) })),
+  };
 }
 
-function bgmClipById(clipId) {
+function bgmDirty() {
+  return JSON.stringify(state.bgm.map(bgmEditableSnapshot)) !== state.bgmSaved;
+}
+
+// 本編（main）の、番組内での開始秒。位置が出せているクリップだけ
+function bgmMainStarts(lanes) {
+  const map = {};
+  for (const c of lanes.main || []) if (c.start != null) map[c.id] = c.start;
+  return map;
+}
+
+// 本編（main）の長さ。#85 の5段目のレビューで足した「曲がコーナーの終わりを
+// 越えて鳴り続ける」の判定に使う
+function bgmMainDurations(lanes) {
+  const map = {};
+  for (const c of lanes.main || []) if (c.duration != null) map[c.id] = c.duration;
+  return map;
+}
+
+// state.bgm（作業用）1件を、画面に出す形にする。start はここで計算し直す
+// （サーバーから来た start は、保存されている anchor・at のときのもの。
+// 画面で anchor・at を直したら、ここで計算し直さないと帯の位置が古いまま）
+function bgmClipDisplay(clip, mainStarts) {
+  if (clip.error) return { ...clip, start: null };
+  const anchorStart = mainStarts[clip.anchor];
+  if (anchorStart == null) {
+    return { ...clip, start: null, error: `錨（${clip.anchor}）の位置が分かりません` };
+  }
+  return { ...clip, start: round2(anchorStart + (clip.at || 0)) };
+}
+
+// timelineCard・timelineTracks などに渡す、BGM だけ作業用に差し替えた並び
+function currentLanes() {
   const tl = state.timeline;
   if (!tl || !tl.timeline) return null;
-  return (tl.timeline.lanes.bgm || []).find((c) => c.id === clipId) || null;
+  const mainStarts = bgmMainStarts(tl.timeline.lanes);
+  return {
+    main: tl.timeline.lanes.main,
+    se: tl.timeline.lanes.se,
+    bgm: state.bgm.map((c) => bgmClipDisplay(c, mainStarts)),
+  };
+}
+
+// build.py の _volume_at と同じ計算（#85 の4段目）。曲がコーナーの終わりを
+// 越えて鳴り続けるかを画面でも見るために、同じ式を JS 側に持つ
+function volumeAt(points, t) {
+  if (!points || !points.length) return 1;
+  const pts = [...points].sort((a, b) => a.time - b.time);
+  if (t <= pts[0].time) return pts[0].volume;
+  if (t >= pts[pts.length - 1].time) return pts[pts.length - 1].volume;
+  for (let i = 1; i < pts.length; i += 1) {
+    const p0 = pts[i - 1];
+    const p1 = pts[i];
+    if (p0.time <= t && t <= p1.time) {
+      if (p1.time === p0.time) return p1.volume;
+      return p0.volume + (p1.volume - p0.volume) * (t - p0.time) / (p1.time - p0.time);
+    }
+  }
+  return pts[pts.length - 1].volume;
+}
+
+// build.py の mix と同じ判定・同じ文言（#85 の4段目のログと合わせる。処理側は
+// 01_mix のログに出し、ここは画面にも出す。PR #239 のレビュー）
+function bgmOverrunNote(clip, mainDurations) {
+  if (clip.error || clip.duration == null) return null;
+  const anchorTotal = mainDurations[clip.anchor];
+  if (anchorTotal == null) return null;
+  const covers = (clip.at || 0) + clip.duration;
+  if (covers <= anchorTotal + 0.001) return null;
+  const tEnd = anchorTotal - (clip.at || 0);
+  if (volumeAt(clip.volume, tEnd) <= 0) return null;   // 音量の点で下げ切っているなら注意は不要
+  return `${clip.id}: 曲がコーナーの終わり（${clock(anchorTotal)}）を`
+       + `${clock(covers - anchorTotal)}越えて鳴ります。次のコーナーの下でも`
+       + "鳴ります（音量の点で下げるか消してください）";
+}
+
+// dB ⇔ 倍率（timeline.yml の volume は0〜1の倍率）。0倍率は「無音」（-∞dB）として
+// 別扱いする（#85 の5段目のレビュー）
+function volumeToDb(volume) {
+  return volume > 0 ? 20 * Math.log10(volume) : null;
+}
+function dbToVolume(db) {
+  return Math.min(1, Math.max(0, 10 ** (db / 20)));
+}
+
+// 音量の点は time で昇順・重複なし（web/timeline.py の _volume と同じ決まり）。
+// 数字の欄で自由に打たせると崩れうるので、保存の前に画面側でも整える
+function normalizeVolumePoints(points) {
+  const sorted = [...(points || [])].sort((a, b) => a.time - b.time);
+  for (let i = 1; i < sorted.length; i += 1) {
+    if (sorted[i].time <= sorted[i - 1].time) {
+      sorted[i] = { ...sorted[i], time: round2(sorted[i - 1].time + 0.01) };
+    }
+  }
+  return sorted;
+}
+
+// widget の中の、この BGM クリップのトラックの番号（0始まり）。setTrackStartPosition・
+// setEnvelopePoints はこの番号で指す（vendor/multitrack.js を取り寄せて確かめた。
+// multitrack.d.ts に載っている命令。#85 の5段目のレビュー）
+function bgmTrackIndex(clipId) {
+  if (!timelineView.mt || !Array.isArray(timelineView.mt.tracks)) return -1;
+  return timelineView.mt.tracks.findIndex((t) => t.id === `bgm-${clipId}`);
+}
+
+// 数字の欄で位置を直したときは、作り直さずにその場で widget に反映する
+// （作り直すと、実尺に近い回では数秒〜十数秒の復号待ちが起きる。#212）。
+// 反映できたら true。できなければ（widget が無い・音源が無いなど）呼び出し側が
+// 作り直しにフォールバックする
+function bgmApplyPosition(clipId, newStart) {
+  const idx = bgmTrackIndex(clipId);
+  if (idx < 0) return false;
+  timelineView.applying = true;
+  try {
+    timelineView.mt.setTrackStartPosition(idx, newStart);
+  } finally {
+    timelineView.applying = false;
+  }
+  const applied = timelineView.mt.tracks[idx];
+  return !!applied && Math.abs((applied.startPosition || 0) - newStart) < 0.01;
+}
+
+// 数字の欄で音量の点を直したときの、その場への反映。**音量カーブの有無（envelope
+// プラグインがあるかどうか）は widget を作った時にしか決まらない**ので、
+// 「点が無かった曲に初めて点を足す」「最後の点を消して空にする」ときは
+// その場では反映できず、呼び出し側で作り直しになる（頻度は低い操作）
+function bgmApplyVolume(clipId, volume, duration) {
+  const idx = bgmTrackIndex(clipId);
+  if (idx < 0) return false;
+  const track = timelineView.mt.tracks[idx];
+  const hasEnvelope = !!(track && track.envelope);
+  const points = bgmEnvelopePoints(volume, duration);
+  if (!hasEnvelope || !points) return false;
+  timelineView.applying = true;
+  try {
+    timelineView.mt.setEnvelopePoints(idx, points);
+  } finally {
+    timelineView.applying = false;
+  }
+  return true;
+}
+
+// 位置（anchor・at）を数字の欄から直す
+function bgmCommitPosition(clipId, changes) {
+  const clip = state.bgm.find((c) => c.id === clipId);
+  if (!clip) return;
+  Object.assign(clip, changes);
+  clip.at = Math.max(0, round2(clip.at || 0));
+
+  const lanes = currentLanes();
+  let applied = false;
+  if (lanes) {
+    const mainStarts = bgmMainStarts(lanes);
+    const display = bgmClipDisplay(clip, mainStarts);
+    if (display.start != null) applied = bgmApplyPosition(clipId, display.start);
+  }
+  timelineView.sig = applied && lanes ? sigOfTracks(timelineTracks(lanes)) : null;
+  renderMain();
+}
+
+// 音量の点を数字の欄から直す（追加・削除・時刻・dB のどれでもここを通す）
+function bgmCommitVolume(clipId, points) {
+  const clip = state.bgm.find((c) => c.id === clipId);
+  if (!clip) return;
+  clip.volume = normalizeVolumePoints(points);
+
+  const lanes = currentLanes();
+  const applied = lanes ? bgmApplyVolume(clipId, clip.volume, clip.duration) : false;
+  if (!applied) timelineView.sig = null;   // 作り直す（envelope の有無が変わった、など）
+  renderMain();
+}
+
+// ドラッグ・音量の点を動かしたあと、少し待ってから state.bgm に取り込む
+// （連打のたびに取り込まない。CLAUDE.md）。widget 自体はすでに動かした見た目に
+// なっているので、ここでは state.bgm と timelineView.sig を合わせるだけでよい
+const bgmDragPending = {};
+
+function scheduleBgmDragCommit(clipId, changes) {
+  const name = state.selected && state.selected.name;
+  const pending = bgmDragPending[clipId] || { changes: {}, name };
+  pending.changes = { ...pending.changes, ...changes };
+  pending.name = name;   // 待っている間に回を移ったら、最新の回で判定する
+  clearTimeout(pending.timer);
+  pending.timer = setTimeout(() => commitBgmDrag(clipId), 400);
+  bgmDragPending[clipId] = pending;
+}
+
+function commitBgmDrag(clipId) {
+  const pending = bgmDragPending[clipId];
+  if (!pending) return;
+  delete bgmDragPending[clipId];
+  // 待っている間に別の回へ移っていたら、この widget はもう無い（回をまたいで
+  // 混ざらないようにする。code-reviewer の指摘・PR #239 のレビュー）
+  if (!state.selected || state.selected.name !== pending.name) return;
+  const clip = state.bgm.find((c) => c.id === clipId);
+  if (!clip) return;
+  Object.assign(clip, pending.changes);
+  const lanes = currentLanes();
+  // widget はドラッグで既に正しい見た目になっているので、sig だけ合わせて
+  // 無駄な作り直しを起こさない
+  if (lanes) timelineView.sig = sigOfTracks(timelineTracks(lanes));
+  renderMain();
 }
 
 // ドラッグの手離しは multitrack が知らせてくれない（動かすたびに来る）ので、
-// scheduleBgmSave の待ち時間で「離した」とみなす
+// scheduleBgmDragCommit の待ち時間で「離した」とみなす
 function onBgmDrag(trackId, startPosition) {
-  if (!trackId.startsWith("bgm-")) return;
+  if (timelineView.applying || !trackId.startsWith("bgm-")) return;
   const clipId = trackId.slice("bgm-".length);
-  const tl = state.timeline;
-  if (!tl || !tl.timeline) return;
-  const anchor = bgmAnchorForPosition(tl.timeline.lanes.main, startPosition);
+  const lanes = currentLanes();
+  if (!lanes) return;
+  const anchor = bgmAnchorForPosition(lanes.main, startPosition);
   if (!anchor) return;
   const at = Math.max(0, round2(startPosition - anchor.start));
-  // 変わっていなければ保存しない（widget を作り直しただけでも動く。#85 の5段目で気づいた）
-  const current = bgmClipById(clipId);
-  if (current && current.anchor === anchor.id && Math.abs((current.at || 0) - at) < 0.005) return;
-  scheduleBgmSave(clipId, { anchor: anchor.id, at });
+  // 変わっていなければ取り込まない（widget を作り直しただけでも動く。#85 の5段目で気づいた）
+  const clip = state.bgm.find((c) => c.id === clipId);
+  if (clip && clip.anchor === anchor.id && Math.abs((clip.at || 0) - at) < 0.005) return;
+  scheduleBgmDragCommit(clipId, { anchor: anchor.id, at });
 }
 
 // 新しい位置が入るコーナー（本編クリップ）を錨にする。無ければ最初のコーナーの頭に寄せる
@@ -2164,64 +2554,218 @@ function bgmVolumeEqual(a, b) {
 }
 
 function onBgmEnvelope(trackId, points) {
-  if (!trackId.startsWith("bgm-")) return;
+  if (timelineView.applying || !trackId.startsWith("bgm-")) return;
   const clipId = trackId.slice("bgm-".length);
   // クリップ相対の秒はそのまま。volume は0〜1の倍率で、timeline.yml と同じ意味
   // （vendor/multitrack.min.js を読んで確かめた。#85 の5段目）
   const volume = points.map((p) => ({ time: round2(p.time), volume: round2(p.volume) }));
   // widget を作った直後にも1回この事象が起きる（もとの点を読み込むだけで発火する。
   // ライブラリの仕様）。**画面用に足した端の補助点（bgmEnvelopePoints）ぶんも含めて**、
-  // いま保存されている中身と同じなら、まだユーザーは触っていないので保存しない。
-  // 触って何か変えたら、補助点が付いたままでも普通に保存する（保存されても mix の音は
-  // 変わらない。build.py は端の値のまま扱うため）
-  const current = bgmClipById(clipId);
-  if (current) {
-    const expected = (bgmEnvelopePoints(current.volume, current.duration) || [])
+  // いま state.bgm に持っている中身と同じなら、まだユーザーは触っていないので取り込まない
+  const clip = state.bgm.find((c) => c.id === clipId);
+  if (clip) {
+    const expected = (bgmEnvelopePoints(clip.volume, clip.duration) || [])
       .map((p) => ({ time: round2(p.time), volume: round2(p.volume) }));
     if (bgmVolumeEqual(expected, volume)) return;
   }
-  scheduleBgmSave(clipId, { volume });
+  scheduleBgmDragCommit(clipId, { volume: normalizeVolumePoints(volume) });
+}
+
+// 「保存する」ボタンと未保存の表示（部品14 のエコー区間と同じ見た目・作法）
+function bgmSaveRow() {
+  const box = el("div", "segments-actions bgm-save-row");
+  const dirty = bgmDirty();
+
+  const badge = el("span", `save-badge ${dirty ? "is-dirty" : "is-saved"}`);
+  badge.append(el("span", "mark"),
+               document.createTextNode(dirty ? "未保存の変更あり" : "保存済み"));
+
+  const save = el("button", `btn-save ${dirty ? "is-dirty" : "is-saved"}`,
+                  state.bgmSaving ? "保存しています…" : (dirty ? "保存する" : "保存"));
+  save.disabled = !dirty || state.bgmSaving;
+  save.onclick = () => saveBgm();
+
+  box.append(badge, save);
+  return box;
+}
+
+// 変わったクリップだけ PUT で送る。消した分だけ DELETE。窓口は既存のまま
+// （PUT /bgm/{id}・DELETE /bgm/{id}。#85 の5段目のレビュー）
+async function saveBgm() {
+  if (!bgmDirty() || state.bgmSaving) return;
+  const name = state.selected.name;
+  state.bgmSaving = true;
+  state.actionError = "";
+  renderMain();
+
+  const savedById = new Map(JSON.parse(state.bgmSaved || "[]").map((c) => [c.id, c]));
+  const currentIds = new Set(state.bgm.map((c) => c.id));
+  const removed = [...savedById.keys()].filter((id) => !currentIds.has(id));
+
+  try {
+    for (const id of removed) {
+      await api(`/api/episodes/${name}/bgm/${encodeURIComponent(id)}`, { method: "DELETE" });
+    }
+    for (const clip of state.bgm) {
+      const before = savedById.get(clip.id);
+      const now = bgmEditableSnapshot(clip);
+      const changes = {};
+      if (!before || before.anchor !== now.anchor) changes.anchor = now.anchor;
+      if (!before || Math.abs(before.at - now.at) > 0.004) changes.at = now.at;
+      if (!before || JSON.stringify(before.volume) !== JSON.stringify(now.volume)) {
+        changes.volume = now.volume.length ? now.volume : null;
+      }
+      if (Object.keys(changes).length) {
+        await api(`/api/episodes/${name}/bgm/${encodeURIComponent(clip.id)}`, {
+          method: "PUT", body: JSON.stringify(changes),
+        });
+      }
+    }
+  } catch (err) {
+    // 静かに失敗させない（CLAUDE.md）。読み直せば、実際に保存できた分だけ反映される
+    state.actionError = `BGM を保存できませんでした: ${err.message}`;
+  }
+  state.bgmSaving = false;
+  await loadTimeline(name);
+  syncBgmFromTimeline();
+  timelineView.sig = null;
+  await reload({ keep: name, keepSelected: true });
+}
+
+// 位置（錨・頭からの秒）と音量の点の一覧（数字の欄。#85 の5段目のレビュー・案C）
+function bgmPositionFields(clip, anchors) {
+  const row = el("div", "bgm-row-pos");
+
+  const anchorSelect = el("select", "field");
+  anchors.forEach((c) => {
+    const option = el("option", null, `${c.id}（${clock(c.start)}）`);
+    option.value = c.id;
+    if (c.id === clip.anchor) option.selected = true;
+    anchorSelect.appendChild(option);
+  });
+  anchorSelect.setAttribute("aria-label", `${clip.id} を付けるコーナー`);
+  anchorSelect.onchange = () => bgmCommitPosition(clip.id, { anchor: anchorSelect.value });
+
+  const atInput = el("input", "field");
+  atInput.type = "number";
+  atInput.step = "0.1";
+  atInput.min = "0";
+  atInput.value = round2(clip.at || 0);
+  atInput.setAttribute("aria-label", `${clip.id} の位置（コーナーの頭から何秒）`);
+  atInput.onchange = () => bgmCommitPosition(clip.id, { at: Number(atInput.value) || 0 });
+
+  row.append(
+    field(el("span", "form-label", "どのコーナーに付けるか"), anchorSelect),
+    field(el("span", "form-label", "コーナーの頭から何秒"), atInput),
+    el("span", "bgm-row-where", clip.start != null ? `番組内では ${clock(clip.start)} から` : ""),
+  );
+  return row;
+}
+
+function bgmVolumePointRow(clip, points, index) {
+  const point = points[index];
+  const row = el("div", "bgm-volume-row");
+
+  const timeInput = el("input", "field");
+  timeInput.type = "number";
+  timeInput.step = "0.1";
+  timeInput.min = "0";
+  timeInput.value = round2(point.time);
+  timeInput.setAttribute("aria-label", `${clip.id} の音量の点 ${index + 1} の秒（曲の先頭から）`);
+  timeInput.onchange = () => {
+    const time = Math.max(0, Number(timeInput.value) || 0);
+    bgmCommitVolume(clip.id, points.map((p, i) => (i === index ? { ...p, time } : p)));
+  };
+
+  const muted = point.volume <= 0;
+  const dbInput = el("input", "field");
+  dbInput.type = "number";
+  dbInput.step = "0.5";
+  dbInput.max = "0";
+  dbInput.value = muted ? "" : round2(volumeToDb(point.volume));
+  dbInput.placeholder = muted ? "無音" : "dB";
+  dbInput.disabled = muted;
+  dbInput.setAttribute("aria-label", `${clip.id} の音量の点 ${index + 1} の音量（dB）`);
+  dbInput.onchange = () => {
+    const db = Math.min(0, Number(dbInput.value) || 0);
+    bgmCommitVolume(clip.id, points.map((p, i) => (i === index ? { ...p, volume: dbToVolume(db) } : p)));
+  };
+
+  const mute = el("button", "btn-tiny is-plain", muted ? "音を戻す" : "無音にする");
+  mute.onclick = () => {
+    const volume = muted ? dbToVolume(-6) : 0;   // 音を戻すときの既定は -6dB（仮置き。根拠は無い）
+    bgmCommitVolume(clip.id, points.map((p, i) => (i === index ? { ...p, volume } : p)));
+  };
+
+  const remove = el("button", "btn-icon");
+  remove.innerHTML = icon(SVG.trash);
+  remove.title = "この点を削除";
+  remove.setAttribute("aria-label", `${clip.id} の音量の点 ${index + 1} を削除`);
+  remove.onclick = () => bgmCommitVolume(clip.id, points.filter((_, i) => i !== index));
+
+  row.append(
+    field(el("span", "form-label", "曲の先頭から何秒"), timeInput),
+    field(el("span", "form-label", "音量"), dbInput),
+    mute, remove,
+  );
+  return row;
+}
+
+function bgmVolumeEditor(clip) {
+  const box = el("div", "bgm-volume");
+  box.appendChild(el("div", "bgm-volume-label", "音量の点（曲の先頭から何秒・何dB）"));
+  const points = clip.volume || [];
+  if (!points.length) box.appendChild(el("div", "region-empty", "点はまだありません。曲は等倍のまま鳴ります。"));
+  points.forEach((_, index) => box.appendChild(bgmVolumePointRow(clip, points, index)));
+
+  const add = el("button", "btn-add");
+  add.innerHTML = icon(SVG.plus, 12, 2) + "点を追加";
+  add.onclick = () => {
+    const last = points[points.length - 1];
+    const time = round2((last ? last.time : 0) + 1);
+    bgmCommitVolume(clip.id, [...points, { time, volume: last ? last.volume : 1 }]);
+  };
+  box.appendChild(add);
+  return box;
 }
 
 function bgmList(lanes) {
   const clips = lanes.bgm || [];
   if (!clips.length) return null;
+  const anchors = (lanes.main || []).filter((c) => c.start != null);
   const box = el("div", "bgm-list");
   clips.forEach((clip) => {
-    const row = el("div", "bgm-row");
-    const busy = !!state.bgmBusy[clip.id];
-    const where = clip.start != null
-      ? `${clip.source}（${LANE_LABEL.main} 「${clip.anchor}」の ${clock(clip.at)} から。`
-        + `音量の点 ${(clip.volume || []).length}件）`
-      : `${clip.source}（${clip.error || "位置が出せません"}）`;
-    row.appendChild(el("span", "bgm-row-label", where));
+    const row = el("div", `bgm-row${clip.error ? " is-error" : ""}`);
+
+    const head = el("div", "bgm-row-head");
+    head.appendChild(el("span", "bgm-row-id", clip.id));
+    head.appendChild(el("span", "bgm-row-source", clip.source));
+    if (clip.error) head.appendChild(el("span", "bgm-row-error", clip.error));
 
     const remove = el("button", "btn-icon");
     remove.innerHTML = icon(SVG.trash);
     remove.title = "この BGM を削除";
     remove.setAttribute("aria-label", `${clip.id} を削除`);
-    remove.disabled = busy;
     remove.onclick = () => removeBgm(clip.id);
-    row.appendChild(remove);
+    head.appendChild(remove);
+    row.appendChild(head);
+
+    if (!clip.error) {
+      row.appendChild(bgmPositionFields(clip, anchors));
+      row.appendChild(bgmVolumeEditor(clip));
+    }
     box.appendChild(row);
   });
   return box;
 }
 
-async function removeBgm(clipId) {
-  if (!confirm("この BGM を削除しますか？")) return;
-  const name = state.selected.name;
-  state.bgmBusy = { ...state.bgmBusy, [clipId]: true };
-  state.actionError = "";
+// 削除は、エコー区間の削除と同じくローカルだけ変える（保存するまでサーバーには送らない。
+// #85 の5段目のレビュー・案A）。取り消しにくい操作の確認は「保存する」の時点でなく
+// ここで出すほどではない（保存するまでは、画面を開き直せば元に戻る）
+function removeBgm(clipId) {
+  state.bgm = state.bgm.filter((c) => c.id !== clipId);
+  timelineView.sig = null;   // 本数が変わるので作り直す（消す操作は頻度が低い）
   renderMain();
-  try {
-    await api(`/api/episodes/${name}/bgm/${encodeURIComponent(clipId)}`, { method: "DELETE" });
-  } catch (err) {
-    state.actionError = `BGM を削除できませんでした: ${err.message}`;
-  }
-  state.bgmBusy = { ...state.bgmBusy, [clipId]: false };
-  await loadTimeline(name);
-  await reload({ keep: name, keepSelected: true });
 }
 
 // 「曲を置く」欄。開くまでは小さいボタンだけ（#85 の5段目）
@@ -2305,7 +2849,14 @@ function bgmAddForm(lanes) {
   return box;
 }
 
+// 「置く」は、いまも直接 POST する（保存するまでローカルに留める echo と違う扱い。
+// #85 の5段目のレビュー・仮の判断）。曲の既定の位置・音量カーブ（BGM_DEFAULT_AT・
+// BGM_DEFAULT_VOLUME）と id の重複避け（_unique_bgm_id）はサーバー側にしかなく、
+// `/api/assets/music` は曲の長さを「1:23」の文字でしか返さない（秒の数字ではない）ため、
+// 画面だけでは同じ既定値を再現できない。曲を置いたら、それより前のドラッグ・数字の欄の
+// 未保存の直しは読み直しで失われるので、未保存があれば先に確認する
 async function addBgm() {
+  if (bgmDirty() && !confirm("BGM の未保存の変更を破棄して、曲を置きますか？")) return;
   const name = state.selected.name;
   state.bgmBusy = { ...state.bgmBusy, new: true };
   state.actionError = "";
@@ -2321,6 +2872,8 @@ async function addBgm() {
   }
   state.bgmBusy = { ...state.bgmBusy, new: false };
   await loadTimeline(name);
+  syncBgmFromTimeline();
+  timelineView.sig = null;
   await reload({ keep: name, keepSelected: true });
 }
 
@@ -3835,6 +4388,7 @@ function unsavedThings() {
   if (state.save === "dirty" || state.save === "error") rows.push("コーナー・テーマ");
   try {
     if (echoDirty()) rows.push("エコー区間");
+    if (bgmDirty()) rows.push("BGM の位置・音量");
     // まだ確定していない行も数える。確定（Enter / 「この行を確定」）を
     // 通るまで state.texts は変わらないので、打ちかけが黙って消えていた
     if (state.editing >= 0
@@ -3896,6 +4450,7 @@ async function selectEpisode(name) {
   state.scan = await api(`/api/episodes/${name}/scan`).catch(() => null);
   state.wave = await api(`/api/episodes/${name}/waveform`).catch(() => null);
   await loadTimeline(name);
+  syncBgmFromTimeline();
   await loadMusic();
   state.bgmOpen = false;
   state.bgmSource = "";

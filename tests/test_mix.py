@@ -290,6 +290,60 @@ lanes:
     assert "曲が先に終わります" not in capsys.readouterr().out
 
 
+def test_曲が錨のコーナーの終わりを越えて鳴り続ければ警告を出す(ep, capsys):
+    """レビューで指摘: 短く尽きるときだけでなく、コーナーの終わりを越えて次のコーナーの
+    下まで鳴り続けるときも黙って進まない。"""
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)     # 錨。コーナーの終わりは 6秒
+    silence(ep["00_raw"] / "outro.wav", 5)
+    sine(ep["01_clean"] / "clean.wav", 15, amp=0.2)   # 4+6+5
+    sine(asset(ep, "bgm.wav"), 9)              # talk（6秒）を3秒越えて鳴る
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - {id: op, source: op.wav, gap: 0}
+    - {id: talk, source: talk.wav, gap: 0}
+    - {id: outro, source: outro.wav, gap: 0}
+  bgm:
+    - {id: theme, source: bgm.wav, anchor: talk, at: 0}
+  se: []
+""")
+    write_clean_json(ep)
+
+    build.step_mix(ep, CFG)                          # 止まらない
+
+    assert (ep["01_mix"] / "mix.wav").exists()
+    out = capsys.readouterr().out
+    assert "越えて鳴ります" in out
+    assert "早く尽きます" not in out
+
+
+def test_コーナーの終わりまでに音量を0にしていれば越えても警告しない(ep, capsys):
+    """音量カーブでコーナーの終わりまでに音量を0まで下げているのは、ユーザーが
+    意図して消しているということなので、注意は不要（レビューで指摘）。"""
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 6)
+    silence(ep["00_raw"] / "outro.wav", 5)
+    sine(ep["01_clean"] / "clean.wav", 15, amp=0.2)
+    sine(asset(ep, "bgm.wav"), 9)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - {id: op, source: op.wav, gap: 0}
+    - {id: talk, source: talk.wav, gap: 0}
+    - {id: outro, source: outro.wav, gap: 0}
+  bgm:
+    - {id: theme, source: bgm.wav, anchor: talk, at: 0,
+       volume: [{time: 0, volume: 1}, {time: 6, volume: 0}]}
+  se: []
+""")
+    write_clean_json(ep)
+
+    build.step_mix(ep, CFG)
+
+    assert "越えて鳴ります" not in capsys.readouterr().out
+
+
 def test_曲の終わりが番組の末尾を超えると切れることをログに出す(ep, capsys):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)
