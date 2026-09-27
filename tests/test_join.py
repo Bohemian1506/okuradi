@@ -113,8 +113,8 @@ def test_元が新しくなったら繋ぎ直す(ep):
     assert build.audio_duration(build.find_raw(ep)) == pytest.approx(6.0, abs=0.01)
 
 
-def test_編集点があれば黙って進まない(ep):
-    """まだ工程に繋がっていない。無視すると、書いたのにかからない。"""
+def test_カットは繋ぐときに当たる(ep):
+    """cut edits は工程に繋がっている（#85 の6段目）。0.5秒だけカットされる。"""
     sine(ep["00_raw"] / "a.wav", 2)
     sine(ep["00_raw"] / "b.wav", 2)
     timeline_yml(ep, """version: 1
@@ -124,6 +124,43 @@ lanes:
       source: a.wav
       gap: 0
       edits: [{start: 0.5, end: 1.0, kind: cut}]
+    - {id: b, source: b.wav, gap: 0}
+  bgm: []
+  se: []
+""")
+    got = build.find_raw(ep)
+    assert build.audio_duration(got) == pytest.approx(3.5, abs=0.02)   # 2 + 2 - 0.5
+
+
+def test_1本のクリップに複数カットがあっても当たる(ep):
+    sine(ep["00_raw"] / "a.wav", 10)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits:
+        - {start: 1.0, end: 2.0, kind: cut}
+        - {start: 5.0, end: 6.0, kind: cut}
+  bgm: []
+  se: []
+""")
+    got = build.find_raw(ep)
+    assert build.audio_duration(got) == pytest.approx(8.0, abs=0.02)
+
+
+def test_エコーがあれば黙って進まない(ep):
+    """エコー（kind: echo）は、まだ工程に繋がっていない（7段目）。"""
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "b.wav", 2)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 0.5, end: 1.0, kind: echo, preset: light}]
     - {id: b, source: b.wav, gap: 0}
   bgm: []
   se: []
@@ -153,6 +190,24 @@ lanes:
   se: []
 """)
     assert build.find_raw(ep).name == "a.wav"
+
+
+def test_音源が1本の枠でもカットは当たる(ep):
+    """main が1本でも、cut edits があれば join を通す（#85 の6段目）。"""
+    sine(ep["00_raw"] / "a.wav", 4)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+  bgm: []
+  se: []
+""")
+    got = build.find_raw(ep)
+    assert got.name == build.JOINED
+    assert build.audio_duration(got) == pytest.approx(3.0, abs=0.02)
 
 
 def test_繋いだ音を音源として拾わない(ep):

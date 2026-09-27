@@ -70,6 +70,12 @@ const state = {
   framesError: "",
   frameBusy: {},     // 枠ごとの取り込み中・削除中（枠のid -> true）
   frameObsOpen: null, // OBSの一覧を開いている枠のid
+  cutFrame: null,    // カット（言い直し）を引いている枠のid（#85 の6段目）
+  cutsWork: {},      // 枠id -> 作業用のカット配列（保存するまでサーバーへ送らない。エコー・BGM と同じ作法）
+  cutsSaved: {},     // 枠id -> 保存されている中身のスナップショット（JSON文字列。未保存かを見分ける）
+  cutPicked: -1,     // 選んでいる区間（カット用。エコーの state.picked とは別に持つ）
+  cutSaving: null,   // 保存中の枠id（保存中に別の回へ移っても書き戻さないため）
+  cutSkip: false,    // カットした所を飛ばして聴くか
   scan: null,        // 下見の文字起こし
   at: 0,             // 再生位置（秒）
   playing: false,
@@ -325,15 +331,20 @@ function screenRecording() {
     "ざっくりの文字起こし。行を押すとそこから再生。読むだけで直せません（カット点を探す用）。",
     scanCard(), stepOf("scan")));
 
-  box.appendChild(section(3, "エコー区間を決める",
+  box.appendChild(section(3, "カット（言い直し）を決める",
+    "コーナーを選び、その生音の波形をドラッグして区間を選ぶ。カットは消すだけ（#85 の6段目）。"
+    + "カットの時刻は、そのコーナーの生音（00_raw）の時刻。",
+    cutCard(), null, cutSaveRow()));
+
+  box.appendChild(section(4, "エコー区間を決める",
     "波形をドラッグして区間を選び、プリセットを付ける。タイトルコールなど一部だけに。",
     echoCard(), null, echoSave()));
 
-  box.appendChild(section(4, "整音して聴く",
+  box.appendChild(section(5, "整音して聴く",
     "前後の無音を切り、音量をそろえ、エコーをかける。聴いて確かめる1つ目の確認ポイント。",
     cleanCard(), stepOf("clean")));
 
-  box.appendChild(section(5, "ミックス（曲を重ねる）して聴く",
+  box.appendChild(section(6, "ミックス（曲を重ねる）して聴く",
     "整音した喋りに、timeline.yml の BGM・SE を重ねる。無ければ喋りだけの音のまま。"
     + "重ねた曲の大きさ・位置が合っているかを聴いて確かめる。"
     + "BGM は下の「タイムラインの並びを確かめる」欄から置ける。"
@@ -343,8 +354,8 @@ function screenRecording() {
   // timeline.yml がある回だけ出す（#85 の2段目・5段目）
   const timelineNote = "timeline.yml に書いた音源の並び。BGM は曲を置く・ドラッグで位置を合わせる・"
     + "音量の点を動かす・削除ができる（#85 の5段目）。本編・SE はまだ見るだけ。"
-    + "位置はカット前（生音）の長さで出しています。カット（edits）を書くと下見が失敗します"
-    + "（まだ工程に繋がっていません）。";
+    + "位置は出来上がり（カットしたぶんを引いた）の長さで出しています"
+    + "（#85 の6段目。カットは上の「カット（言い直し）を決める」で引きます）。";
   if (state.timelineError) {
     destroyTimelineMultitrack();
     const card = el("div", "panel-card");
@@ -352,9 +363,9 @@ function screenRecording() {
     note.append(el("span", "mark", "!"),
                 el("span", null, `タイムラインを読み込めませんでした: ${state.timelineError}`));
     card.appendChild(note);
-    box.appendChild(section(6, "タイムラインの並びを確かめる", timelineNote, card));
+    box.appendChild(section(7, "タイムラインの並びを確かめる", timelineNote, card));
   } else if (state.timeline && state.timeline.timeline) {
-    box.appendChild(section(6, "タイムラインの並びを確かめる", timelineNote, timelineCard()));
+    box.appendChild(section(7, "タイムラインの並びを確かめる", timelineNote, timelineCard()));
   }
   return box;
 }
@@ -1451,6 +1462,11 @@ function ensureWave(key, { url, duration = 0, regions = false, editable = false 
     renderMain();
   });
   w.ws.on("timeupdate", (at) => {
+    // カットを飛ばして聴くとき（#85 の6段目）。区間に入ったら終わりへ飛ぶだけの仮置き
+    if (key === "cut" && state.cutSkip) {
+      const hit = cutRows(state.cutFrame).find((c) => at >= c.start && at < c.end - 0.02);
+      if (hit) { w.ws.setTime(hit.end); w.at = hit.end; return; }
+    }
     // 毎コマ作り直すと重いので、1秒に4回まで
     if (Math.floor(at * 4) === Math.floor(w.at * 4)) { w.at = at; return; }
     w.at = at;
@@ -1461,7 +1477,11 @@ function ensureWave(key, { url, duration = 0, regions = false, editable = false 
   w.ws.on("pause", () => { w.playing = false; renderMain(); });
   w.ws.on("finish", () => { w.playing = false; w.at = 0; renderMain(); });
 
-  if (w.regions && editable) bindRegions(key, w);
+  if (w.regions && editable) {
+    // 区間の並び先は key によって別（エコーは state.echoes、カットは state.cutsWork。#85 の6段目）
+    if (key === "cut") bindCutRegions(key, w);
+    else bindRegions(key, w);
+  }
   return w;
 }
 
@@ -1582,7 +1602,8 @@ function wavePlayer(key) {
   const w = waveOf(key);
   return playerRow({
     total: w.duration, at: w.at, playing: w.playing,
-    disabled: w.phase !== "表示", label: key === "clean" ? "整音結果" : "波形",
+    disabled: w.phase !== "表示",
+    label: key === "clean" ? "整音結果" : key === "cut" ? "カット確認" : "波形",
     onToggle: () => toggleWave(key),
     onSeek: (to) => seekWave(key, to, true),
   });
@@ -1772,6 +1793,330 @@ async function saveEchoes() {
   } catch (err) {
     state.actionError = `区間を保存できませんでした: ${err.message}`;
   }
+  renderMain();
+}
+
+// ---------------------------------------------------------------- カット（言い直し）（#85 の6段目）
+// コーナー（枠）を選ぶと、そのコーナーの生音（00_raw）の波形が下に出る。ドラッグで区間を選ぶ
+// 操作は部品13（波形ビュー）を流用する（案A・2026-09-27・ユーザーの判断）。
+// カットにプリセットは無く「消すだけ」（docs/features.md「決定3を取り下げた理由」の表）。
+// カットの時刻は、そのクリップの生音の時刻（`docs/features.md`「時刻は2つ。混ぜない」）。
+// 保存はエコー・BGM と同じ明示的な作法（「保存する」を押すまでサーバーへ送らない）。
+
+const CUT_MIN = ECHO_MIN;   // これより短い選択は区間にしない。カット専用の決まりは`build.py`
+                            // 側に無いが、エコーと同じ目安をそろえる（仮置き）
+
+function cutFrameList() {
+  return (state.frames && state.frames.frames) || [];
+}
+
+// 作業用のカット配列を、まだ無ければ枠の現在値（サーバー側）から作る。
+// すでに触っている枠は、直しかけの中身をそのまま使う（枠を切り替えても消えない）
+function ensureCutWork(frame) {
+  if (!(frame.id in state.cutsWork)) {
+    const rows = (frame.cuts || []).map((c) => ({ start: c.start, end: c.end }));
+    state.cutsWork[frame.id] = rows;
+    state.cutsSaved[frame.id] = JSON.stringify(rows);
+  }
+}
+
+function cutRows(frameId) {
+  return state.cutsWork[frameId] || [];
+}
+
+function cutDirty(frameId) {
+  if (!frameId || !(frameId in state.cutsWork)) return false;
+  return JSON.stringify(state.cutsWork[frameId]) !== state.cutsSaved[frameId];
+}
+
+// unsavedThings() から呼ぶ。いま選んでいる枠に関わらず、直したまま保存していない枠が
+// 1つでもあれば拾う（枠を切り替えても直しかけを持ち越すため。#60 と同じ考え方）
+function anyCutDirty() {
+  return Object.keys(state.cutsWork).some((id) => cutDirty(id));
+}
+
+// 枠を差し替える・外すと、サーバー側のカットは空に戻る（#216）。古い作業中の直しを
+// 持ち越さない（別の録音のカットには意味が無いため）
+function forgetCutWork(frameId) {
+  delete state.cutsWork[frameId];
+  delete state.cutsSaved[frameId];
+  if (state.cutFrame === frameId) {
+    state.cutFrame = null;
+    state.cutPicked = -1;
+  }
+}
+
+function cutIndexOf(region) {
+  const index = Number(String(region.id).replace("cut-", ""));
+  return Number.isInteger(index) ? index : -1;
+}
+
+function bindCutRegions(key, w) {
+  w.regions.enableDragSelection({ color: WAVE_COLORS.light });
+
+  w.regions.on("region-created", (region) => {
+    if (w.applying) return;
+    const start = round2(Math.min(region.start, region.end));
+    const end = round2(Math.max(region.start, region.end));
+    setTimeout(() => {
+      region.remove();
+      if (end - start < CUT_MIN) {
+        seekWave(key, start);
+        return;
+      }
+      const rows = cutRows(state.cutFrame);
+      rows.push({ start, end });
+      rows.sort((a, b) => a.start - b.start);
+      state.cutPicked = rows.findIndex((r) => r.start === start);
+      w.sig = null;
+      renderMain();
+    }, 0);
+  });
+
+  w.regions.on("region-updated", (region) => {
+    if (w.applying) return;
+    const rows = cutRows(state.cutFrame);
+    const row = rows[cutIndexOf(region)];
+    if (!row) return;
+    const start = round2(Math.min(region.start, region.end));
+    const end = round2(Math.max(region.start, region.end));
+    if (end - start < CUT_MIN) {
+      state.actionError = `カット区間は ${CUT_MIN}秒より短くできません`;
+      w.sig = null;
+      renderMain();
+      return;
+    }
+    row.start = start;
+    row.end = end;
+    rows.sort((a, b) => a.start - b.start);
+    state.cutPicked = rows.indexOf(row);
+    w.sig = null;
+    renderMain();
+  });
+
+  w.regions.on("region-clicked", (region, event) => {
+    event.stopPropagation();
+    const index = cutIndexOf(region);
+    if (index < 0) return;
+    state.cutPicked = index;
+    renderMain();
+  });
+}
+
+// 区間を波形の上の帯に映す（部品13 の syncRegions と同じ考え方）。プリセットが無いので
+// タグは付けない。エコーの state.picked / state.echoes とは混ざらないよう別に持つ
+function syncCutRegions(key, rows) {
+  const w = waveOf(key);
+  if (!w.regions || w.phase !== "表示") return;
+  const sig = `${JSON.stringify(rows)}|${state.cutPicked}`;
+  if (sig === w.sig) return;
+
+  w.applying = true;
+  w.regions.clearRegions();
+  rows.forEach((row, index) => {
+    const region = w.regions.addRegion({
+      id: `cut-${index}`,
+      start: row.start, end: row.end,
+      drag: true, resize: true,
+      color: WAVE_COLORS.light,
+    });
+    if (index === state.cutPicked) region.element.classList.add("is-picked");
+  });
+  w.applying = false;
+  w.sig = sig;
+}
+
+// コーナーを選ぶタブ（音源が入っていない枠は押せない。押せない理由も言う）
+function cutFrameTabs(frames) {
+  const box = el("div", "tabs cut-frame-tabs");
+  for (const frame of frames) {
+    const usable = frame.state === "使える";
+    const btn = el("button", `tab${frame.id === state.cutFrame ? " is-active" : ""}`, frame.label);
+    btn.disabled = !usable;
+    btn.title = usable ? "" : "先に「音源を入れる」でこのコーナーに音源を入れてください";
+    btn.onclick = () => { state.cutFrame = frame.id; state.cutPicked = -1; renderMain(); };
+    box.appendChild(btn);
+  }
+  return box;
+}
+
+function numberField(value, label, onCommit) {
+  const input = el("input", "field cut-number");
+  input.type = "number";
+  input.step = "0.01";
+  input.min = "0";
+  input.value = round2(value);
+  input.setAttribute("aria-label", label);
+  input.onclick = (event) => event.stopPropagation();
+  input.onchange = () => onCommit(Number(input.value) || 0);
+  return input;
+}
+
+// 数字の欄で直す（30分の回でもドラッグだけに頼らずに済むように。#85 の6段目・部品14 の一覧を流用）
+function commitCutEdit(frameId, index, key, value) {
+  const rows = cutRows(frameId);
+  const row = rows[index];
+  if (!row) return;
+  const start = key === "start" ? round2(Math.max(0, value)) : row.start;
+  const end = key === "end" ? round2(Math.max(0, value)) : row.end;
+  if (end - start < CUT_MIN) {
+    state.actionError = `カット区間は開始 < 終了・${CUT_MIN}秒以上にしてください`;
+    renderMain();
+    return;
+  }
+  row.start = start;
+  row.end = end;
+  rows.sort((a, b) => a.start - b.start);
+  state.cutPicked = rows.indexOf(row);
+  waveOf("cut").sig = null;   // 波形の帯も、数字の直しに合わせて描き直す
+  renderMain();
+}
+
+function cutList(frameId, total) {
+  const box = el("div", "cut-rows");
+
+  const head = el("div", "cut-row-head");
+  head.append(el("span", null, "開始"), el("span", null, "終了"), el("span", null, "長さ"), el("span"));
+  box.appendChild(head);
+
+  const rows = cutRows(frameId);
+  if (!rows.length) {
+    box.appendChild(el("div", "region-empty",
+      total ? "区間はまだありません。波形の上でドラッグして選びます。端を掴むと伸び縮みします。"
+            : "区間はまだありません。"));
+    return box;
+  }
+
+  rows.forEach((row, index) => {
+    const line = el("div", `cut-row${index === state.cutPicked ? " is-picked" : ""}`);
+    line.onclick = () => { state.cutPicked = index; seekWave("cut", row.start, true); };
+
+    line.append(
+      numberField(row.start, "カット区間の開始（秒）", (v) => commitCutEdit(frameId, index, "start", v)),
+      numberField(row.end, "カット区間の終了（秒）", (v) => commitCutEdit(frameId, index, "end", v)),
+      el("span", "region-range", clock(Math.max(0, row.end - row.start))),
+    );
+
+    const remove = el("button", "btn-icon");
+    remove.innerHTML = icon(SVG.trash);
+    remove.title = "このカット区間を削除";
+    remove.setAttribute("aria-label", "このカット区間を削除");
+    remove.onclick = (event) => {
+      event.stopPropagation();
+      rows.splice(index, 1);
+      state.cutPicked = -1;
+      renderMain();
+    };
+    line.appendChild(remove);
+    box.appendChild(line);
+  });
+  return box;
+}
+
+function cutCard() {
+  const card = el("div", "panel-card");
+  const frames = cutFrameList();
+  const usable = frames.filter((f) => f.state === "使える");
+
+  if (!usable.length) {
+    card.appendChild(el("div", "wave-empty",
+      "音源が入っている枠がありません。先に「音源を入れる」でコーナーに音源を入れてください。"));
+    return card;
+  }
+
+  if (!state.cutFrame || !usable.some((f) => f.id === state.cutFrame)) {
+    state.cutFrame = usable[0].id;
+    state.cutPicked = -1;
+  }
+  card.appendChild(cutFrameTabs(frames));
+
+  const frame = frames.find((f) => f.id === state.cutFrame);
+  ensureCutWork(frame);
+
+  const url = `/api/episodes/${state.selected.name}/timeline-source/main/${encodeURIComponent(frame.name)}`
+    + `?t=${encodeURIComponent(frame.recorded_at || "")}`;
+  const w = ensureWave("cut", { url, regions: true, editable: true });
+  syncCutRegions("cut", cutRows(frame.id));
+  syncWaveCover(w);
+
+  card.appendChild(w.box);
+  const note = waveNote(w);
+  if (note) card.appendChild(note);
+
+  const total = w.duration;
+  const ruler = el("div", "wave-ruler");
+  for (let i = 0; i < 5; i += 1) {
+    ruler.appendChild(el("span", null, clock(total * i / 4)));
+  }
+  const pad = el("div", "wave-player");
+  pad.appendChild(wavePlayer("cut"));
+
+  // 「区間に入ったら終わりへ飛ぶ」程度の仮置き（lead の指示）。言い直しが消えたかを耳で確かめる用
+  const skip = el("label", "cut-skip-toggle");
+  const checkbox = el("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = state.cutSkip;
+  checkbox.onchange = () => { state.cutSkip = checkbox.checked; renderMain(); };
+  skip.append(checkbox, document.createTextNode(
+    "カットした所を飛ばして聴く（言い直しが消えたかを確かめる用。区間に入ったら終わりへ飛びます）"));
+
+  // 保存の作法は部品14（エコー区間）と同じく、section() の見出し脇（right）に1つだけ置く
+  card.append(ruler, pad, skip, cutList(frame.id, total));
+  return card;
+}
+
+function cutSaveRow() {
+  const box = el("div", "segments-actions");
+  const dirty = cutDirty(state.cutFrame);
+  const saving = state.cutSaving === state.cutFrame && state.cutFrame != null;
+
+  const badge = el("span", `save-badge ${dirty ? "is-dirty" : "is-saved"}`);
+  badge.append(el("span", "mark"),
+               document.createTextNode(dirty ? "未保存の変更あり" : "保存済み"));
+
+  const save = el("button", `btn-save ${dirty ? "is-dirty" : "is-saved"}`,
+                  saving ? "保存しています…" : (dirty ? "保存する" : "保存"));
+  save.disabled = !dirty || saving || !state.cutFrame;
+  save.onclick = () => saveCuts(state.cutFrame);
+
+  box.append(badge, save);
+  return box;
+}
+
+async function saveCuts(frameId) {
+  if (!frameId || !cutDirty(frameId) || state.cutSaving) return;
+  const name = state.selected.name;
+  state.cutSaving = frameId;
+  state.actionError = "";
+  renderMain();
+
+  const rows = cutRows(frameId).map((r) => ({ start: r.start, end: r.end }));
+  try {
+    const got = await api(
+      `/api/episodes/${name}/frames/${encodeURIComponent(frameId)}/cuts`,
+      { method: "PUT", body: JSON.stringify({ cuts: rows }) },
+    );
+    // 保存している間に別の回へ移っていたら、この画面（もう表示していない回のもの）には
+    // 書き戻さない（BGM の保存と同じ用心。saveBgm 参照）
+    if (!state.selected || state.selected.name !== name) {
+      state.cutSaving = null;
+      return;
+    }
+    state.frames = got;
+    const saved = ((got.frames || []).find((f) => f.id === frameId) || {}).cuts || [];
+    state.cutsWork[frameId] = saved.map((c) => ({ start: c.start, end: c.end }));
+    state.cutsSaved[frameId] = JSON.stringify(state.cutsWork[frameId]);
+    // カットを変えると出来上がりの長さが変わる（タイムラインの位置・BGMの錨・「古い」の判定）。
+    // 取り直さないとパネルが嘘をつく（#61 と同じ考え方）
+    await loadTimeline(name);
+  } catch (err) {
+    state.actionError = `カットを保存できませんでした: ${err.message}`;
+    state.cutSaving = null;
+    renderMain();
+    return;
+  }
+  state.cutSaving = null;
+  await reload({ keep: name, keepSelected: true });
   renderMain();
 }
 
@@ -3545,6 +3890,8 @@ async function uploadFrame(frameId, file) {
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail || `${res.status}`);
     state.frames = body;
+    // 差し替えるとサーバー側のカットは空に戻る（#216）。作業中の古い直しは持ち越さない
+    forgetCutWork(frameId);
     await loadTimeline(state.selected.name);
   } catch (err) {
     state.actionError = err.message;
@@ -3564,6 +3911,8 @@ async function frameFromObs(frameId, name) {
       `/api/episodes/${state.selected.name}/frames/${encodeURIComponent(frameId)}/from-obs`,
       { method: "POST", body: JSON.stringify({ file: name }) },
     );
+    // 差し替えるとサーバー側のカットは空に戻る（#216）。作業中の古い直しは持ち越さない
+    forgetCutWork(frameId);
     await loadTimeline(state.selected.name);
   } catch (err) {
     state.actionError = err.message;
@@ -3582,6 +3931,8 @@ async function removeFrame(frameId) {
       `/api/episodes/${state.selected.name}/frames/${encodeURIComponent(frameId)}`,
       { method: "DELETE" },
     );
+    // 外すと、その枠のカットはもう意味を持たない。作業中の古い直しは持ち越さない
+    forgetCutWork(frameId);
     await loadTimeline(state.selected.name);
   } catch (err) {
     state.actionError = err.message;
@@ -4484,6 +4835,7 @@ function unsavedThings() {
   try {
     if (echoDirty()) rows.push("エコー区間");
     if (bgmDirty()) rows.push("BGM の位置・音量");
+    if (anyCutDirty()) rows.push("カット区間");
     // まだ確定していない行も数える。確定（Enter / 「この行を確定」）を
     // 通るまで state.texts は変わらないので、打ちかけが黙って消えていた
     if (state.editing >= 0
@@ -4517,6 +4869,14 @@ window.addEventListener("beforeunload", (event) => {
 async function loadFrames(name) {
   state.frames = null;
   state.framesError = "";
+  // 枠の入れ替え・コーナーの変更で id がずれることがあるので、作業中のカットは
+  // 読み直すたびにサーバーの値へ作り直す（#85 の6段目）
+  state.cutsWork = {};
+  state.cutsSaved = {};
+  state.cutFrame = null;
+  state.cutPicked = -1;
+  state.cutSkip = false;
+  state.cutSaving = null;
   try {
     state.frames = await api(`/api/episodes/${name}/frames`);
   } catch (err) {
@@ -4529,6 +4889,10 @@ async function selectEpisode(name) {
   // PR #239 の2回目レビュー・🟡
   if (state.bgmSaving && state.selected && state.selected.name !== name) {
     alert("BGM を保存しています。終わるまで待ってから移ってください");
+    return;
+  }
+  if (state.cutSaving && state.selected && state.selected.name !== name) {
+    alert("カットを保存しています。終わるまで待ってから移ってください");
     return;
   }
   const unsaved = unsavedThings();

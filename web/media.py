@@ -190,9 +190,13 @@ def timeline_source_path(name, lane, filename):
 
 
 def _clip_duration(raw_dir, clip, lane="main"):
-    """生音の長さ。読めなければ (None, 理由) を返す（止めずに、そのクリップにだけ付ける）。
+    """クリップの長さ。読めなければ (None, 理由) を返す（止めずに、そのクリップにだけ付ける）。
 
     `lane` が `main` なら `00_raw`、`bgm`・`se` なら `assets/` から探す（#85 の5段目）。
+
+    **本編（`main`）は、cut edits を当てたあとの長さを返す**（`build.clip_finished_duration`）。
+    生音のままだと、カットがある回で `positions` の位置と BGM の `at` がずれる
+    （#85 の6段目・docs/features.md「時刻は2つ。混ぜない」）。
     """
     found = (_resolve_raw_source(raw_dir, clip["source"]) if lane == "main"
              else _resolve_asset_source(clip["source"]))
@@ -200,17 +204,23 @@ def _clip_duration(raw_dir, clip, lane="main"):
         name = Path(clip["source"]).name or clip["source"]
         return None, f"音源がありません: {name}"
     try:
-        return build.audio_duration(found), None
+        length = build.audio_duration(found)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return None, f"長さが読めません: {str(exc).splitlines()[0][:80]}"
+    if lane == "main":
+        try:
+            length = build.clip_finished_duration(clip, length)
+        except ValueError as exc:
+            return None, str(exc)
+    return length, None
 
 
 def timeline_view(name):
     """`timeline.yml` の並びを、見るだけの形にする（部品はまだ無いので #85 の2段目で決める）。
 
-    **編集点（カット）はまだ工程に繋がっていない**（`web/timeline.py` の docstring・#144）。
-    そのため、いまは生音の長さをそのまま出来上がりの長さとして扱う。**これは仮置き**。
-    カットを工程に当てるようになったら（#85 の6段目）、ここも出来上がりの長さに直す必要がある。
+    **本編クリップの長さ・位置は、出来上がり（cut edits を当てたあと）の長さで出す**
+    （`_clip_duration` が `build.clip_finished_duration` を通す。#85 の6段目）。
+    エコー（`kind: echo`）はまだ工程に繋がっていない（`web/timeline.py` の docstring・7段目）。
 
     `web/timeline.py` の `positions()` は長さが読めないと `EpisodeError` で止まる
     （保存前の検証で使う分にはそれでよい）。ここは見るだけの画面なので、

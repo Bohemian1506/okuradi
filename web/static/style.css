@@ -1044,6 +1044,31 @@ select.field { font-weight: 500; }
 .btn-preview:hover:not(:disabled) { border-color: var(--ink); }
 .btn-preview:disabled { color: var(--disabled); cursor: not-allowed; }
 
+/* ---------------------------------------------------------------- カット（言い直し）（#85 の6段目・仮置き）
+   部品13（波形ビュー）を流用し、区間の一覧は部品14（エコー区間リスト）と同じ骨組みにそろえる。
+   プリセットが無い代わりに、開始・終了を数字で直せる欄を置く（30分の回でも困らないように）。 */
+
+.cut-frame-tabs { padding: 10px 18px 0; flex-wrap: wrap; }
+
+.cut-skip-toggle {
+  display: flex; align-items: center; gap: 8px; padding: 10px 18px 0;
+  font-size: 13px; color: var(--muted); cursor: pointer;
+}
+
+.cut-rows { padding: 10px 18px 14px; display: flex; flex-direction: column; gap: 4px; }
+.cut-row-head, .cut-row {
+  display: grid; grid-template-columns: 110px 110px 90px 1fr 36px;
+  gap: 12px; align-items: center;
+}
+.cut-row-head {
+  padding: 6px 10px 4px;
+  font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--disabled);
+}
+.cut-row { padding: 6px 10px; border-radius: 10px; cursor: pointer; }
+.cut-row:hover { background: var(--cream-dim); }
+.cut-row.is-picked { background: #fdf1e4; box-shadow: inset 3px 0 0 var(--accent); }
+.cut-row .field { max-width: 100px; }
+
 /* ---------------------------------------------------------------- 部品15 整音結果パネル */
 
 .result { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
