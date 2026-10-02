@@ -98,6 +98,15 @@ class Echoes(BaseModel):
     echoes: list[Echo]
 
 
+class CutRange(BaseModel):
+    start: float
+    end: float
+
+
+class FrameCuts(BaseModel):
+    cuts: list[CutRange]
+
+
 class Transcript(BaseModel):
     texts: list[str]
 
@@ -201,6 +210,16 @@ def delete_frame(name: str, frame_id: str):
 @app.delete("/api/episodes/{name}/orphans/{orphan_id}")
 def delete_orphan(name: str, orphan_id: str):
     return _guard(sources.remove_orphan, name, orphan_id)
+
+
+@app.put("/api/episodes/{name}/frames/{frame_id}/cuts")
+def put_frame_cuts(name: str, frame_id: str, body: FrameCuts):
+    """その枠（本編クリップ）のカット（言い直し）を保存する（#85 の6段目）。
+
+    並びを丸ごと置き換える。並び替え・検証は `web/sources.py` の `save_frame_cuts` に任せる。
+    """
+    cuts = [c.model_dump() for c in body.cuts]
+    return _guard(sources.save_frame_cuts, name, frame_id, cuts)
 
 
 @app.get("/api/episodes/{name}/scan")

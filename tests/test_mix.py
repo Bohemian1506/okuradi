@@ -471,6 +471,40 @@ def test_本編の長さが合わなければ断る(ep):
         build.step_mix(ep, CFG)
 
 
+def test_カットがあると位置は出来上がりの長さで計算される(ep):
+    """cut edits があるクリップの後ろの位置は、生音ではなく出来上がりの長さで動く
+
+    （#85 の6段目・docs/features.md「時刻は2つ。混ぜない」）。talk.wav は生で8秒だが、
+    2秒カットするので出来上がりは6秒。曲（bgm）は talk の頭（生音のままなら 4+8=12秒だが、
+    正しくは 4+0=4秒）から鳴るはず。
+    """
+    silence(ep["00_raw"] / "op.wav", 4)
+    silence(ep["00_raw"] / "talk.wav", 8)
+    sine(ep["01_clean"] / "clean.wav", 10, freq=100, amp=0.05)   # 4 + (8-2) = 10秒
+    sine(asset(ep, "bgm.wav"), 2, freq=1000, amp=0.8)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - {id: op, source: op.wav, gap: 0}
+    - id: talk
+      source: talk.wav
+      gap: 0
+      edits: [{start: 1.0, end: 3.0, kind: cut}]
+  bgm:
+    - {id: theme, source: bgm.wav, anchor: talk, at: 0}
+  se: []
+""")
+    write_clean_json(ep)
+
+    build.step_mix(ep, CFG)   # 止まらない（出来上がりの長さで合っている）
+
+    mix = ep["01_mix"] / "mix.wav"
+    before = mean_abs(mix, at=2.0, ms=500)     # op の途中（曲はまだ鳴らない）
+    during = mean_abs(mix, at=5.0, ms=500)     # talk の頭（4秒）から曲が鳴るはず
+
+    assert during > before * 3, "talk の頭（出来上がりで4秒）から曲が鳴っていない"
+
+
 def test_clean_jsonが無ければ確かめずに警告だけ出す(ep, capsys):
     silence(ep["00_raw"] / "op.wav", 4)
     silence(ep["00_raw"] / "talk.wav", 6)

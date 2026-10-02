@@ -143,22 +143,33 @@ def _timeline_sources(ep):
     トップで読むと向きが逆になる（`web/episodes.py` が `build` を読んでいる）。
     **輪になって落ちるかは試したが、落ちなかった**（2026-09-22。どちらの順に読んでも通る）。
     落ちないので必須ではないが、向きを保つために関数の中に置いている。
+
+    **カット（`kind: cut`）は工程に繋がっている**（#85 の6段目。`join_sources` が当てる）。
+    **エコー（`kind: echo`）はまだ**（7段目）。書いてあれば、今までどおり理由を出して止める。
+
+    **音源が1本の枠の回でも、この経路を使う。** 前は「main が2本以上」のときだけ
+    ここを通り、1本なら None（`find_raw` が 00_raw の1本をそのまま返す旧経路）にしていた。
+    ただしそれだと、1本の枠にカットを書いても当たらない。**cut が無い1本の回だけ**、
+    今までどおり None にして旧経路を使う（枠の回でも余計な繋ぎ直しをしないため。
+    `tests/test_join.py` の「タイムラインが1本だけなら今までどおり」が確かめている）。
     """
     from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
     data = timeline.read(ep["dir"])
     if not data:
         return None
     main = data["lanes"]["main"]
-    if len(main) < 2:
+    if not main:
         return None
 
-    # 編集点はまだ工程に繋がっていない。黙って無視すると、書いたのにかからない
-    # （CLAUDE.md「静かに失敗させない」）
-    has_edits = [c["id"] for c in main if c.get("edits")]
-    if has_edits:
+    has_echo = [c["id"] for c in main if any(
+        e.get("kind") == "echo" for e in c.get("edits") or [])]
+    if has_echo:
         raise ValueError(
-            f"編集点（カット・エコー）は、まだ工程に繋がっていません: {'・'.join(has_edits)}。"
-            "いまは音源を順に繋ぐところまでです")
+            f"エコー（{'・'.join(has_echo)}）は、まだ工程に繋がっていません。"
+            "いまはカット・音源を順に繋ぐところまでです")
+
+    if len(main) < 2 and not any(c.get("edits") for c in main):
+        return None
     return main
 
 
@@ -250,6 +261,115 @@ def _clip_source_path(ep, clip, lane="main", cfg=None):
     return found
 
 
+def _clip_cut_plan(clip, total):
+    """このクリップの cut edits（kind: cut）を当てたあと、残す区間の並び。
+
+    `(keeps, cuts)` を返す。`keeps` は残す区間 `[(開始, 終了), ...]`。
+    `cuts` は正規化した削る区間（重なりを統合・範囲外を丸めたもの）。
+    cut が無ければ `([(0.0, total)], [])`（全部残す）。
+
+    `normalize_cuts` / `invert_ranges` は `step_cut`（config.yml の `cuts`）と同じ関数を使う。
+    考え方は同じで、区間の並びが `edits` に変わっただけ（#85 の6段目）。
+    """
+    cuts = [[e["start"], e["end"]] for e in clip.get("edits") or [] if e.get("kind") == "cut"]
+    if not cuts:
+        return [(0.0, total)], []
+    normalized = normalize_cuts(cuts, total)
+    keeps = invert_ranges(normalized, total)
+    if not keeps:
+        raise ValueError(f"{clip['id']} はカット指定で音声が全部消えます")
+    return keeps, normalized
+
+
+def clip_finished_duration(clip, raw_seconds):
+    """このクリップの、cut edits を当てたあと（出来上がり）の長さ。
+
+    **timeline.positions に渡すのはこの長さ**（生音の長さではない。
+    docs/features.md「時刻は2つ。混ぜない」）。BGM の `at` は出来上がりの時刻なので、
+    ここで生音の長さを渡すと、カットがある回で BGM の位置がずれる（#85 の6段目）。
+    """
+    keeps, _ = _clip_cut_plan(clip, raw_seconds)
+    return round(sum(e - s for s, e in keeps), 3)
+
+
+def framed_cut_snapshot(ep_dir):
+    """枠の回で、いまの本編クリップの cut edits（`kind: cut`）のスナップショットを返す。
+
+    `{クリップの id: [[start, end], ...]}`。`timeline.yml` が無い回（枠でない回）は `{}`。
+
+    `step_scan`・`step_clean` がこれを結果の json（`scan.json`・`clean.json`）に
+    `cuts` として残し、`web/episodes.py` の `step_states` が「古い」を判定するのに使う
+    （#85 の6段目のレビュー対応）。**`timeline.yml` の更新日時では見ない。** BGM・SE の
+    保存でも更新日時は動くので、それだけで「古い」にすると本編を触っていなくても古くなる。
+    比べるのは中身（カットの区間そのもの）。
+    """
+    from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
+    data = timeline.read(ep_dir)
+    if not data:
+        return {}
+    out = {}
+    for clip in data["lanes"]["main"]:
+        cuts = sorted(
+            [round(float(e["start"]), 3), round(float(e["end"]), 3)]
+            for e in clip.get("edits") or [] if e.get("kind") == "cut"
+        )
+        out[clip["id"]] = cuts
+    return out
+
+
+def framed_cuts_changed(ep_dir, recorded):
+    """いまの本編クリップの cut edits（`framed_cut_snapshot`）が、記録した `recorded` と違うか。
+
+    `web/episodes.py` の `step_states`（下見・整音の「古い」）と、`web/media.py` の
+    `_why_stale`（整音結果パネルの理由）の両方から呼ぶ。決まりを1か所にまとめる
+    （#85 の6段目のレビュー対応）。
+
+    **記録があるかどうかで分ける**（#85 の6段目の2回目のレビュー）。
+
+    - 記録が無い・壊れている: いまカットがあるなら「違う」（安全側に倒す。#225 の
+      `_cut_wav_matches` と同じ考え方）。いまも無ければ「違わない」（カットの無い回・
+      枠でない回まで、記録が無いというだけで古い扱いにしないため）
+    - 記録がある: カットのある枠だけを比べる。**カットを空に戻した・カットのあった枠を
+      外したときも「違う」になる**（前は、いまカットが無ければ記録を見ずに「違わない」を
+      返していて、カットを当てたままの音が「完了」に見えた）。カットの無い枠は比べる前に
+      落とすので、枠を足した・外しただけでは変わらない
+    """
+    current = framed_cut_snapshot(ep_dir)
+    if not isinstance(recorded, dict):
+        return any(current.values())
+
+    def with_cuts(snapshot):
+        return {clip_id: cuts for clip_id, cuts in snapshot.items() if cuts}
+
+    return with_cuts(recorded) != with_cuts(current)
+
+
+def _clip_cut_graph(input_index, clip, total):
+    """1本のクリップの cut edits を当てるフィルタの並みと、出力ラベルを作る。
+
+    cut が無ければ `aformat` だけ。あれば `atrim` で残す区間を切り出し、`concat` で
+    繋ぎ直す（`step_cut` と同じ考え方）。`join_sources` の外側の concat に渡す前に、
+    クリップ1本ぶんだけで完結させる。
+
+    戻り値: `(フィルタの行の並び, 出力ラベル, 削った秒数, カットの区間数)`
+    """
+    keeps, cuts = _clip_cut_plan(clip, total)
+    label = f"a{input_index}"
+    if not cuts:
+        return ([f"[{input_index}:a]aformat=sample_rates=48000:channel_layouts=mono[{label}]"],
+                label, 0.0, 0)
+
+    lines, sub_labels = [], []
+    for k, (s, e) in enumerate(keeps):
+        sub_label = f"c{input_index}_{k}"
+        lines.append(f"[{input_index}:a]atrim=start={s}:end={e},asetpts=PTS-STARTPTS,"
+                      f"aformat=sample_rates=48000:channel_layouts=mono[{sub_label}]")
+        sub_labels.append(f"[{sub_label}]")
+    lines.append(f"{''.join(sub_labels)}concat=n={len(sub_labels)}:v=0:a=1[{label}]")
+    removed = sum(e - s for s, e in cuts)
+    return lines, label, removed, len(cuts)
+
+
 def join_sources(ep, clips, cfg=None):
     """timeline.yml の並びどおりに音源を繋いで1本にする。
 
@@ -260,6 +380,9 @@ def join_sources(ep, clips, cfg=None):
     並んでいる音源が録画（`VIDEO_EXTS`）のときは、`find_raw` と同じ決まりで
     音声トラックを選ぶ（`_track_wav`）。ここで見ないと、録画1本のときと
     2本以上のときでトラックの選び方が食い違う（#85）。
+
+    **クリップごとの cut edits は、繋ぐ前に当てる**（#85 の6段目。`_clip_cut_graph`）。
+    エコー（`kind: echo`）は `_timeline_sources` が先に断るので、ここには来ない。
     """
     raw_dir = ep["00_raw"]
     dst = raw_dir / JOINED
@@ -267,7 +390,8 @@ def join_sources(ep, clips, cfg=None):
 
     # **timeline.yml 自身の更新日時も見る。** 音源のファイルだけ見ていると、
     # 並びを入れ替えたときと、行を1つ消したときに繋ぎ直されない
-    # （どちらも元のファイルは変わらないため。2026-09-22 にテストで見つかった）
+    # （どちらも元のファイルは変わらないため。2026-09-22 にテストで見つかった）。
+    # **カット（edits）だけ変えたときも同じ**（timeline.yml を書き直すので拾える）。
     from web import timeline          # noqa: PLC0415（依存の向きを保つためここで読む）
     stamps = [f.stat().st_mtime for f in parts]
     written = timeline.path(ep["dir"])
@@ -284,22 +408,33 @@ def join_sources(ep, clips, cfg=None):
     # **挟まないと、positions が出す時刻と実際の音が食い違う**
     # （計算は gap を足しているのに、音には入っていない。2026-09-22 に実測）
     cmd = ["ffmpeg", "-y"]
-    labels, gaps = [], 0
+    steps, final_labels = [], []
+    input_index, gaps = 0, 0
+    cut_clips, cut_removed, cut_count = 0, 0.0, 0
+
     for clip, found in zip(clips, parts):
         if clip["gap"] > 0:
             cmd += ["-f", "lavfi", "-i",
                     f"anullsrc=r=48000:cl=mono:d={clip['gap']}"]
-            labels.append(None)
+            steps.append(
+                f"[{input_index}:a]aformat=sample_rates=48000:channel_layouts=mono[a{input_index}]")
+            final_labels.append(f"a{input_index}")
+            input_index += 1
             gaps += 1
-        cmd += ["-i", str(found)]
-        labels.append(found)
 
-    steps, names = [], []
-    for i, found in enumerate(labels):
-        steps.append(f"[{i}:a]aformat=sample_rates=48000:channel_layouts=mono[a{i}]")
-        names.append(f"[a{i}]")
-    graph = ";".join(steps) + ";" + "".join(names)
-    graph += f"concat=n={len(labels)}:v=0:a=1[out]"
+        cmd += ["-i", str(found)]
+        total = audio_duration(found)
+        lines, label, removed, count = _clip_cut_graph(input_index, clip, total)
+        steps += lines
+        final_labels.append(label)
+        if count:
+            cut_clips += 1
+            cut_removed += removed
+            cut_count += count
+        input_index += 1
+
+    graph = ";".join(steps) + ";" + "".join(f"[{name}]" for name in final_labels)
+    graph += f"concat=n={len(final_labels)}:v=0:a=1[out]"
 
     cmd += ["-filter_complex", graph, "-map", "[out]",
             "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(dst)]
@@ -307,14 +442,47 @@ def join_sources(ep, clips, cfg=None):
     made = f"{len(parts)}本を繋ぎました"
     if gaps:
         made += f"（間を{gaps}か所はさみました）"
+    if cut_count:
+        made += f"（カット {cut_count}か所・{cut_clips}本のクリップ・{cut_removed:.1f}秒）"
     print(f"-> {dst}  ({made} / {hhmmss(audio_duration(dst))})")
     return dst
+
+
+def join_layout(ep, clips, cfg=None):
+    """`join_sources` が繋いだ音の中で、各クリップがどこに来るか（下見の並びの記録）。
+
+    枠の回で下見（`step_scan`）が読む音は、クリップごとにカットを当てて繋いだ音。
+    画面はこれで「繋いだ音の t 秒 → どのクリップの生音の何秒」を変換する
+    （2026-09-27・ユーザーの判断・案A。#85 の6段目のレビュー対応）。
+
+    返すのは `[{"id": クリップの id, "start": 繋いだ音での開始秒, "end": 終了秒,
+    "keeps": [[生音の開始, 生音の終了], ...]}]`。`keeps` はそのクリップで残した生音の区間
+    （カットが無ければ `[[0, 生音の長さ]]`）。`join_sources` と同じ並べ方（gap を先に足し、
+    次にクリップの出来上がりの長さを足す）をたどるので、片方だけ直してずれることがない。
+    """
+    layout = []
+    at = 0.0
+    for clip in clips:
+        at = round(at + clip["gap"], 3)
+        found = _clip_source_path(ep, clip, "main", cfg)
+        total = _clip_audio_duration(clip, found)
+        keeps, _ = _clip_cut_plan(clip, total)
+        length = round(sum(e - s for s, e in keeps), 3)
+        layout.append({
+            "id": clip["id"],
+            "start": round(at, 3),
+            "end": round(at + length, 3),
+            "keeps": [[round(s, 3), round(e, 3)] for s, e in keeps],
+        })
+        at = round(at + length, 3)
+    return layout
 
 
 def find_raw(ep, cfg=None):
     """収録音声を返す。
 
-    timeline.yml が音源を2本以上並べていれば、繋いだ1本を返す。
+    `timeline.yml` があり、音源が2本以上、または1本でもカット（`kind: cut` の edits）が
+    あれば、繋いだ1本を返す（#85 の6段目。`_timeline_sources` を見よ）。
     OBS の録画ファイルが置いてあれば、音声だけを「録画名.trackN.wav」に取り出してそれを返す。
     録画が wav より新しければ取り出し直す。
     """
@@ -454,6 +622,18 @@ def step_scan(ep, cfg):
     data = transcribe_file(src, cfg)
     data["source"] = src.name
     data["duration"] = audio_duration(src)
+
+    # **枠の回だけ、いま当てたカットの記録と、繋いだ音の中でクリップがどこに来るかを残す。**
+    # 前者は `web/episodes.py` の `step_states` が「古い」を判定するのに使う（#85 の6段目の
+    # レビュー対応）。後者（layout）は画面が「下見の行 → カットの波形」へ飛ぶときに使う
+    # （2026-09-27・ユーザーの判断・案A）。枠でない回は両方とも書かない
+    data["cuts"] = framed_cut_snapshot(ep["dir"])
+    if _has_timeline(ep):
+        from web import timeline      # noqa: PLC0415（依存の向きを保つためここで読む）
+        main = timeline.read(ep["dir"])["lanes"]["main"]
+        if main:
+            data["layout"] = join_layout(ep, main, cfg)
+
     dst.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"-> {dst}  ({len(data['segments'])}セグメント)")
 
@@ -490,6 +670,17 @@ def invert_ranges(cuts, total):
     return keeps
 
 
+def _write_cut_record(ep, cuts):
+    """`step_cut` が当てた cuts を残す（#225）。
+
+    `step_clean` が、これといまの `config.yml` の `cuts` を比べて、
+    古い `01_cut/cut.wav` を使い続けないかを確かめる（`_cut_wav_matches`）。
+    """
+    (ep["01_cut"] / "cut.json").write_text(json.dumps({
+        "cuts": [list(c) for c in cuts],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def step_cut(ep, cfg):
     src = find_raw(ep, cfg)
     dst = ep["01_cut"] / "cut.wav"
@@ -498,6 +689,7 @@ def step_cut(ep, cfg):
 
     if not cuts:
         run(["ffmpeg", "-y", "-i", str(src), "-ar", "48000", "-ac", "1", str(dst)])
+        _write_cut_record(ep, cuts)
         print(f"-> {dst}  (カット指定なし / {hhmmss(total)})")
         return
 
@@ -513,10 +705,39 @@ def step_cut(ep, cfg):
 
     run(["ffmpeg", "-y", "-i", str(src), "-filter_complex", graph,
          "-map", "[out]", "-ar", "48000", "-ac", "1", str(dst)])
+    _write_cut_record(ep, cuts)
 
     removed = sum(e - s for s, e in cuts)
     print(f"-> {dst}  ({len(cuts)}箇所 / {removed:.1f}秒カット / "
           f"{hhmmss(total)} -> {hhmmss(total - removed)})")
+
+
+def _cut_wav_matches(ep, raw, cfg):
+    """`01_cut/cut.wav` が、いまの `config.yml` の `cuts` と合っているか（#225）。
+
+    `01_cut/cut.json`（`_write_cut_record`）に残した cuts と、いまの `cuts` を
+    同じ `normalize_cuts` にかけて比べる。
+
+    戻り値は3つ: `True`（合っている）/ `False`（合っていない）/ `None`（記録が無い、
+    または読めないので分からない）。**`None` と `False` は呼び出し側で言うことが違う**
+    （#225 のあとのレビューで見つかった）。記録が無いだけなのに「cuts を変えたので」と
+    言うと、実際には変えていない回（前のバージョンで作った `cut.wav` が残っているだけ）
+    でも事実と違う理由が出る。前のバージョンで作った `cut.wav` や、手で作ったファイルは
+    安全側に倒し（`00_raw` を使い直す）、理由だけ「記録が無い」に変える。
+    """
+    record = ep["01_cut"] / "cut.json"
+    if not record.exists():
+        return None
+    try:
+        saved = json.loads(record.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    try:
+        total = audio_duration(raw)
+        now = [list(c) for c in normalize_cuts(cfg.get("cuts") or [], total)]
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
+    return saved.get("cuts") == now
 
 
 # ---------------------------------------------------------------- 03. 整音
@@ -667,20 +888,49 @@ def echo_positions(regions, total):
 
 
 def step_clean(ep, cfg):
-    src = ep["01_cut"] / "cut.wav"
-    if not src.exists():
-        src = find_raw(ep, cfg)
-        print("(カット未実行のため 00_raw をそのまま使います)")
-    head = ep["01_clean"] / "head.wav"
-    trimmed = ep["01_clean"] / "trimmed.wav"
-    dst = ep["01_clean"] / "clean.wav"
-
-    a = cfg.get("audio", {})
     # **枠の回（timeline.yml がある回）は、頭の無音を削らない。** OP は 0:00〜0:15 が
     # 曲だけで、喋り手はヘッドホンで曲を聞きながら黙っている。頭を削ると、曲と喋りの
     # 位置が録音の外では取り戻せない（#85 の4段目・2026-09-26 の決定）。
     # timeline.yml が無い回（ep01 など）は今までどおり前後を削る。
     framed = _has_timeline(ep)
+
+    # **枠の回では 01_cut/cut.wav を見ない**（#225）。カットは timeline.yml の edits で、
+    # `find_raw`（`join_sources`）がもう当てている。config.yml の `cuts`（`01_cut`）は
+    # 枠でない回のためのもの。
+    cut_wav = ep["01_cut"] / "cut.wav"
+    if framed:
+        # **config.yml の cuts が空でないのに、使わない。** 枠に切り替わったのに前のバージョンの
+        # `cuts` が残っている・戻し忘れ、を静かに無視しない（レビュー指摘）
+        if cfg.get("cuts"):
+            print(f"(枠の回なので、config.yml の cuts（{len(cfg['cuts'])}件）は使いません。"
+                  "timeline.yml の本編クリップのカット（言い直し）を使います)")
+        src = find_raw(ep, cfg)
+    elif cut_wav.exists():
+        raw = find_raw(ep, cfg)
+        matches = _cut_wav_matches(ep, raw, cfg)
+        if matches:
+            src = cut_wav
+        else:
+            # **cuts を空に戻しても、古い cut.wav を使い続けない**（#225）。
+            # 黙って切り替えると気づけないので、理由をログに出す。
+            # **記録（cut.json）が無いだけなのに「cuts を変えたので」と事実と違う理由を
+            # 出さない**（レビュー指摘。ep01 のような、記録の無い古い cut.wav で起きた）
+            src = raw
+            if matches is None:
+                print("(01_cut/cut.wav に記録（cut.json）が無いので、使い直します"
+                      "（00_raw から作り直します）)")
+            else:
+                print("(config.yml の cuts を変えたので、古い 01_cut/cut.wav ではなく "
+                      "00_raw を使い直します)")
+    else:
+        src = find_raw(ep, cfg)
+        print("(カット未実行のため 00_raw をそのまま使います)")
+
+    head = ep["01_clean"] / "head.wav"
+    trimmed = ep["01_clean"] / "trimmed.wav"
+    dst = ep["01_clean"] / "clean.wav"
+
+    a = cfg.get("audio", {})
 
     # 1回目: ノイズ低減と、頭のトリム（枠の回では飛ばす）。
     trim = "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB"
@@ -740,6 +990,10 @@ def step_clean(ep, cfg):
         "framed": framed,
         "target_lufs": a.get("target_lufs", -14),
         "echoes": [{"start": s, "end": e, "preset": p} for s, e, p in regions],
+        # 枠の回で、いま当てたカットの記録（#85 の6段目のレビュー対応）。
+        # `web/episodes.py` の `step_states` が、いまの本編クリップの cut edits と
+        # 比べて「古い」を判定する
+        "cuts": framed_cut_snapshot(ep["dir"]),
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -844,12 +1098,13 @@ def _clip_audio_duration(clip, path):
 
 
 def _check_mix_positions(ep, main, durations):
-    """本編クリップの生の長さの積み上げが、実際の clean.wav の長さと合っているか。
+    """本編クリップの出来上がりの長さの積み上げが、実際の clean.wav の長さと合っているか。
 
-    合っていないと、`positions()` が出す位置と実際の音がずれる。**cut.wav が
-    あるかどうかでは判定しない**（`step_cut` は cuts が空でも毎回 cut.wav を書くので、
-    それだけで判定すると、カットを1つも使っていない回まで止まってしまう
-    ＝2026-09-26 のレビューで見つかった不具合）。
+    **`durations` は出来上がり（cut edits を当てたあと）の長さ**（`clip_finished_duration`。
+    生音の長さではない。#85 の6段目）。合っていないと、`positions()` が出す位置と
+    実際の音がずれる。**cut.wav があるかどうかでは判定しない**（`step_cut` は cuts が
+    空でも毎回 cut.wav を書くので、それだけで判定すると、カットを1つも使っていない回まで
+    止まってしまう＝2026-09-26 のレビューで見つかった不具合）。
     """
     clean_json = _read_clean_json(ep)
     if not clean_json or "head_removed" not in clean_json or "tail_removed" not in clean_json:
@@ -857,15 +1112,14 @@ def _check_mix_positions(ep, main, durations):
               "整音をやり直すと確かめられるようになります)", flush=True)
         return
 
-    raw_total = sum(durations[clip["id"]] + clip["gap"] for clip in main)
-    expected = raw_total - clean_json["head_removed"] - clean_json["tail_removed"]
+    naive_total = sum(durations[clip["id"]] + clip["gap"] for clip in main)
+    expected = naive_total - clean_json["head_removed"] - clean_json["tail_removed"]
     clean_total = audio_duration(ep["01_clean"] / "clean.wav")
     if abs(expected - clean_total) > MIX_POSITION_TOLERANCE:
         raise ValueError(
-            f"本編の長さが合いません（生の長さからの見積もり {hhmmss(expected)} / "
+            f"本編の長さが合いません（出来上がりの長さからの見積もり {hhmmss(expected)} / "
             f"実際の clean.wav {hhmmss(clean_total)}）。カットや config.yml の "
-            "エコーで長さが変わった可能性があります。位置の変換はまだ実装していません"
-            "（#85 の6段目）。"
+            "エコーで長さが変わった可能性があります。"
         )
 
 
@@ -877,8 +1131,9 @@ def step_mix(ep, cfg):
     - 重ねるのは `amix=duration=first:normalize=0`（#79 で実測。どちらも既定値だと
       危ない。既定だと尺が伸びる／喋りに被っていない所まで音量が下がる）
     - 位置は `web/timeline.py` の `positions`（錨のクリップの先頭 + `at`）。渡す長さは
-      **clean.wav の時間軸に合う長さ**（`step_clean` は頭を削らないので、本編クリップの
-      生の長さ + gap でそのまま出る。尻を削った分は最後のクリップの末尾だけに効く）
+      **出来上がり（cut edits を当てたあと）の長さ**（`clip_finished_duration`。
+      `step_clean` は頭を削らないので、本編クリップの出来上がりの長さ + gap でそのまま出る。
+      尻を削った分は最後のクリップの末尾だけに効く。#85 の6段目）
     """
     src = ep["01_clean"] / "clean.wav"
     if not src.exists():
@@ -903,8 +1158,10 @@ def step_mix(ep, cfg):
         return
 
     main = data["lanes"]["main"]
-    durations = {clip["id"]: _clip_audio_duration(clip, _clip_source_path(ep, clip, "main", cfg))
-                 for clip in main}
+    durations = {}
+    for clip in main:
+        raw_seconds = _clip_audio_duration(clip, _clip_source_path(ep, clip, "main", cfg))
+        durations[clip["id"]] = clip_finished_duration(clip, raw_seconds)
     # **位置がずれていないかは、長さで確かめる**（cut.wav の有無では判定しない。上を参照）
     _check_mix_positions(ep, main, durations)
     positions = timeline.positions(data, durations)

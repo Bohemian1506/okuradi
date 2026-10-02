@@ -658,3 +658,64 @@ def test_bgmを消せる(framed_with_op):
 def test_無いbgmを消すと断る(framed_with_op):
     with pytest.raises(episodes.EpisodeError, match="その BGM がありません"):
         sources.remove_bgm("ep01", "no-such")
+
+
+# ---------------------------------------------------------------- カット（言い直し）（#85 の6段目）
+
+def test_カットを保存すると枠に反映される(framed_with_op):
+    got = sources.save_frame_cuts("ep01", "op", [{"start": 1, "end": 2}])
+    op = next(f for f in got["frames"] if f["id"] == "op")
+    assert op["cuts"] == [{"start": 1.0, "end": 2.0}]
+
+    data = timeline.read(framed_with_op)
+    clip = next(c for c in data["lanes"]["main"] if c["id"] == "op")
+    assert clip["edits"] == [{"kind": "cut", "start": 1.0, "end": 2.0}]
+
+
+def test_カットを並べ直して保存できる(framed_with_op):
+    got = sources.save_frame_cuts(
+        "ep01", "op", [{"start": 10, "end": 12}, {"start": 1, "end": 2}])
+    op = next(f for f in got["frames"] if f["id"] == "op")
+    assert op["cuts"] == [{"start": 1.0, "end": 2.0}, {"start": 10.0, "end": 12.0}]
+
+
+def test_カットを保存してもエコーは残る(framed_with_op):
+    data = timeline.read(framed_with_op)
+    data["lanes"]["main"][0]["edits"] = [
+        {"kind": "echo", "start": 0.5, "end": 1.0, "preset": "light"}]
+    timeline.save(framed_with_op, data)
+
+    sources.save_frame_cuts("ep01", "op", [{"start": 2, "end": 3}])
+
+    after = timeline.read(framed_with_op)
+    clip = next(c for c in after["lanes"]["main"] if c["id"] == "op")
+    kinds = sorted(e["kind"] for e in clip["edits"])
+    assert kinds == ["cut", "echo"]
+
+
+def test_カットは空にして消せる(framed_with_op):
+    sources.save_frame_cuts("ep01", "op", [{"start": 1, "end": 2}])
+    got = sources.save_frame_cuts("ep01", "op", [])
+    op = next(f for f in got["frames"] if f["id"] == "op")
+    assert op["cuts"] == []
+
+
+def test_開始が終了より後だと断る(framed_with_op):
+    with pytest.raises(episodes.EpisodeError, match="終了が開始より後"):
+        sources.save_frame_cuts("ep01", "op", [{"start": 5, "end": 2}])
+
+
+def test_生音の長さを超えると断る(framed_with_op):
+    # `here` フィクスチャで duration_of は 59.0 に固定している
+    with pytest.raises(episodes.EpisodeError, match="生音の長さをはみ出しています"):
+        sources.save_frame_cuts("ep01", "op", [{"start": 50, "end": 100}])
+
+
+def test_音源がない枠には保存できない(framed):
+    with pytest.raises(episodes.EpisodeError, match="その枠に音源がありません"):
+        sources.save_frame_cuts("ep01", "imasara", [{"start": 1, "end": 2}])
+
+
+def test_知らない枠のカットは断る(framed):
+    with pytest.raises(episodes.EpisodeError, match="その枠がありません"):
+        sources.save_frame_cuts("ep01", "ed", [{"start": 1, "end": 2}])

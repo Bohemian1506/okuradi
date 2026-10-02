@@ -279,16 +279,27 @@ def _resolve_frame_source(raw_dir, source):
     return found
 
 
+def _frame_cuts(clip):
+    """このクリップの cut edits（`kind: cut`）だけを、画面が使う形にして返す（#85 の6段目）。
+
+    エコー（`kind: echo`）は含めない。まだ工程に繋がっていないので、画面もまだ扱わない（7段目）。
+    """
+    return [{"start": e["start"], "end": e["end"]}
+            for e in (clip.get("edits") or []) if e.get("kind") == "cut"]
+
+
 def _frame_source_info(raw_dir, clip):
     """枠に入っている音源の様子（部品10 収録ファイルカードと同じ形）。
 
     `edits`（カットの件数）も付ける。差し替える前に「これも消えます」と言うため（#216 のレビュー）。
+    `cuts`（区間そのもの）は、コーナーを選んだときに波形へ重ねて出すため（#85 の6段目）。
     """
     edits = len(clip.get("edits") or [])
+    cuts = _frame_cuts(clip)
     found = _resolve_frame_source(raw_dir, clip.get("source"))
     if not found:
         name = Path(clip.get("source") or "").name or clip.get("source")
-        return {"state": "エラー", "error": f"音源がありません: {name}", "edits": edits}
+        return {"state": "エラー", "error": f"音源がありません: {name}", "edits": edits, "cuts": cuts}
     seconds = duration_of(found)
     kind = "OBSの録画" if found.suffix.lower() in build.VIDEO_EXTS else found.suffix.lstrip(".")
     return {
@@ -299,6 +310,7 @@ def _frame_source_info(raw_dir, clip):
         "recorded_at": datetime.fromtimestamp(found.stat().st_mtime).strftime("%Y/%m/%d %H:%M"),
         "from_video": found.suffix.lower() in build.VIDEO_EXTS,
         "edits": edits,
+        "cuts": cuts,
     }
 
 
@@ -565,6 +577,70 @@ def remove_orphan(name, orphan_id):
 
     _clear_stem(ep_dir, Path(clip["source"]).stem)
     timeline.save(ep_dir, planned)
+    return frames_view(name)
+
+
+# ---------------------------------------------------------------- カット（言い直し）（#85 の6段目）
+#
+# 画面ではコーナーを選び、そのコーナーの生音の波形の上で区間を引く（案A・2026-09-27）。
+# 波形そのものは既存の `/timeline-source/main/<ファイル名>`（`frames_view` が返す `name`
+# から組み立てる）を使う。ここは、引いた区間（cut edits）を保存する窓口。
+#
+# **保存は明示的**（エコー・BGM と同じ作法）。画面は「保存する」を押したときにまとめて送る想定。
+# 並びを丸ごと置き換える形にする（PUT）。エコー（`kind: echo`）の edits はそのまま残す
+# （まだ工程に繋がっていない。7段目）。
+
+
+def save_frame_cuts(name, frame_id, cuts):
+    """その枠（本編クリップ）の cut edits を保存する。
+
+    検証は2段階（`timeline.py` の決まりをそのまま使う）:
+      1. `timeline.validate`（`_ranges`）: 開始 < 終了、開始で並べ直す
+      2. `timeline.check_edits`: 生音の長さを超えていないか
+
+    `check_edits` は本編クリップ全部の生音の長さを求めるので、まとめて読む。
+    **枠にある音源はどれも実在するはず**（枠は音源を置くまで `main` に現れないため。
+    `_planned_main` を参照）なので、ここで初めて音源が無いと分かったら、
+    ファイルが後から消えたなどの想定外として理由を出して止める。
+    """
+    ep_dir = episodes.resolve(name)
+    _validate_frame_id(ep_dir, frame_id)
+    data = _base_timeline(ep_dir)
+    main = data["lanes"]["main"]
+    index = next((i for i, c in enumerate(main) if c["id"] == frame_id), None)
+    if index is None:
+        raise episodes.EpisodeError(f"その枠に音源がありません: {frame_id}")
+
+    kept_echo = [e for e in (main[index].get("edits") or []) if e.get("kind") == "echo"]
+    made_edits = kept_echo + [
+        {"kind": "cut", "start": c["start"], "end": c["end"]} for c in cuts
+    ]
+    new_main = list(main)
+    new_main[index] = {**main[index], "edits": made_edits}
+    new_data = {
+        "version": timeline.VERSION,
+        "lanes": {
+            "main": new_main,
+            "bgm": data["lanes"]["bgm"],
+            "se": data["lanes"]["se"],
+        },
+    }
+    validated = timeline.validate(new_data)   # 開始 < 終了、並べ直し
+
+    raw_dir = ep_dir / "00_raw"
+    durations = {}
+    for clip in validated["lanes"]["main"]:
+        found = _resolve_frame_source(raw_dir, clip.get("source"))
+        if not found:
+            name_ = Path(clip.get("source") or "").name or clip.get("source")
+            raise episodes.EpisodeError(f"{clip['id']} の音源がありません: {name_}")
+        seconds = duration_of(found)
+        if seconds is None:
+            raise episodes.EpisodeError(f"{clip['id']} の生音の長さが読めません")
+        durations[clip["id"]] = seconds
+    timeline.check_edits(validated, durations)   # 生音の長さを超えていないか
+
+    timeline.save(ep_dir, validated)
     return frames_view(name)
 
 

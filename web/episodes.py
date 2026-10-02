@@ -4,6 +4,7 @@ build.py の関数をそのまま使う皮。処理の実体は build.py 側に�
 """
 
 import copy
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -186,9 +187,36 @@ def step_states(ep_dir, cfg):
             stale = any(mtimes[d] is not None and mtimes[d] > mine for d in deps)
             if key == "mix" and timeline_mtime is not None and timeline_mtime > mine:
                 stale = True
+            # **下見・整音は、いまの本編クリップの cut edits と、当てたときの記録が
+            # 違えば「古い」にする。** `timeline.yml` の更新日時では見ない（BGM・SE の
+            # 保存だけでも動くため）。中身（カットの区間そのもの）で比べる
+            # （#85 の6段目のレビュー対応。#225 の cut.json と同じ考え方）
+            if key in ("scan", "clean") and framed and _framed_cuts_stale(ep_dir, key):
+                stale = True
             row["state"] = "古い" if stale else "完了"
         states.append(row)
     return states
+
+
+# scan・clean それぞれの「いま当てたカットの記録」を持つファイル。
+# `clean` は成果物そのもの（`artifact()` が見るのは `clean.wav`）とは別に、
+# 隣の `clean.json` へ残している（`build.step_clean` を見よ）
+_CUTS_RECORD = {
+    "scan": lambda ep_dir: ep_dir / "02_text" / "scan.json",
+    "clean": lambda ep_dir: ep_dir / "01_clean" / "clean.json",
+}
+
+
+def _framed_cuts_stale(ep_dir, key):
+    """`scan.json`・`clean.json` に残っているカットの記録が、いまの本編クリップの
+    cut edits と違うか（`build.framed_cuts_changed` を呼ぶ。`web/media.py` の
+    `_why_stale` と決まりを1か所にまとめる）。
+    """
+    try:
+        recorded = json.loads(_CUTS_RECORD[key](ep_dir).read_text(encoding="utf-8")).get("cuts")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        recorded = None
+    return build.framed_cuts_changed(ep_dir, recorded)
 
 
 def _why_not(missing):

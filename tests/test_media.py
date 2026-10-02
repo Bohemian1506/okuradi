@@ -48,6 +48,24 @@ def test_壊れた下見は理由を言って断る(ep):
         media.read_scan("ep01")
 
 
+def test_下見にlayoutがあれば返す(ep):
+    """枠の回の下見は、下見の並び（layout）も持つ（#85 の6段目のレビュー対応）。"""
+    write_scan(ep)
+    data = json.loads((ep / "02_text" / "scan.json").read_text(encoding="utf-8"))
+    data["layout"] = [{"id": "a", "start": 0.0, "end": 5.0, "keeps": [[0.0, 5.0]]}]
+    (ep / "02_text" / "scan.json").write_text(json.dumps(data), encoding="utf-8")
+
+    got = media.read_scan("ep01")
+    assert got["layout"] == [{"id": "a", "start": 0.0, "end": 5.0, "keeps": [[0.0, 5.0]]}]
+
+
+def test_layoutが無い古い記録では返さない(ep):
+    """枠でない回・この変更より前に作った scan.json には layout が無い。無い物を作らない。"""
+    write_scan(ep)
+    got = media.read_scan("ep01")
+    assert "layout" not in got
+
+
 # ---------------------------------------------------------------- 音声
 
 def test_下見の音は下見をかけた音そのもの(ep):
@@ -256,6 +274,56 @@ def test_音源を差し替えると古いになる(ep):
     got = media.clean_result("ep01")
     assert got["state"] == "古い"
     assert "音源" in got["stale_reason"]
+
+
+def timeline_yml_with_cuts(ep_dir, cuts=()):
+    """本編クリップ1本（id: a）に、渡した cut edits を付けた timeline.yml（#85 の6段目）。"""
+    edits = "".join(f"        - {{start: {s}, end: {e}, kind: cut}}\n" for s, e in cuts)
+    body = (
+        "version: 1\nlanes:\n  main:\n    - id: a\n      source: a.wav\n      gap: 0\n"
+        + ("      edits:\n" + edits if cuts else "      edits: []\n")
+        + "  bgm: []\n  se: []\n"
+    )
+    (ep_dir / "timeline.yml").write_text(body, encoding="utf-8")
+
+
+def test_カットを変えると整音結果が古いになる(ep):
+    timeline_yml_with_cuts(ep, [(1.0, 2.0)])
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(
+        json.dumps({"duration": 10.0, "cuts": {"a": []}}), encoding="utf-8")
+
+    got = media.clean_result("ep01")
+    assert got["state"] == "古い"
+    assert "カット" in got["stale_reason"]
+
+
+def test_カットを空に戻すと整音結果が古いになる(ep):
+    timeline_yml_with_cuts(ep, [])
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(
+        json.dumps({"duration": 10.0, "cuts": {"a": [[1.0, 2.0]]}}), encoding="utf-8")
+
+    got = media.clean_result("ep01")
+    assert got["state"] == "古い"
+    assert "カット" in got["stale_reason"]
+
+
+def test_カットが記録と同じなら整音結果は古くならない(ep):
+    timeline_yml_with_cuts(ep, [(1.0, 2.0)])
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(
+        json.dumps({"duration": 10.0, "cuts": {"a": [[1.0, 2.0]]}}), encoding="utf-8")
+
+    assert media.clean_result("ep01")["state"] == "完了"
+
+
+def test_枠でない回はカットの記録が無くても古くならない(ep):
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(
+        json.dumps({"duration": 10.0}), encoding="utf-8")   # cuts の記録が無い
+
+    assert media.clean_result("ep01")["state"] == "完了"
 
 
 def test_古いときは確認済みにならない(ep):

@@ -113,8 +113,8 @@ def test_元が新しくなったら繋ぎ直す(ep):
     assert build.audio_duration(build.find_raw(ep)) == pytest.approx(6.0, abs=0.01)
 
 
-def test_編集点があれば黙って進まない(ep):
-    """まだ工程に繋がっていない。無視すると、書いたのにかからない。"""
+def test_カットは繋ぐときに当たる(ep):
+    """cut edits は工程に繋がっている（#85 の6段目）。0.5秒だけカットされる。"""
     sine(ep["00_raw"] / "a.wav", 2)
     sine(ep["00_raw"] / "b.wav", 2)
     timeline_yml(ep, """version: 1
@@ -124,6 +124,43 @@ lanes:
       source: a.wav
       gap: 0
       edits: [{start: 0.5, end: 1.0, kind: cut}]
+    - {id: b, source: b.wav, gap: 0}
+  bgm: []
+  se: []
+""")
+    got = build.find_raw(ep)
+    assert build.audio_duration(got) == pytest.approx(3.5, abs=0.02)   # 2 + 2 - 0.5
+
+
+def test_1本のクリップに複数カットがあっても当たる(ep):
+    sine(ep["00_raw"] / "a.wav", 10)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits:
+        - {start: 1.0, end: 2.0, kind: cut}
+        - {start: 5.0, end: 6.0, kind: cut}
+  bgm: []
+  se: []
+""")
+    got = build.find_raw(ep)
+    assert build.audio_duration(got) == pytest.approx(8.0, abs=0.02)
+
+
+def test_エコーがあれば黙って進まない(ep):
+    """エコー（kind: echo）は、まだ工程に繋がっていない（7段目）。"""
+    sine(ep["00_raw"] / "a.wav", 2)
+    sine(ep["00_raw"] / "b.wav", 2)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 0.5, end: 1.0, kind: echo, preset: light}]
     - {id: b, source: b.wav, gap: 0}
   bgm: []
   se: []
@@ -153,6 +190,24 @@ lanes:
   se: []
 """)
     assert build.find_raw(ep).name == "a.wav"
+
+
+def test_音源が1本の枠でもカットは当たる(ep):
+    """main が1本でも、cut edits があれば join を通す（#85 の6段目）。"""
+    sine(ep["00_raw"] / "a.wav", 4)
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+  bgm: []
+  se: []
+""")
+    got = build.find_raw(ep)
+    assert got.name == build.JOINED
+    assert build.audio_duration(got) == pytest.approx(3.0, abs=0.02)
 
 
 def test_繋いだ音を音源として拾わない(ep):
@@ -549,3 +604,122 @@ def test_録画から取り出した名前のm4aは音源として数える(ep):
     (ep["00_raw"] / "収録.track0.m4a").write_bytes(b"")  # これは人が置いたもの
     names = [f.name for f in build.source_candidates(ep["00_raw"])]
     assert names == ["収録.mkv", "収録.track0.m4a"]
+
+
+# ---------------------------------------------------------------- カットの記録との比較（#85 の6段目のレビュー対応）
+
+def test_framed_cut_snapshotは枠でない回では空(ep):
+    assert build.framed_cut_snapshot(ep["dir"]) == {}
+
+
+def test_framed_cut_snapshotはクリップごとのカットを返す(ep):
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+    - {id: b, source: b.wav, gap: 0}
+  bgm: []
+  se: []
+""")
+    assert build.framed_cut_snapshot(ep["dir"]) == {"a": [[1.0, 2.0]], "b": []}
+
+
+def test_framed_cuts_changedはいまも記録もカットが無ければ違わない(ep):
+    """カットの無い回まで、記録が無いというだけで「古い」にしない。"""
+    timeline_yml(ep, """version: 1
+lanes:
+  main: [{id: a, source: a.wav, gap: 0}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], None) is False
+    assert build.framed_cuts_changed(ep["dir"], {}) is False
+    assert build.framed_cuts_changed(ep["dir"], {"a": []}) is False
+
+
+def test_framed_cuts_changedはカットを空に戻すと違う(ep):
+    """カットを当てて作ったあとで空に戻したら「古い」（2回目のレビュー。前は記録を
+    見ずに「違わない」を返し、カットを当てたままの音が「完了」に見えた）。"""
+    timeline_yml(ep, """version: 1
+lanes:
+  main: [{id: a, source: a.wav, gap: 0}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]]}) is True
+
+
+def test_framed_cuts_changedはカットのあった枠を外すと違う(ep):
+    timeline_yml(ep, """version: 1
+lanes:
+  main: [{id: b, source: b.wav, gap: 0}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]], "b": []}) is True
+
+
+def test_framed_cuts_changedはカットの無い枠の出し入れでは変わらない(ep):
+    """カットの無い枠は、比べる前に落とす（枠を足した・外しただけで「カットを
+    変えました」と言わない）。"""
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+    - {id: b, source: b.wav, gap: 0}
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]]}) is False
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]], "c": []}) is False
+
+
+def test_framed_cuts_changedは記録が無ければ違う扱い(ep):
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], None) is True
+
+
+def test_framed_cuts_changedは記録と同じなら違わない(ep):
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]]}) is False
+
+
+def test_framed_cuts_changedはbgmの並びだけでは変わらない(ep):
+    """BGM・SE はカットと無関係。本編のカットが同じなら「違わない」（timeline.yml
+    の更新日時ではなく中身で比べているはず）。"""
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+  bgm:
+    - {id: m1, source: music/a.wav, anchor: a, at: 0}
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]]}) is False

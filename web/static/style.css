@@ -259,6 +259,9 @@ button, input, select, textarea { font-family: inherit; }
   background: var(--ink); border-color: var(--ink);
   color: var(--cream-on-wood); font-weight: 700;
 }
+/* 押せないタブ（音源が無い枠など）も、他のボタンと同じ見た目にそろえる（#85 の6段目のレビュー） */
+.tab:disabled { color: var(--disabled); cursor: not-allowed; }
+.tab:disabled:hover { background: var(--cream); }
 
 /* ---------------------------------------------------------------- メイン */
 
@@ -490,16 +493,23 @@ select.field { font-weight: 500; }
   height: 300px; overflow: auto; padding: 8px 8px 12px;
   display: flex; flex-direction: column; gap: 2px;
 }
+/* 行の中に「カットへ」も並ぶので、外側は div（ボタンの中にボタンは置けない。
+   #85 の6段目のレビュー）。押して再生する部分だけ line-seek というボタンにする */
 .line {
-  display: flex; align-items: baseline; gap: 12px;
-  padding: 7px 10px; border: none; border-radius: 10px;
-  background: transparent; cursor: pointer; text-align: left; width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 10px;
+  background: transparent; width: 100%;
 }
 .line:hover { background: var(--cream-dim); }
 .line.is-now { background: #fdf1e4; box-shadow: inset 3px 0 0 var(--accent); }
+.line-seek {
+  display: flex; align-items: baseline; gap: 12px; flex: 1; min-width: 0;
+  padding: 0; border: none; background: transparent; cursor: pointer; text-align: left;
+}
 .line .at { font: 12px var(--mono); color: var(--disabled); flex: none; }
 .line.is-now .at { color: var(--accent-text); font-weight: 500; }
 .line .say { font-size: 14px; line-height: 1.7; text-wrap: pretty; }
+.line-cut-jump { flex: none; }
 
 .lines-empty {
   height: 140px; display: flex; align-items: center; justify-content: center;
@@ -1043,6 +1053,33 @@ select.field { font-weight: 500; }
 }
 .btn-preview:hover:not(:disabled) { border-color: var(--ink); }
 .btn-preview:disabled { color: var(--disabled); cursor: not-allowed; }
+
+/* ---------------------------------------------------------------- カット（言い直し）（#85 の6段目・仮置き）
+   部品13（波形ビュー）を流用し、区間の一覧は部品14（エコー区間リスト）と同じ骨組みにそろえる。
+   プリセットが無い代わりに、開始・終了を数字で直せる欄を置く（30分の回でも困らないように）。 */
+
+.cut-frame-tabs { padding: 10px 18px 0; flex-wrap: wrap; }
+
+.cut-skip-toggle {
+  display: flex; align-items: center; gap: 8px; padding: 10px 18px 0;
+  font-size: 13px; color: var(--muted); cursor: pointer;
+}
+
+.cut-rows { padding: 10px 18px 14px; display: flex; flex-direction: column; gap: 4px; }
+.cut-row-head, .cut-row {
+  display: grid; grid-template-columns: 110px 110px 90px 1fr 36px;
+  gap: 12px; align-items: center;
+}
+.cut-row-head {
+  padding: 6px 10px 4px;
+  font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--disabled);
+}
+.cut-row { padding: 6px 10px; border-radius: 10px; cursor: pointer; }
+.cut-row:hover { background: var(--cream-dim); }
+.cut-row.is-picked { background: #fdf1e4; box-shadow: inset 3px 0 0 var(--accent); }
+.cut-row .field { max-width: 100px; }
+.cut-number-wrap { display: inline-flex; align-items: baseline; gap: 4px; }
+.cut-number-unit { font-size: 12px; color: var(--disabled); }
 
 /* ---------------------------------------------------------------- 部品15 整音結果パネル */
 
