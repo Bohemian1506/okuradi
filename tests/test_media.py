@@ -298,6 +298,17 @@ def test_カットを変えると整音結果が古いになる(ep):
     assert "カット" in got["stale_reason"]
 
 
+def test_カットを空に戻すと整音結果が古いになる(ep):
+    timeline_yml_with_cuts(ep, [])
+    (ep / "01_clean" / "clean.wav").write_bytes(b"a")
+    (ep / "01_clean" / "clean.json").write_text(
+        json.dumps({"duration": 10.0, "cuts": {"a": [[1.0, 2.0]]}}), encoding="utf-8")
+
+    got = media.clean_result("ep01")
+    assert got["state"] == "古い"
+    assert "カット" in got["stale_reason"]
+
+
 def test_カットが記録と同じなら整音結果は古くならない(ep):
     timeline_yml_with_cuts(ep, [(1.0, 2.0)])
     (ep / "01_clean" / "clean.wav").write_bytes(b"a")

@@ -216,6 +216,31 @@ def test_カットを変えると下見と整音が古いになる(tmp_path):
     assert got["clean"] == "古い"
 
 
+def test_カットを空に戻すと下見と整音が古いになる(tmp_path):
+    """カットを当てて作ったあとで空に戻す（2回目のレビュー。前は「完了」のままで、
+    カットを当てたままの音を使い続けた。#225 と同じ形の抜け）。"""
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_with_cuts(ep_dir, [])
+    write_json(ep_dir / "02_text" / "scan.json", {"cuts": {"a": [[1.0, 2.0]]}})
+    write_json(ep_dir / "01_clean" / "clean.json", {"cuts": {"a": [[1.0, 2.0]]}})
+
+    got = states(ep_dir)
+    assert got["scan"] == "古い"
+    assert got["clean"] == "古い"
+
+
+def test_カットのあった枠を外すと下見と整音が古いになる(tmp_path):
+    ep_dir = make_episode(tmp_path, files=ALL_FILES)
+    timeline_with_cuts(ep_dir, [])                     # いまの本編は a だけ・カット無し
+    record = {"cuts": {"a": [], "b": [[1.0, 2.0]]}}    # 作ったときは b にカットがあった
+    write_json(ep_dir / "02_text" / "scan.json", record)
+    write_json(ep_dir / "01_clean" / "clean.json", record)
+
+    got = states(ep_dir)
+    assert got["scan"] == "古い"
+    assert got["clean"] == "古い"
+
+
 def test_カットが記録と同じなら古くならない(tmp_path):
     ep_dir = make_episode(tmp_path, files=ALL_FILES)
     timeline_with_cuts(ep_dir, [(1.0, 2.0)])

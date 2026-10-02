@@ -324,15 +324,24 @@ def framed_cuts_changed(ep_dir, recorded):
     `_why_stale`（整音結果パネルの理由）の両方から呼ぶ。決まりを1か所にまとめる
     （#85 の6段目のレビュー対応）。
 
-    いま枠にカットが1つも無ければ、記録の有無に関わらず「違わない」
-    （カットの無い回・枠でない回まで、記録が無いというだけで古い扱いにしないため）。
-    記録が無い・壊れているときは、いまカットがあるなら「違う」扱い（安全側に倒す。
-    #225 の `_cut_wav_matches` と同じ考え方）。
+    **記録があるかどうかで分ける**（#85 の6段目の2回目のレビュー）。
+
+    - 記録が無い・壊れている: いまカットがあるなら「違う」（安全側に倒す。#225 の
+      `_cut_wav_matches` と同じ考え方）。いまも無ければ「違わない」（カットの無い回・
+      枠でない回まで、記録が無いというだけで古い扱いにしないため）
+    - 記録がある: カットのある枠だけを比べる。**カットを空に戻した・カットのあった枠を
+      外したときも「違う」になる**（前は、いまカットが無ければ記録を見ずに「違わない」を
+      返していて、カットを当てたままの音が「完了」に見えた）。カットの無い枠は比べる前に
+      落とすので、枠を足した・外しただけでは変わらない
     """
     current = framed_cut_snapshot(ep_dir)
-    if not any(current.values()):
-        return False
-    return recorded != current
+    if not isinstance(recorded, dict):
+        return any(current.values())
+
+    def with_cuts(snapshot):
+        return {clip_id: cuts for clip_id, cuts in snapshot.items() if cuts}
+
+    return with_cuts(recorded) != with_cuts(current)
 
 
 def _clip_cut_graph(input_index, clip, total):

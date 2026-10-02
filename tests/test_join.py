@@ -627,7 +627,7 @@ lanes:
     assert build.framed_cut_snapshot(ep["dir"]) == {"a": [[1.0, 2.0]], "b": []}
 
 
-def test_framed_cuts_changedはいまカットが無ければ記録に関わらず違わない(ep):
+def test_framed_cuts_changedはいまも記録もカットが無ければ違わない(ep):
     """カットの無い回まで、記録が無いというだけで「古い」にしない。"""
     timeline_yml(ep, """version: 1
 lanes:
@@ -637,6 +637,47 @@ lanes:
 """)
     assert build.framed_cuts_changed(ep["dir"], None) is False
     assert build.framed_cuts_changed(ep["dir"], {}) is False
+    assert build.framed_cuts_changed(ep["dir"], {"a": []}) is False
+
+
+def test_framed_cuts_changedはカットを空に戻すと違う(ep):
+    """カットを当てて作ったあとで空に戻したら「古い」（2回目のレビュー。前は記録を
+    見ずに「違わない」を返し、カットを当てたままの音が「完了」に見えた）。"""
+    timeline_yml(ep, """version: 1
+lanes:
+  main: [{id: a, source: a.wav, gap: 0}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]]}) is True
+
+
+def test_framed_cuts_changedはカットのあった枠を外すと違う(ep):
+    timeline_yml(ep, """version: 1
+lanes:
+  main: [{id: b, source: b.wav, gap: 0}]
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]], "b": []}) is True
+
+
+def test_framed_cuts_changedはカットの無い枠の出し入れでは変わらない(ep):
+    """カットの無い枠は、比べる前に落とす（枠を足した・外しただけで「カットを
+    変えました」と言わない）。"""
+    timeline_yml(ep, """version: 1
+lanes:
+  main:
+    - id: a
+      source: a.wav
+      gap: 0
+      edits: [{start: 1.0, end: 2.0, kind: cut}]
+    - {id: b, source: b.wav, gap: 0}
+  bgm: []
+  se: []
+""")
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]]}) is False
+    assert build.framed_cuts_changed(ep["dir"], {"a": [[1.0, 2.0]], "c": []}) is False
 
 
 def test_framed_cuts_changedは記録が無ければ違う扱い(ep):

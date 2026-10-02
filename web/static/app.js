@@ -1483,12 +1483,19 @@ function ensureWave(key, { url, duration = 0, regions = false, editable = false 
   });
   // 拡大しているときの横スクロール位置を控える（renderMain() のたびに器が画面から
   // 外れて 0 に戻るので、restoreWaveScroll() で戻すため。#98 と同じ理由）
-  w.ws.on("scroll", (startTime, endTime, startPx) => { w.scrollLeft = startPx; });
+  w.ws.on("scroll", (startTime, endTime, startPx) => {
+    w.scrollLeft = startPx;
+    paintWaveRuler(w);   // 目盛りは見えている範囲に合わせる（スクロールでは renderMain() を呼ばない）
+  });
   w.ws.on("timeupdate", (at) => {
     // カットを飛ばして聴くとき（#85 の6段目）。区間に入ったら終わりへ飛ぶだけの仮置き
     if (key === "cut" && state.cutSkip) {
       const hit = cutRows(state.cutFrame).find((c) => at >= c.start && at < c.end - 0.02);
-      if (hit) { w.ws.setTime(hit.end); w.at = hit.end; return; }
+      // **w.at を先に控える。** setTime() は同期で timeupdate をもう一度発火する。
+      // 控える前だと、その中で w.at との差を見て renderMain() が呼ばれる。下見の
+      // 「カットへ」は render の途中で setTime() を打つので、そこへ再入する
+      // （2回目のレビュー。cutCard の cutSeekPending と同じ理由）
+      if (hit) { w.at = hit.end; w.ws.setTime(hit.end); return; }
     }
     // 毎コマ作り直すと重いので、1秒に4回まで
     if (Math.floor(at * 4) === Math.floor(w.at * 4)) { w.at = at; return; }
@@ -1675,13 +1682,28 @@ function waveZoomLevels(w) {
   return [fit, ...steps];
 }
 
-// 見ている中心（秒）。拡大縮小の前後で同じ位置を見せ続けるため（timelineCenterSeconds と同じ考え方）
-function waveCenterSeconds(w) {
-  const px = w.pxPerSec != null ? w.pxPerSec : waveFitPxPerSec(w);
-  if (!px) return null;
+// いま見えている範囲（秒）。「全体を見る」のときは頭から終わりまで
+function waveVisibleRange(w) {
+  const total = w.duration || 0;
   const width = w.lastWidth || 0;
-  const left = w.scrollLeft || 0;
-  return (left + width / 2) / px;
+  if (w.pxPerSec == null || !width) return [0, total];
+  const start = Math.min((w.scrollLeft || 0) / w.pxPerSec, total);
+  return [start, Math.min(start + width / w.pxPerSec, total)];
+}
+
+// 波形の下の目盛り（5つ）。**見えている範囲を4等分する**（前は拡大しても全体の
+// 4等分のままで、波形と目盛りが合わなかった。2回目のレビュー）。
+// renderMain() のたびと、横にスクロールしたときに書き直す
+function paintWaveRuler(w) {
+  if (!w.ruler) return;
+  const [start, end] = waveVisibleRange(w);
+  // 拡大すると見えている幅が数秒になる。秒までの表示だと同じ数字が並ぶので小数を出す
+  const fine = end - start < 20;
+  w.ruler.innerHTML = "";
+  for (let i = 0; i < 5; i += 1) {
+    const at = start + (end - start) * i / 4;
+    w.ruler.appendChild(el("span", null, fine ? `${clock(Math.floor(at))}.${Math.floor((at % 1) * 10)}` : clock(at)));
+  }
 }
 
 function waveRestoreCenter(w, seconds, pxPerSec) {
@@ -1698,7 +1720,10 @@ function setWaveZoom(key, pxPerSec) {
   const w = waveOf(key);
   if (!w.ws || w.phase !== "表示") return;   // 復号が終わる前は押せない
   w.lastWidth = w.box.clientWidth || w.lastWidth || 800;
-  const center = waveCenterSeconds(w);
+  // **再生位置を真ん中にする**（2回目のレビュー・lead の仮置き）。前は「いま見ている
+  // 中心」を保っていたが、全体を見ている状態から拡大すると全体の真ん中へ移り、
+  // 下見の「カットへ」で飛んだ先が見えなくなった
+  const center = w.at || 0;
   try {
     w.ws.zoom(pxPerSec);
   } catch (err) {
@@ -2187,10 +2212,10 @@ function cutCard() {
   card.appendChild(waveZoomControls("cut"));
 
   const total = w.duration;
+  // 目盛りは見えている範囲に合わせる。スクロールのたびに書き直すので、器（w）に持たせる
   const ruler = el("div", "wave-ruler");
-  for (let i = 0; i < 5; i += 1) {
-    ruler.appendChild(el("span", null, clock(total * i / 4)));
-  }
+  w.ruler = ruler;
+  paintWaveRuler(w);
   const pad = el("div", "wave-player");
   pad.appendChild(wavePlayer("cut"));
 

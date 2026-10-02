@@ -426,8 +426,9 @@ def _why_stale(ep_dir, clean, detail):
         return None           # 作ったときの記録が無い。判断できないので何も言わない
 
     # 枠の回で、いまの本編クリップの cut edits と、整音を当てたときの記録が違えば「古い」
-    # （#85 の6段目のレビュー対応。枠でない回・カットが無い回は `framed_cuts_changed` が
-    # 自分で False を返すので、ここで枠かどうかを別に見る必要はない）
+    # （#85 の6段目のレビュー対応。枠でない回・いまも記録もカットが無い回は
+    # `framed_cuts_changed` が自分で False を返すので、ここで枠かどうかを別に見る必要はない。
+    # カットを空に戻した・カットのあった枠を外したときも、ここで拾う）
     if build.framed_cuts_changed(ep_dir, detail.get("cuts")):
         return "カットを変えました"
 
