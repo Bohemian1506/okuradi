@@ -135,7 +135,8 @@ CLI で流れが通ったので、確認と編集を GUI でできるように�
     生音は既存の `/api/episodes/{name}/timeline-source/main/<ファイル名>`（`frames_view` が返す `name` から組み立てる）。
     保存は `PUT /api/episodes/{name}/frames/{frame_id}/cuts`（body: `{"cuts": [{"start":, "end":}, ...]}`）。並びを丸ごと置き換える。エコーの edits は触らずに残す。検証は `timeline.validate`（開始 < 終了）と `timeline.check_edits`（生音の長さを超えない）
   - **保存は明示的**（エコー・BGM と同じ作法。画面は「保存する」で送る）
-  - **カットを変えたら、下見（scan）と整音（clean）を「古い」にする**（PR #246 のレビュー対応）。`timeline.yml` の更新日時では見ない（BGM・SE の保存だけでも動くため）。`step_scan`・`step_clean` が、当てたカットの区間そのものを `scan.json`・`clean.json` に `cuts`（`{クリップの id: [[start, end], ...]}`）として残し、`web/episodes.py` の `step_states`・`web/media.py` の `_why_stale`（整音結果パネルの理由「カットを変えました」）がいまの `timeline.yml` と比べる（`build.framed_cut_snapshot` / `framed_cuts_changed`）
+  - **カットを変えたら、下見（scan）と整音（clean）を「古い」にする**（PR #246 のレビュー対応）。`timeline.yml` の更新日時では見ない（BGM・SE の保存だけでも動くため）。`step_scan`・`step_clean` が、当てたカットの区間そのものを `scan.json`・`clean.json` に `cuts`（`{クリップの id: [[start, end], ...]}`）として残し、`web/episodes.py` の `step_states`・`web/media.py` の `_why_stale`（整音結果パネルの理由「カットを変えました」）がいまの `timeline.yml` と比べる（`build.framed_cut_snapshot` / `framed_cuts_changed`）。**カットを空に戻した・カットのあった枠を外したときも「古い」**（比べるのはカットのある枠だけ。記録が無い古いファイルは、いまカットがあるときだけ「古い」）
+  - **カットの波形の拡大縮小は、再生位置が見えていれば再生位置を真ん中にし、見えていなければ見ている所を保つ**（2026-10-02・ユーザーの判断・案B）。いつも「見ている中心」だと、下見の「カットへ」で飛んだ先を拡大で見失う。いつも「再生位置」だと、別のカットの境目をスクロールして見ているときに引き戻される。**波形の下の目盛りは、見えている範囲を4等分する**（見えている幅が20秒より短いときは小数1桁まで。この境目は仮置き）
   - **下見（`scan.json`）に、下見の並び（`layout`）も残す**（2026-09-27・ユーザーの判断・案A）。枠の回の下見は、クリップごとにカットを当てて繋いだ音を読む。`layout` は `[{"id": クリップの id, "start": 繋いだ音での開始秒, "end": 終了秒, "keeps": [[生音の開始, 生音の終了], ...]}]`（`build.join_layout`）。`web/media.py` の `read_scan` が返す。画面はこれで「下見の行 → カットへ飛ぶ」を変換する（下見の行からカットのタブと波形の位置へ飛ぶ・PR #246 のレビュー対応）。この変更より前の `scan.json`（`layout` を持たない）では返さない
 
 **まだできないこと**

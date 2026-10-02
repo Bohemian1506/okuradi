@@ -1709,7 +1709,11 @@ function paintWaveRuler(w) {
 function waveRestoreCenter(w, seconds, pxPerSec) {
   if (seconds == null || !pxPerSec || !w.ws) return;
   const width = w.lastWidth || 0;
-  const left = Math.max(0, seconds * pxPerSec - width / 2);
+  // **動かせる範囲に丸めてから控える**（3回目のレビュー）。丸めないと、全体が収まって
+  // いるとき・終わり近くを真ん中にしたときに、控えだけが実際より右を指し、目盛り
+  // （paintWaveRuler）が波形とずれる。ブラウザは黙って丸めるので scroll も来ない
+  const max = Math.max(0, (w.duration || 0) * pxPerSec - width);
+  const left = Math.min(max, Math.max(0, seconds * pxPerSec - width / 2));
   w.scrollLeft = left;   // 控えは常にここで確定させる
   w.ws.setScroll(left);  // 画面に付いていればその場でも反映する。外れている途中なら
                           // restoreWaveScroll() が renderMain() の最後に反映する
@@ -1720,10 +1724,15 @@ function setWaveZoom(key, pxPerSec) {
   const w = waveOf(key);
   if (!w.ws || w.phase !== "表示") return;   // 復号が終わる前は押せない
   w.lastWidth = w.box.clientWidth || w.lastWidth || 800;
-  // **再生位置を真ん中にする**（2回目のレビュー・lead の仮置き）。前は「いま見ている
-  // 中心」を保っていたが、全体を見ている状態から拡大すると全体の真ん中へ移り、
-  // 下見の「カットへ」で飛んだ先が見えなくなった
-  const center = w.at || 0;
+  // **再生位置が見えていれば、再生位置を真ん中にする。見えていなければ、いま見ている
+  // 所を保つ**（2026-10-02・ユーザーの判断・案B）。
+  // - いつも「見ている中心」だと、全体を見ている状態から拡大したときに全体の真ん中へ
+  //   移り、下見の「カットへ」で飛んだ先が見えなくなる（2回目のレビュー）
+  // - いつも「再生位置」だと、別のカットの境目を自分でスクロールして見ているときに
+  //   引き戻される（3回目のレビュー）
+  const [from, to] = waveVisibleRange(w);
+  const at = w.at || 0;
+  const center = at >= from && at <= to ? at : (from + to) / 2;
   try {
     w.ws.zoom(pxPerSec);
   } catch (err) {
