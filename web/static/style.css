@@ -352,6 +352,13 @@ button, input, select, textarea { font-family: inherit; }
   border: 1.5px solid oklch(0.55 0.2 25 / .45); background: #fbeee8;
   font-size: 13px;
 }
+/* 画面全体の失敗の帯は、スクロールしても上端に残す（#247）。
+   重なり順は、波形の読み込み中の覆い（2）より上、ダイアログ（10）より下。
+   top は .panel-main の上の余白（28px）を打ち消す。0 だと帯の上に後ろの字がのぞく */
+.save-error.is-pinned {
+  position: sticky; top: -28px; z-index: 5;
+  box-shadow: 0 4px 12px rgba(58, 36, 24, .18);
+}
 .save-error .mark {
   width: 14px; height: 14px; border-radius: 50%; flex: none;
   background: var(--error-text); color: #fff;
