@@ -4298,7 +4298,8 @@ function clock(seconds) {
 }
 
 function errorBanner() {
-  const box = el("div", "save-error");
+  // 画面の上に貼りつける。下の節で押して失敗しても、スクロールせずに見える（#247。いったん仮置き）
+  const box = el("div", "save-error is-pinned");
   const close = el("button", "btn-tiny is-plain", "閉じる");
   close.onclick = () => { state.actionError = ""; renderMain(); };
   box.append(el("span", "mark", "!"), el("span", null, state.actionError),
